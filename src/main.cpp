@@ -22,7 +22,7 @@ PoseResult processImage(const Mat& input, const Mat& cameraMatrix, const Mat& di
     Mat im = input.clone();
 
     // Step 1: Apply Gaussian Blur
-    GaussianBlur(im, im, Size(9, 9), 0);
+    GaussianBlur(im, im, cv::Size(9, 9), 0);
 
     // Step 2: Convert to grayscale and threshold
     Mat grey;
@@ -148,7 +148,7 @@ int main(int argc, char **argv) {
             // Mat frame(height, width, CV_8UC1, frameData.imageData, stride);
 
             // Process the image
-            PoseResult result = processImage(input, cameraMatrix, distCoeffs);
+            PoseResult result = processImage(frame, cameraMatrix, distCoeffs);
 
             // Display results
             if (!result.tvec.empty()) {
