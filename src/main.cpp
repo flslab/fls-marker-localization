@@ -16,6 +16,14 @@ struct PoseResult {
     Vec3d yaw_pitch_roll;
 };
 
+Vec3d yawPitchRollDecomposition(const Mat& rmat) {
+    double yaw = atan2(rmat.at<double>(1, 0), rmat.at<double>(0, 0));
+    double pitch = atan2(-rmat.at<double>(2, 0),
+                         sqrt(pow(rmat.at<double>(2, 1), 2) + pow(rmat.at<double>(2, 2), 2)));
+    double roll = atan2(rmat.at<double>(2, 1), rmat.at<double>(2, 2));
+    return Vec3d(yaw, pitch, roll);
+}
+
 
 // Main function to process an image and compute pose
 PoseResult processImage(const Mat& input, const Mat& cameraMatrix, const Mat& distCoeffs) {
@@ -30,7 +38,7 @@ PoseResult processImage(const Mat& input, const Mat& cameraMatrix, const Mat& di
     threshold(grey, grey, 255 * 0.75, 255, THRESH_BINARY);
 
     // Step 3: Find contours
-    vector<vector<Point>> contours;
+    vector<vector<cv::Point>> contours;
     findContours(grey, contours, RETR_TREE, CHAIN_APPROX_SIMPLE);
     drawContours(im, contours, -1, Scalar(255, 0, 0), 2);
 
@@ -41,7 +49,7 @@ PoseResult processImage(const Mat& input, const Mat& cameraMatrix, const Mat& di
         if (moments.m00 > 100) {
             int center_x = int(moments.m10 / moments.m00);
             int center_y = int(moments.m01 / moments.m00);
-            circle(im, Point(center_x, center_y), 10, Scalar(0, 0, 255), -1);
+            circle(im, cv::Point(center_x, center_y), 10, Scalar(0, 0, 255), -1);
             image_points.push_back(Point2f(center_x, center_y));
         }
     }
