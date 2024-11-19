@@ -63,9 +63,9 @@ PoseResult processImage(const Mat& input, const Mat& cameraMatrix, const Mat& di
     // Step 6: Marker 3D points
     vector<Point3f> marker_points = {
         {0.0, 0.0, 0.0},
-        {0.0464, -0.002, 0.0},
-        {0.0444, -0.0197, 0.0},
-        {0.0094, -0.0291, 0.0}
+        {0.019, -0.0015, 0.0},
+        {0.0356, -0.0389, 0.0},
+        {0.0, -0.0389, 0.0}
     };
 
     // Step 7: SolvePnP
@@ -163,7 +163,7 @@ int main(int argc, char **argv) {
                 cout << "Translation Vector: " << result.tvec.t() << endl;
                 cout << "Yaw, Pitch, Roll: " << result.yaw_pitch_roll << endl;
             } else {
-                cout << "Failed to compute pose!" << endl;
+//                cout << "Failed to compute pose!" << endl;
             }
 
 
