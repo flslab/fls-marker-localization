@@ -152,11 +152,11 @@ int main(int argc, char **argv) {
             Mat im(height, width, CV_8UC3, frameData.imageData, stride);
 
             cv::Mat frame;
-            cv::cvtColor(im, frame, cv::COLOR_BGR2GRAY);
+//            cv::cvtColor(im, frame, cv::COLOR_BGR2GRAY);
             // Mat frame(height, width, CV_8UC1, frameData.imageData, stride);
 
             // Process the image
-            PoseResult result = processImage(frame, cameraMatrix, distCoeffs);
+            PoseResult result = processImage(im, cameraMatrix, distCoeffs);
 
             // Display results
             if (!result.tvec.empty()) {
