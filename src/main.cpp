@@ -56,7 +56,7 @@ PoseResult processImage(const Mat& input, const Mat& cameraMatrix, const Mat& di
 
     // Step 5: Validate image points
     if (image_points.size() != 4) {
-        cout << "Not enough points found!" << endl;
+//        cout << "Not enough points found!" << endl;
         return {im, Mat(), Mat(), Vec3d()};
     }
 
@@ -122,22 +122,22 @@ int main(int argc, char **argv) {
     cam.configureStill(width, height, formats::RGB888, 1, 0);
     ControlList controls_;
     // 30 fps
-    int64_t frame_time = 1000000 / 30;
+    int64_t frame_time = 1000000 / 100;
     // Set frame rate
 	controls_.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({ frame_time, frame_time }));
     // Adjust the brightness of the output images, in the range -1.0 to 1.0
-    controls_.set(controls::Brightness, 0.5);
+//    controls_.set(controls::Brightness, 0.5);
     // Adjust the contrast of the output image, where 1.0 = normal contrast
-    controls_.set(controls::Contrast, 1.5);
+//    controls_.set(controls::Contrast, 1.5);
     // Set the exposure time
     // controls_.set(controls::ExposureTime, 20000);
     cam.set(controls_);
 
     // Camera matrix and distortion coefficients (replace with actual calibration values)
-    Mat cameraMatrix = (Mat_<double>(3, 3) << 800, 0, 640,
-                                             0, 800, 360,
-                                             0, 0, 1);
-    Mat distCoeffs = Mat::zeros(5, 1, CV_64F);
+    Mat cameraMatrix = (Mat_<double>(3, 3) << 836.84712717, 0.0, 643.78276191,
+                                             0.0, 836.78674967, 361.98923042,
+                                             0.0, 0.0, 1.0);
+    Mat distCoeffs = (Mat_<double>(5, 1) << -0.05726028, 0.08830815, 0.00106169, 0.00274017, 0.05117629);
 
     if (!ret) {
         bool flag;
