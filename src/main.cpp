@@ -55,7 +55,7 @@ PoseResult processImage(const Mat& input, const Mat& cameraMatrix, const Mat& di
     }
 
     // Step 5: Validate image points
-    if (image_points.size() < 4) {
+    if (image_points.size() != 4) {
         cout << "Not enough points found!" << endl;
         return {im, Mat(), Mat(), Vec3d()};
     }
