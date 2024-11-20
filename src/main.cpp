@@ -3,6 +3,10 @@
 #include <iostream>
 #include <vector>
 #include "LibCamera.h"
+#include <fstream>
+#include <sstream>
+#include <ctime>
+#include <iomanip>
 
 
 using namespace cv;
@@ -15,6 +19,19 @@ struct PoseResult {
     Mat rmat;
     Vec3d yaw_pitch_roll;
 };
+
+// Function to get a timestamped filename
+std::string generateFilename() {
+    std::time_t now = std::time(nullptr);
+    std::tm* localTime = std::localtime(&now);
+
+    std::ostringstream filename;
+    filename << "pose_logs_"
+             << std::put_time(localTime, "%Y-%m-%d_%H-%M-%S")
+             << ".txt";
+
+    return filename.str();
+}
 
 Vec3d yawPitchRollDecomposition(const Mat& rmat) {
     double yaw = atan2(rmat.at<double>(1, 0), rmat.at<double>(0, 0));
@@ -102,6 +119,7 @@ int main(int argc, char **argv) {
 
     time_t start_time = time(0);
     int frame_count = 0;
+    int frameCount = 0;
     float lens_position = 100;
     float focus_step = 50;
     LibCamera cam;
@@ -139,6 +157,8 @@ int main(int argc, char **argv) {
                                              0.0, 0.0, 1.0);
     Mat distCoeffs = (Mat_<double>(5, 1) << -0.05726028, 0.08830815, 0.00106169, 0.00274017, 0.05117629);
 
+    std::ostringstream logStream;
+
     if (!ret) {
         bool flag;
         LibcameraOutData frameData;
@@ -160,8 +180,12 @@ int main(int argc, char **argv) {
 
             // Display results
             if (!result.tvec.empty()) {
-                cout << "Translation Vector: " << result.tvec.t() << endl;
-                cout << "Yaw, Pitch, Roll: " << result.yaw_pitch_roll << endl;
+//                cout << "Translation Vector: " << result.tvec.t() << endl;
+//                cout << "Yaw, Pitch, Roll: " << result.yaw_pitch_roll << endl;
+
+                logStream << "Frame " << frameCount << ":" << std::endl;
+                logStream << "    Translation Vector: " << result.tvec.t() << std::endl;
+                logStream << "    Yaw, Pitch, Roll: " << result.yaw_pitch_roll << std::endl;
             } else {
 //                cout << "Failed to compute pose!" << endl;
             }
@@ -191,6 +215,7 @@ int main(int argc, char **argv) {
             }
 
             frame_count++;
+            frameCount++;
             if ((time(0) - start_time) >= 1){
                 printf("fps: %d\n", frame_count);
                 frame_count = 0;
@@ -200,6 +225,13 @@ int main(int argc, char **argv) {
         }
         destroyAllWindows();
         cam.stopCamera();
+
+        std::string filename = generateFilename();
+        std::ofstream logFile(filename);
+        logFile << logStream.str();
+        logFile.close();
+
+        std::cout << "All logs saved to: " << filename << std::endl;
     }
     cam.closeCamera();
     return 0;
