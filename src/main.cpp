@@ -140,7 +140,7 @@ int main(int argc, char **argv) {
     cam.configureStill(width, height, formats::RGB888, 1, 0);
     ControlList controls_;
     // 30 fps
-    int64_t frame_time = 1000000 / 100;
+    int64_t frame_time = 1000000 / 200;
     // Set frame rate
 	controls_.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({ frame_time, frame_time }));
     // Adjust the brightness of the output images, in the range -1.0 to 1.0
