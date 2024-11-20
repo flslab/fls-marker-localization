@@ -79,10 +79,10 @@ PoseResult processImage(const Mat& input, const Mat& cameraMatrix, const Mat& di
 
     // Step 6: Marker 3D points
     vector<Point3f> marker_points = {
-        {0.0, 0.0, 0.0},
-        {0.019, -0.0015, 0.0},
-        {0.0356, -0.0389, 0.0},
-        {0.0, -0.0389, 0.0}
+        {-0.030, 0.006, 0.0},
+        {-0.011, 0.023, 0.0},
+        {0.024, 0.0, 0.0},
+        {-0.007, -0.026, 0.0}
     };
 
     // Step 7: SolvePnP
