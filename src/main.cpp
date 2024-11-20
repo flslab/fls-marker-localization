@@ -63,7 +63,7 @@ PoseResult processImage(const Mat& input, const Mat& cameraMatrix, const Mat& di
     vector<Point2f> image_points;
     for (const auto& contour : contours) {
         Moments moments = cv::moments(contour);
-        if (moments.m00 > 100) {
+        if (moments.m00 > 50) {
             int center_x = int(moments.m10 / moments.m00);
             int center_y = int(moments.m01 / moments.m00);
             circle(im, cv::Point(center_x, center_y), 10, Scalar(0, 0, 255), -1);
