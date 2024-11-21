@@ -273,8 +273,11 @@ int main(int argc, char **argv)
             // Display results
             if (!result.tvec.empty())
             {
-                //                cout << "Translation Vector: " << result.tvec.t() << endl;
-                //                cout << "Yaw, Pitch, Roll: " << result.yaw_pitch_roll << endl;
+                if (print_logs)
+                {
+                    cout << "Translation Vector: " << result.tvec.t() << endl;
+                    cout << "Yaw, Pitch, Roll: " << result.yaw_pitch_roll << endl;
+                }
 
                 logStream << "Frame " << frameCount << ":" << std::endl;
                 logStream << "    Translation Vector: " << result.tvec.t() << std::endl;

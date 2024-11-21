@@ -22,7 +22,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBCAMERA REQUIRED libcamera)
 
 # Find Eigen (assuming it's in a folder like libs/Eigen)
-#find_package(Eigen3 3.3 REQUIRED NO_MODULE)
+find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 
 # Include directories for OpenCV, ED_Lib, and Eigen ${EIGEN3_INCLUDE_DIR}, libs/ED_Lib
 include_directories(${OpenCV_INCLUDE_DIRS} libs/LibCamera ${LIBCAMERA_INCLUDE_DIRS})
@@ -31,4 +31,4 @@ include_directories(${OpenCV_INCLUDE_DIRS} libs/LibCamera ${LIBCAMERA_INCLUDE_DI
 add_executable(eye src/main.cpp)
 
 # Link ED_Lib, OpenCV, and Eigen to your project Eigen3::Eigen, EDLib
-target_link_libraries(eye ${OpenCV_LIBS} LibCamera ${LIBCAMERA_LIBRARIES} nlohmann_json::nlohmann_json)
+target_link_libraries(eye ${OpenCV_LIBS} LibCamera ${LIBCAMERA_LIBRARIES} nlohmann_json::nlohmann_json Eigen3::Eigen)
