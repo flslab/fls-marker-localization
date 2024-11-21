@@ -7,13 +7,14 @@
 #include <sstream>
 #include <ctime>
 #include <iomanip>
-
+#include <nlohmann/json.hpp>
 
 using namespace cv;
 using namespace std;
+using json = nlohmann::json;
 
-
-struct PoseResult {
+struct PoseResult
+{
     Mat img;
     Mat tvec;
     Mat rmat;
@@ -21,9 +22,10 @@ struct PoseResult {
 };
 
 // Function to get a timestamped filename
-std::string generateFilename() {
+std::string generateFilename()
+{
     std::time_t now = std::time(nullptr);
-    std::tm* localTime = std::localtime(&now);
+    std::tm *localTime = std::localtime(&now);
 
     std::ostringstream filename;
     filename << "pose_logs_"
@@ -33,7 +35,8 @@ std::string generateFilename() {
     return filename.str();
 }
 
-Vec3d yawPitchRollDecomposition(const Mat& rmat) {
+Vec3d yawPitchRollDecomposition(const Mat &rmat)
+{
     double yaw = atan2(rmat.at<double>(1, 0), rmat.at<double>(0, 0));
     double pitch = atan2(-rmat.at<double>(2, 0),
                          sqrt(pow(rmat.at<double>(2, 1), 2) + pow(rmat.at<double>(2, 2), 2)));
@@ -41,9 +44,9 @@ Vec3d yawPitchRollDecomposition(const Mat& rmat) {
     return Vec3d(yaw, pitch, roll);
 }
 
-
 // Main function to process an image and compute pose
-PoseResult processImage(const Mat& input, const Mat& cameraMatrix, const Mat& distCoeffs) {
+PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &distCoeffs, const vector<Point3f> &marker_points)
+{
     Mat im = input.clone();
 
     // Step 1: Apply Gaussian Blur
@@ -61,9 +64,11 @@ PoseResult processImage(const Mat& input, const Mat& cameraMatrix, const Mat& di
 
     // Step 4: Find image points from contours
     vector<Point2f> image_points;
-    for (const auto& contour : contours) {
+    for (const auto &contour : contours)
+    {
         Moments moments = cv::moments(contour);
-        if (moments.m00 > 50) {
+        if (moments.m00 > 50)
+        {
             int center_x = int(moments.m10 / moments.m00);
             int center_y = int(moments.m01 / moments.m00);
             circle(im, cv::Point(center_x, center_y), 10, Scalar(0, 0, 255), -1);
@@ -72,18 +77,17 @@ PoseResult processImage(const Mat& input, const Mat& cameraMatrix, const Mat& di
     }
 
     // Step 5: Validate image points
-    if (image_points.size() != 4) {
-//        cout << "Not enough points found!" << endl;
+    if (image_points.size() != 4)
+    {
+        //        cout << "Not enough points found!" << endl;
         return {im, Mat(), Mat(), Vec3d()};
     }
 
-    // Step 6: Marker 3D points
-    vector<Point3f> marker_points = {
-        {-0.030, 0.006, 0.0},
-        {-0.011, 0.023, 0.0},
-        {0.024, 0.0, 0.0},
-        {-0.007, -0.026, 0.0}
-    };
+    // Step 6: Use provided marker points
+    if (marker_points.size() != 4)
+    {
+        return {im, Mat(), Mat(), Vec3d()};
+    }
 
     // Step 7: SolvePnP
     Mat rvec, tvec;
@@ -99,8 +103,51 @@ PoseResult processImage(const Mat& input, const Mat& cameraMatrix, const Mat& di
     return {im, tvec, rmat, yaw_pitch_roll};
 }
 
+bool readConfigFile(const string &filename, Mat &cameraMatrix, Mat &distCoeffs, vector<Point3f> &marker_points)
+{
+    try
+    {
+        // Read JSON file
+        std::ifstream file(filename);
+        if (!file.is_open())
+        {
+            cerr << "Failed to open config file: " << filename << endl;
+            return false;
+        }
+        json j = json::parse(file);
 
-int main(int argc, char **argv) {
+        // Read camera matrix
+        cameraMatrix = Mat::zeros(3, 3, CV_64F);
+        for (int i = 0; i < 3; i++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                cameraMatrix.at<double>(i, j) = j["/camera_matrix"_json_pointer][i][j];
+            }
+        }
+
+        // Read distortion coefficients
+        vector<double> dist = j["dist_coeffs"];
+        distCoeffs = Mat(dist, true);
+
+        // Read marker points
+        marker_points.clear();
+        for (const auto &point : j["marker_points"])
+        {
+            marker_points.push_back(Point3f(point[0], point[1], point[2]));
+        }
+
+        return true;
+    }
+    catch (const exception &e)
+    {
+        cerr << "Error reading config file: " << e.what() << endl;
+        return false;
+    }
+}
+
+int main(int argc, char **argv)
+{
     // if (argc != 2) {
     //     std::cerr << "Usage: " << argv[0] << " <input_image>" << std::endl;
     //     return -1;
@@ -115,7 +162,6 @@ int main(int argc, char **argv) {
     // // Convert grayscale to BGR for displaying color circles and ellipses
     // cv::Mat displayImage;
     // cv::cvtColor(image, displayImage, cv::COLOR_GRAY2BGR);
-
 
     time_t start_time = time(0);
     int frame_count = 0;
@@ -142,29 +188,34 @@ int main(int argc, char **argv) {
     // 30 fps
     int64_t frame_time = 1000000 / 120;
     // Set frame rate
-	controls_.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({ frame_time, frame_time }));
+    controls_.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({frame_time, frame_time}));
     // Adjust the brightness of the output images, in the range -1.0 to 1.0
-//    controls_.set(controls::Brightness, 0.5);
+    //    controls_.set(controls::Brightness, 0.5);
     // Adjust the contrast of the output image, where 1.0 = normal contrast
-//    controls_.set(controls::Contrast, 1.5);
+    //    controls_.set(controls::Contrast, 1.5);
     // Set the exposure time
     // controls_.set(controls::ExposureTime, 20000);
     cam.set(controls_);
 
-    // Camera matrix and distortion coefficients (replace with actual calibration values)
-    Mat cameraMatrix = (Mat_<double>(3, 3) << 836.84712717, 0.0, 643.78276191,
-                                             0.0, 836.78674967, 361.98923042,
-                                             0.0, 0.0, 1.0);
-    Mat distCoeffs = (Mat_<double>(5, 1) << -0.05726028, 0.08830815, 0.00106169, 0.00274017, 0.05117629);
+    Mat cameraMatrix, distCoeffs;
+    vector<Point3f> marker_points;
+
+    if (!readConfigFile("camera_config.json", cameraMatrix, distCoeffs, marker_points))
+    {
+        cerr << "Failed to read camera configuration" << endl;
+        return -1;
+    }
 
     std::ostringstream logStream;
 
-    if (!ret) {
+    if (!ret)
+    {
         bool flag;
         LibcameraOutData frameData;
         cam.startCamera();
         cam.VideoStream(&width, &height, &stride);
-        while (true) {
+        while (true)
+        {
             flag = cam.readFrame(&frameData);
             if (!flag)
                 continue;
@@ -172,51 +223,62 @@ int main(int argc, char **argv) {
             Mat im(height, width, CV_8UC3, frameData.imageData, stride);
 
             cv::Mat frame;
-//            cv::cvtColor(im, frame, cv::COLOR_BGR2GRAY);
+            //            cv::cvtColor(im, frame, cv::COLOR_BGR2GRAY);
             // Mat frame(height, width, CV_8UC1, frameData.imageData, stride);
 
             // Process the image
-            PoseResult result = processImage(im, cameraMatrix, distCoeffs);
+            PoseResult result = processImage(im, cameraMatrix, distCoeffs, marker_points);
 
             // Display results
-            if (!result.tvec.empty()) {
-//                cout << "Translation Vector: " << result.tvec.t() << endl;
-//                cout << "Yaw, Pitch, Roll: " << result.yaw_pitch_roll << endl;
+            if (!result.tvec.empty())
+            {
+                //                cout << "Translation Vector: " << result.tvec.t() << endl;
+                //                cout << "Yaw, Pitch, Roll: " << result.yaw_pitch_roll << endl;
 
                 logStream << "Frame " << frameCount << ":" << std::endl;
                 logStream << "    Translation Vector: " << result.tvec.t() << std::endl;
                 logStream << "    Yaw, Pitch, Roll: " << result.yaw_pitch_roll << std::endl;
-            } else {
-//                cout << "Failed to compute pose!" << endl;
             }
-
+            else
+            {
+                //                cout << "Failed to compute pose!" << endl;
+            }
 
             imshow("libcamera-demo", result.img);
             key = waitKey(1);
-            if (key == 'q') {
+            if (key == 'q')
+            {
                 break;
-            } else if (key == 'f') {
+            }
+            else if (key == 'f')
+            {
                 ControlList controls;
                 controls.set(controls::AfMode, controls::AfModeAuto);
                 controls.set(controls::AfTrigger, 0);
                 cam.set(controls);
-            } else if (key == 'a' || key == 'A') {
+            }
+            else if (key == 'a' || key == 'A')
+            {
                 lens_position += focus_step;
-            } else if (key == 'd' || key == 'D') {
+            }
+            else if (key == 'd' || key == 'D')
+            {
                 lens_position -= focus_step;
             }
 
             // To use the manual focus function, libcamera-dev needs to be updated to version 0.0.10 and above.
-            if (key == 'a' || key == 'A' || key == 'd' || key == 'D') {
+            if (key == 'a' || key == 'A' || key == 'd' || key == 'D')
+            {
                 ControlList controls;
                 controls.set(controls::AfMode, controls::AfModeManual);
-				controls.set(controls::LensPosition, lens_position);
+                controls.set(controls::LensPosition, lens_position);
                 cam.set(controls);
             }
 
             frame_count++;
             frameCount++;
-            if ((time(0) - start_time) >= 1){
+            if ((time(0) - start_time) >= 1)
+            {
                 printf("fps: %d\n", frame_count);
                 frame_count = 0;
                 start_time = time(0);
