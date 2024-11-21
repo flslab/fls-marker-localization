@@ -114,7 +114,7 @@ bool readConfigFile(const string &filename, Mat &cameraMatrix, Mat &distCoeffs, 
             cerr << "Failed to open config file: " << filename << endl;
             return false;
         }
-        json j = json::parse(file);
+        json config = json::parse(file);
 
         // Read camera matrix
         cameraMatrix = Mat::zeros(3, 3, CV_64F);
@@ -122,17 +122,17 @@ bool readConfigFile(const string &filename, Mat &cameraMatrix, Mat &distCoeffs, 
         {
             for (int j = 0; j < 3; j++)
             {
-                cameraMatrix.at<double>(i, j) = j["/camera_matrix"_json_pointer][i][j];
+                cameraMatrix.at<double>(i, j) = config["/camera_matrix"_json_pointer][i][j];
             }
         }
 
         // Read distortion coefficients
-        vector<double> dist = j["dist_coeffs"];
+        vector<double> dist = config["dist_coeffs"];
         distCoeffs = Mat(dist, true);
 
         // Read marker points
         marker_points.clear();
-        for (const auto &point : j["marker_points"])
+        for (const auto &point : config["marker_points"])
         {
             marker_points.push_back(Point3f(point[0], point[1], point[2]));
         }
