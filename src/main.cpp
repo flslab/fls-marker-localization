@@ -36,44 +36,44 @@ std::string generateFilename()
     return filename.str();
 }
 
-Eigen::Matrix3d cvMatToEigen(const cv::Mat &mat)
-{
-    Eigen::Matrix3d eigen_mat;
-    for (int i = 0; i < 3; i++)
-    {
-        for (int j = 0; j < 3; j++)
-        {
-            eigen_mat(i, j) = mat.at<double>(i, j);
-        }
-    }
-    return eigen_mat;
-}
-
-Vec3d yawPitchRollDecomposition(const Mat &rmat)
-{
-    // Convert OpenCV Mat to Eigen Matrix
-    Eigen::Matrix3d R = cvMatToEigen(rmat);
-
-    // Get euler angles in XYZ order (roll, pitch, yaw)
-    Eigen::Vector3d euler_angles = R.eulerAngles(0, 1, 2);
-
-    // Convert to degrees
-    const double rad2deg = 180.0 / M_PI;
-    euler_angles *= rad2deg;
-
-    // Return as OpenCV Vec3d (yaw, pitch, roll)
-    // Note: We reorder from XYZ (roll, pitch, yaw) to ZYX (yaw, pitch, roll)
-    return Vec3d(euler_angles[2], euler_angles[1], euler_angles[0]);
-}
+// Eigen::Matrix3d cvMatToEigen(const cv::Mat &mat)
+// {
+//     Eigen::Matrix3d eigen_mat;
+//     for (int i = 0; i < 3; i++)
+//     {
+//         for (int j = 0; j < 3; j++)
+//         {
+//             eigen_mat(i, j) = mat.at<double>(i, j);
+//         }
+//     }
+//     return eigen_mat;
+// }
 
 // Vec3d yawPitchRollDecomposition(const Mat &rmat)
 // {
-//     double yaw = atan2(rmat.at<double>(1, 0), rmat.at<double>(0, 0));
-//     double pitch = atan2(-rmat.at<double>(2, 0),
-//                          sqrt(pow(rmat.at<double>(2, 1), 2) + pow(rmat.at<double>(2, 2), 2)));
-//     double roll = atan2(rmat.at<double>(2, 1), rmat.at<double>(2, 2));
-//     return Vec3d(yaw, pitch, roll);
+//     // Convert OpenCV Mat to Eigen Matrix
+//     Eigen::Matrix3d R = cvMatToEigen(rmat);
+
+//     // Get euler angles in XYZ order (roll, pitch, yaw)
+//     Eigen::Vector3d euler_angles = R.eulerAngles(0, 1, 2);
+
+//     // Convert to degrees
+//     const double rad2deg = 180.0 / M_PI;
+//     euler_angles *= rad2deg;
+
+//     // Return as OpenCV Vec3d (yaw, pitch, roll)
+//     // Note: We reorder from XYZ (roll, pitch, yaw) to ZYX (yaw, pitch, roll)
+//     return Vec3d(euler_angles[2], euler_angles[1], euler_angles[0]);
 // }
+
+Vec3d yawPitchRollDecomposition(const Mat &rmat)
+{
+    double yaw = atan2(rmat.at<double>(1, 0), rmat.at<double>(0, 0));
+    double pitch = atan2(-rmat.at<double>(2, 0),
+                         sqrt(pow(rmat.at<double>(2, 1), 2) + pow(rmat.at<double>(2, 2), 2)));
+    double roll = atan2(rmat.at<double>(2, 1), rmat.at<double>(2, 2));
+    return Vec3d(yaw, pitch, roll);
+}
 
 // Main function to process an image and compute pose
 PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &distCoeffs, const vector<Point3f> &marker_points)
