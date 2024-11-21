@@ -8,6 +8,7 @@
 #include <ctime>
 #include <iomanip>
 #include <nlohmann/json.hpp>
+#include <Eigen/Dense>
 
 using namespace cv;
 using namespace std;
@@ -178,6 +179,16 @@ bool readConfigFile(const string &filename, Mat &cameraMatrix, Mat &distCoeffs, 
 
 int main(int argc, char **argv)
 {
+    bool print_logs = false;
+    for (int i = 1; i < argc; i++)
+    {
+        string arg = argv[i];
+        if (arg == "--verbose" || arg == "-v")
+        {
+            print_logs = true;
+            break;
+        }
+    }
     // if (argc != 2) {
     //     std::cerr << "Usage: " << argv[0] << " <input_image>" << std::endl;
     //     return -1;
