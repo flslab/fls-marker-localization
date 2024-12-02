@@ -75,6 +75,35 @@ Vec3d yawPitchRollDecomposition(const Mat &rmat)
     return Vec3d(yaw, pitch, roll);
 }
 
+// Function to calculate the centroid
+Point2f findCentroid(const vector<Point2f>& points) {
+    float cx = 0, cy = 0;
+    for (const auto& p : points) {
+        cx += p.x;
+        cy += p.y;
+    }
+    return {cx / points.size(), cy / points.size()};
+}
+
+// Comparator to sort points clockwise around the centroid
+bool clockwiseComparator(const Point2f& a, const Point2f& b, const Point2f& center) {
+    // Calculate angles relative to the center
+    double angleA = atan2(a.y - center.y, a.x - center.x);
+    double angleB = atan2(b.y - center.y, b.x - center.x);
+    return angleA < angleB; // Clockwise order
+}
+
+// Function to sort points in clockwise order
+void sortClockwise(vector<Point2f>& points) {
+    // Find the centroid
+    Point2f center = findCentroid(points);
+
+    // Sort using the comparator
+    sort(points.begin(), points.end(), [&](const Point2f& a, const Point2f& b) {
+        return clockwiseComparator(a, b, center);
+    });
+}
+
 // Main function to process an image and compute pose
 PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &distCoeffs, const vector<Point3f> &marker_points)
 {
@@ -119,6 +148,8 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
     {
         return {im, Mat(), Mat(), Vec3d()};
     }
+
+    sortClockwise(image_points);
 
     // Step 7: SolvePnP
     Mat rvec, tvec;
