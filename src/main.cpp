@@ -294,9 +294,12 @@ int main(int argc, char **argv)
 //                logStream << "Frame " << frameCount << ":" << std::endl;
 //                logStream << "    Translation Vector: " << result.tvec.t() << std::endl;
 //                logStream << "    Yaw, Pitch, Roll: " << result.yaw_pitch_roll << std::endl;
+                std::vector<double> tvec_vec = {result.tvec.at<double>(0, 0),
+                                        result.tvec.at<double>(1, 0),
+                                        result.tvec.at<double>(2, 0)};
                 frames.push_back({
                     {"frame_id", frameCount},
-                    {"tvec", {result.tvec.t()[0], result.tvec.t()[1], result.tvec.t()[2]}},
+                    {"tvec", tvec_vec},
                     {"yaw_pitch_roll", {result.yaw_pitch_roll[0], result.yaw_pitch_roll[1], result.yaw_pitch_roll[2]}}
                 });
             }
