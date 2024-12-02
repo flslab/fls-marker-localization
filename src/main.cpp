@@ -31,7 +31,7 @@ std::string generateFilename()
     std::ostringstream filename;
     filename << "pose_logs_"
              << std::put_time(localTime, "%Y-%m-%d_%H-%M-%S")
-             << ".txt";
+             << ".json";
 
     return filename.str();
 }
@@ -255,6 +255,7 @@ int main(int argc, char **argv)
         LibcameraOutData frameData;
         cam.startCamera();
         cam.VideoStream(&width, &height, &stride);
+        std::vector<json> frames;
         while (true)
         {
             flag = cam.readFrame(&frameData);
@@ -279,9 +280,14 @@ int main(int argc, char **argv)
                     cout << "Yaw, Pitch, Roll: " << result.yaw_pitch_roll << endl;
                 }
 
-                logStream << "Frame " << frameCount << ":" << std::endl;
-                logStream << "    Translation Vector: " << result.tvec.t() << std::endl;
-                logStream << "    Yaw, Pitch, Roll: " << result.yaw_pitch_roll << std::endl;
+//                logStream << "Frame " << frameCount << ":" << std::endl;
+//                logStream << "    Translation Vector: " << result.tvec.t() << std::endl;
+//                logStream << "    Yaw, Pitch, Roll: " << result.yaw_pitch_roll << std::endl;
+                frames.push_back({
+                    {"frame_id", i},
+                    {"tvec", {result.tvec.t()[0], result.tvec.t()[1], result.tvec.t()[2]}},
+                    {"yaw_pitch_roll", {result.yaw_pitch_roll[0], result.yaw_pitch_roll[1], result.yaw_pitch_roll[2]}}
+                });
             }
             else
             {
@@ -333,11 +339,24 @@ int main(int argc, char **argv)
         cam.stopCamera();
 
         std::string filename = generateFilename();
-        std::ofstream logFile(filename);
-        logFile << logStream.str();
-        logFile.close();
+//        std::ofstream logFile(filename);
+//        logFile << logStream.str();
+//        logFile.close();
 
-        std::cout << "All logs saved to: " << filename << std::endl;
+        json log;
+        log["config"] = {{"distance", distance}};
+        log["frames"] = frames;
+
+        // Write to JSON file
+        std::ofstream file(filename);
+        if (file.is_open()) {
+            file << log.dump(4);  // Pretty-print JSON with 4-space indentation
+            file.close();
+            std::cout << "Logs saved to " << filename << std::endl;
+        } else {
+            std::cerr << "Failed to write logs to file." << std::endl;
+        }
+
     }
     cam.closeCamera();
     return 0;
