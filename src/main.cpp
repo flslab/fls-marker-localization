@@ -295,7 +295,7 @@ int main(int argc, char **argv)
 //                logStream << "    Translation Vector: " << result.tvec.t() << std::endl;
 //                logStream << "    Yaw, Pitch, Roll: " << result.yaw_pitch_roll << std::endl;
                 frames.push_back({
-                    {"frame_id", i},
+                    {"frame_id", frameCount},
                     {"tvec", {result.tvec.t()[0], result.tvec.t()[1], result.tvec.t()[2]}},
                     {"yaw_pitch_roll", {result.yaw_pitch_roll[0], result.yaw_pitch_roll[1], result.yaw_pitch_roll[2]}}
                 });
