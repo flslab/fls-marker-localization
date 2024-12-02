@@ -180,13 +180,24 @@ bool readConfigFile(const string &filename, Mat &cameraMatrix, Mat &distCoeffs, 
 int main(int argc, char **argv)
 {
     bool print_logs = false;
-    for (int i = 1; i < argc; i++)
-    {
+    double distance = -1.0;  // Default invalid value for distance
+
+    // Parse command-line arguments
+    for (int i = 1; i < argc; i++) {
         string arg = argv[i];
-        if (arg == "--verbose" || arg == "-v")
-        {
+
+        if (arg == "--verbose" || arg == "-v") {
             print_logs = true;
-            break;
+        } else if ((arg == "--distance" || arg == "-d") && i + 1 < argc) {
+            try {
+                distance = stod(argv[++i]);  // Convert the next argument to a double
+                if (distance <= 0) {
+                    throw invalid_argument("Distance must be positive");
+                }
+            } catch (const invalid_argument &e) {
+                cerr << "Invalid value for distance. Must be a positive number." << endl;
+                return -1;
+            }
         }
     }
     // if (argc != 2) {
