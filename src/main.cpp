@@ -181,6 +181,7 @@ int main(int argc, char **argv)
 {
     bool print_logs = false;
     double distance = -1.0;  // Default invalid value for distance
+    int execution_time = 0; // Default to unlimited execution
 
     // Parse command-line arguments
     for (int i = 1; i < argc; i++) {
@@ -198,35 +199,32 @@ int main(int argc, char **argv)
                 cerr << "Invalid value for distance. Must be a positive number." << endl;
                 return -1;
             }
+        } else if ((arg == "--time" || arg == "-t") && i + 1 < argc) {
+            try {
+                execution_time = stoi(argv[++i]);  // Convert the next argument to an integer
+                if (execution_time <= 0) {
+                    throw invalid_argument("Time must be positive");
+                }
+            } catch (const invalid_argument &e) {
+                cerr << "Invalid value for time. Must be a positive number." << endl;
+                return -1;
+            }
         }
     }
-    // if (argc != 2) {
-    //     std::cerr << "Usage: " << argv[0] << " <input_image>" << std::endl;
-    //     return -1;
-    // }
-    // Load input image
-    // cv::Mat image = cv::imread(argv[1], cv::IMREAD_GRAYSCALE);
-    // if (image.empty()) {
-    //     std::cerr << "Could not load image: " << argv[1] << std::endl;
-    //     return -1;
-    // }
-    //
-    // // Convert grayscale to BGR for displaying color circles and ellipses
-    // cv::Mat displayImage;
-    // cv::cvtColor(image, displayImage, cv::COLOR_GRAY2BGR);
 
     time_t start_time = time(0);
     int frame_count = 0;
     int frameCount = 0;
+    int elapsed_seconds = 0;
     float lens_position = 100;
     float focus_step = 50;
     LibCamera cam;
-    uint32_t width = 640;
-    uint32_t height = 480;
+    uint32_t width = 1280;
+    uint32_t height = 720;
     uint32_t stride;
     char key;
-    int window_width = 640;
-    int window_height = 480;
+    int window_width = 1280;
+    int window_height = 720;
 
     if (width > window_width)
     {
@@ -258,7 +256,6 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    std::ostringstream logStream;
 
     if (!ret)
     {
@@ -282,7 +279,6 @@ int main(int argc, char **argv)
             // Process the image
             PoseResult result = processImage(im, cameraMatrix, distCoeffs, marker_points);
 
-            // Display results
             if (!result.tvec.empty())
             {
                 if (print_logs)
@@ -291,9 +287,6 @@ int main(int argc, char **argv)
                     cout << "Yaw, Pitch, Roll: " << result.yaw_pitch_roll << endl;
                 }
 
-//                logStream << "Frame " << frameCount << ":" << std::endl;
-//                logStream << "    Translation Vector: " << result.tvec.t() << std::endl;
-//                logStream << "    Yaw, Pitch, Roll: " << result.yaw_pitch_roll << std::endl;
                 std::vector<double> tvec_vec = {result.tvec.at<double>(0, 0),
                                         result.tvec.at<double>(1, 0),
                                         result.tvec.at<double>(2, 0)};
@@ -346,6 +339,11 @@ int main(int argc, char **argv)
                 printf("fps: %d\n", frame_count);
                 frame_count = 0;
                 start_time = time(0);
+                elapsed_seconds += 1;
+            }
+
+            if (elapsed_seconds >= execution_time) {
+              break;
             }
             cam.returnFrameBuffer(frameData);
         }
@@ -353,9 +351,7 @@ int main(int argc, char **argv)
         cam.stopCamera();
 
         std::string filename = generateFilename();
-//        std::ofstream logFile(filename);
-//        logFile << logStream.str();
-//        logFile.close();
+
 
         json log;
         log["config"] = {{"distance", distance}};
