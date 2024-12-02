@@ -219,12 +219,12 @@ int main(int argc, char **argv)
     float lens_position = 100;
     float focus_step = 50;
     LibCamera cam;
-    uint32_t width = 1280;
-    uint32_t height = 720;
+    uint32_t width = 640;
+    uint32_t height = 480;
     uint32_t stride;
     char key;
-    int window_width = 1280;
-    int window_height = 720;
+    int window_width = 640;
+    int window_height = 480;
 
     if (width > window_width)
     {
