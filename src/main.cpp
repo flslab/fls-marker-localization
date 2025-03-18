@@ -211,6 +211,7 @@ bool readConfigFile(const string &filename, Mat &cameraMatrix, Mat &distCoeffs, 
 int main(int argc, char **argv)
 {
     bool print_logs = false;
+    bool preview = false;
     double distance = -1.0;  // Default invalid value for distance
     int execution_time = 0; // Default to unlimited execution
 
@@ -220,6 +221,8 @@ int main(int argc, char **argv)
 
         if (arg == "--verbose" || arg == "-v") {
             print_logs = true;
+        } else if (arg == "--preview" || arg == "-p") {
+            preview = true;
         } else if ((arg == "--distance" || arg == "-d") && i + 1 < argc) {
             try {
                 distance = stod(argv[++i]);  // Convert the next argument to a double
@@ -257,10 +260,12 @@ int main(int argc, char **argv)
     int window_width = 640;
     int window_height = 480;
 
-    if (width > window_width)
-    {
-        cv::namedWindow("libcamera-demo", cv::WINDOW_NORMAL);
-        cv::resizeWindow("libcamera-demo", window_width, window_height);
+    if (preview) {
+        if (width > window_width)
+        {
+            cv::namedWindow("libcamera-demo", cv::WINDOW_NORMAL);
+            cv::resizeWindow("libcamera-demo", window_width, window_height);
+        }
     }
 
     int ret = cam.initCamera();
@@ -332,7 +337,9 @@ int main(int argc, char **argv)
                 //                cout << "Failed to compute pose!" << endl;
             }
 
-            imshow("libcamera-demo", result.img);
+            if (preview) {
+                imshow("libcamera-demo", result.img);
+            }
             key = waitKey(1);
             if (key == 'q')
             {
