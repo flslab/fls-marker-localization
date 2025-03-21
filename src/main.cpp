@@ -130,7 +130,7 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
     for (const auto &contour : contours)
     {
         Moments moments = cv::moments(contour);
-        if (moments.m00 > 50)
+        if (moments.m00 > 25)
         {
             int center_x = int(moments.m10 / moments.m00);
             int center_y = int(moments.m01 / moments.m00);
