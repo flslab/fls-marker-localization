@@ -368,10 +368,10 @@ int main(int argc, char **argv)
                 pos->x = tvec_vec[0];
                 pos->y = tvec_vec[1];
                 pos->z = tvec_vec[2];
-                pos->qx = 0;
-                pos->qy = 0;
-                pos->qz = 0.707;
-                pos->qw = 0.707;
+                pos->qx = 0.0;
+                pos->qy = 0.0;
+                pos->qz = 0.0;
+                pos->qw = 0.0;
             }
             else {
                 //                cout << "Failed to compute pose!" << endl;
