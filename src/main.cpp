@@ -12,6 +12,9 @@
 #include <sys/stat.h>  // For stat and mkdir
 #include <sys/types.h> // For mode_t
 #include <unistd.h>    // For access function
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <cstring>
 
 using namespace cv;
 using namespace std;
@@ -23,6 +26,12 @@ struct PoseResult
     Mat tvec;
     Mat rmat;
     Vec3d yaw_pitch_roll;
+};
+
+struct Position {
+    bool valid;
+    float x, y, z;
+    float qx, qy, qz, qw;
 };
 
 // Function to get a timestamped filename
@@ -319,6 +328,12 @@ int main(int argc, char **argv)
         cam.startCamera();
         cam.VideoStream(&width, &height, &stride);
         std::vector<json> frames;
+
+        const char* shm_name = "/pos_shared_mem";
+        int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0666);
+        ftruncate(shm_fd, sizeof(Position));
+        Position* pos = (Position*)mmap(0, sizeof(Position), PROT_WRITE, MAP_SHARED, shm_fd, 0);
+
         while (true)
         {
             flag = cam.readFrame(&frameData);
@@ -334,10 +349,8 @@ int main(int argc, char **argv)
             // Process the image
             PoseResult result = processImage(im, cameraMatrix, distCoeffs, marker_points);
 
-            if (!result.tvec.empty())
-            {
-                if (print_logs)
-                {
+            if (!result.tvec.empty()) {
+                if (print_logs) {
                     cout << "Translation Vector: " << result.tvec.t() << endl;
                     cout << "Yaw, Pitch, Roll: " << result.yaw_pitch_roll << endl;
                 }
@@ -350,10 +363,19 @@ int main(int argc, char **argv)
                     {"tvec", tvec_vec},
                     {"yaw_pitch_roll", {result.yaw_pitch_roll[0], result.yaw_pitch_roll[1], result.yaw_pitch_roll[2]}}
                 });
+
+                pos->valid = true;
+                pos->x = tvec_vec[0];
+                pos->y = tvec_vec[1];
+                pos->z = tvec_vec[2];
+                pos->qx = 0;
+                pos->qy = 0;
+                pos->qz = 0.707;
+                pos->qw = 0.707;
             }
-            else
-            {
+            else {
                 //                cout << "Failed to compute pose!" << endl;
+                pos->valid = false;
             }
 
             if (preview) {
@@ -366,29 +388,24 @@ int main(int argc, char **argv)
             }
 
             key = waitKey(1);
-            if (key == 'q')
-            {
+            if (key == 'q') {
                 break;
             }
-            else if (key == 'f')
-            {
+            else if (key == 'f') {
                 ControlList controls;
                 controls.set(controls::AfMode, controls::AfModeAuto);
                 controls.set(controls::AfTrigger, 0);
                 cam.set(controls);
             }
-            else if (key == 'a' || key == 'A')
-            {
+            else if (key == 'a' || key == 'A') {
                 lens_position += focus_step;
             }
-            else if (key == 'd' || key == 'D')
-            {
+            else if (key == 'd' || key == 'D') {
                 lens_position -= focus_step;
             }
 
             // To use the manual focus function, libcamera-dev needs to be updated to version 0.0.10 and above.
-            if (key == 'a' || key == 'A' || key == 'd' || key == 'D')
-            {
+            if (key == 'a' || key == 'A' || key == 'd' || key == 'D') {
                 ControlList controls;
                 controls.set(controls::AfMode, controls::AfModeManual);
                 controls.set(controls::LensPosition, lens_position);
@@ -397,8 +414,7 @@ int main(int argc, char **argv)
 
             frame_count++;
             frameCount++;
-            if ((time(0) - start_time) >= 1)
-            {
+            if ((time(0) - start_time) >= 1) {
                 printf("fps: %d\n", frame_count);
                 frame_count = 0;
                 start_time = time(0);
