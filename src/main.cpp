@@ -352,8 +352,7 @@ int main(int argc, char **argv)
 
             if (!result.tvec.empty()) {
                 if (print_logs) {
-                    cout << "Translation Vector: " << result.tvec.t() << endl;
-                    cout << "Yaw, Pitch, Roll: " << result.yaw_pitch_roll << endl;
+                    cout << "Translation Vector: " << result.tvec.t() << "Yaw, Pitch, Roll: " << result.yaw_pitch_roll << endl;
                 }
 
                 std::vector<double> tvec_vec = {result.tvec.at<double>(0, 0),
