@@ -208,12 +208,21 @@ bool readConfigFile(const string &filename, Mat &cameraMatrix, Mat &distCoeffs, 
     }
 }
 
+bool createDirectory(const string &dir) {
+    struct stat info;
+    if (stat(dir.c_str(), &info) != 0) {
+        return mkdir(dir.c_str(), 0777) == 0; // Create directory
+    }
+    return info.st_mode & S_IFDIR; // Check if it's a directory
+}
+
 int main(int argc, char **argv)
 {
     bool print_logs = false;
     bool preview = false;
     double distance = -1.0;  // Default invalid value for distance
     int execution_time = 0; // Default to unlimited execution
+    string save_dir = "";
 
     // Parse command-line arguments
     for (int i = 1; i < argc; i++) {
@@ -241,6 +250,12 @@ int main(int argc, char **argv)
                 }
             } catch (const invalid_argument &e) {
                 cerr << "Invalid value for time. Must be a positive number." << endl;
+                return -1;
+            }
+        } else if ((arg == "--save_frames" || arg == "-s") && i + 1 < argc) {
+            save_dir = argv[++i];
+            if (!createDirectory(save_dir)) {
+                cerr << "Error: Unable to create directory " << save_dir << endl;
                 return -1;
             }
         }
@@ -340,6 +355,12 @@ int main(int argc, char **argv)
             if (preview) {
                 imshow("libcamera-demo", result.img);
             }
+            // Save frames if enabled
+            if (!save_dir.empty()) {
+                string filename = save_dir + "/frame_" + to_string(frameCount) + ".png";
+                imwrite(filename, result.img);
+            }
+
             key = waitKey(1);
             if (key == 'q')
             {
