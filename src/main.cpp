@@ -15,6 +15,7 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <cstring>
+#pragma pack(1)
 
 using namespace cv;
 using namespace std;
