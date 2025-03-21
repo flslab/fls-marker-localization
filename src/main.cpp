@@ -9,6 +9,9 @@
 #include <iomanip>
 #include <nlohmann/json.hpp>
 #include <Eigen/Dense>
+#include <sys/stat.h>  // For stat and mkdir
+#include <sys/types.h> // For mode_t
+#include <unistd.h>    // For access function
 
 using namespace cv;
 using namespace std;
@@ -211,9 +214,10 @@ bool readConfigFile(const string &filename, Mat &cameraMatrix, Mat &distCoeffs, 
 bool createDirectory(const string &dir) {
     struct stat info;
     if (stat(dir.c_str(), &info) != 0) {
-        return mkdir(dir.c_str(), 0777) == 0; // Create directory
+        // Directory does not exist, create it
+        return mkdir(dir.c_str(), 0777) == 0;
     }
-    return info.st_mode & S_IFDIR; // Check if it's a directory
+    return S_ISDIR(info.st_mode); // Check if it's a directory
 }
 
 int main(int argc, char **argv)
