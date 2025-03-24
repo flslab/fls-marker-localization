@@ -237,6 +237,7 @@ int main(int argc, char **argv)
     double distance = -1.0;  // Default invalid value for distance
     int execution_time = 0; // Default to unlimited execution
     string save_dir = "";
+    string config_file = "camera_config.json";
 
     // Parse command-line arguments
     for (int i = 1; i < argc; i++) {
@@ -272,6 +273,8 @@ int main(int argc, char **argv)
                 cerr << "Error: Unable to create directory " << save_dir << endl;
                 return -1;
             }
+        } else if ((arg == "--config") && i + 1 < argc) {
+            config_file = argv[++i];
         }
     }
 
@@ -315,7 +318,7 @@ int main(int argc, char **argv)
     Mat cameraMatrix, distCoeffs;
     vector<Point3f> marker_points;
 
-    if (!readConfigFile("camera_config.json", cameraMatrix, distCoeffs, marker_points))
+    if (!readConfigFile(config_file, cameraMatrix, distCoeffs, marker_points))
     {
         cerr << "Failed to read camera configuration" << endl;
         return -1;
