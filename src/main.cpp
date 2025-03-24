@@ -43,7 +43,7 @@ std::string generateFilename()
     std::tm *localTime = std::localtime(&now);
 
     std::ostringstream filename;
-    filename << "pose_logs_"
+    filename << "logs/pose_logs_"
              << std::put_time(localTime, "%Y-%m-%d_%H-%M-%S")
              << ".json";
 
@@ -141,7 +141,7 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
     for (const auto &contour : contours)
     {
         Moments moments = cv::moments(contour);
-        if (moments.m00 > 25)
+        if (moments.m00 > 9)
         {
             int center_x = int(moments.m10 / moments.m00);
             int center_y = int(moments.m01 / moments.m00);
