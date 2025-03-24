@@ -362,8 +362,17 @@ int main(int argc, char **argv)
                 std::vector<double> tvec_vec = {result.tvec.at<double>(0, 0),
                                         result.tvec.at<double>(1, 0),
                                         result.tvec.at<double>(2, 0)};
+
+                auto now = std::chrono::system_clock::now();
+
+                // Calculate the duration since the epoch
+                auto duration = now.time_since_epoch();
+
+                // Convert the duration to milliseconds
+                auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+
                 frames.push_back({
-                    {"time", std::chrono::system_clock::now().time_since_epoch()},
+                    {"time", milliseconds},
                     {"frame_id", frameCount},
                     {"tvec", tvec_vec},
                     {"yaw_pitch_roll", {result.yaw_pitch_roll[0], result.yaw_pitch_roll[1], result.yaw_pitch_roll[2]}}
