@@ -363,7 +363,7 @@ int main(int argc, char **argv)
                                         result.tvec.at<double>(1, 0),
                                         result.tvec.at<double>(2, 0)};
                 frames.push_back({
-                    {"time", std::chrono::system_clock::now()},
+                    {"time", std::chrono::system_clock::now().time_since_epoch()},
                     {"frame_id", frameCount},
                     {"tvec", tvec_vec},
                     {"yaw_pitch_roll", {result.yaw_pitch_roll[0], result.yaw_pitch_roll[1], result.yaw_pitch_roll[2]}}
