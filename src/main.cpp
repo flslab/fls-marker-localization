@@ -131,29 +131,41 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
     cvtColor(im, grey, COLOR_BGR2GRAY);
     threshold(grey, grey, 255 * 0.8, 255, THRESH_BINARY);
 
+    // Step 2.5: Morphological opening to remove noise
+    Mat kernel = getStructuringElement(MORPH_ELLIPSE, Size(5, 5));
+    morphologyEx(grey, grey, MORPH_OPEN, kernel);
+
     // Step 3: Find contours
     vector<vector<cv::Point>> contours;
     findContours(grey, contours, RETR_TREE, CHAIN_APPROX_SIMPLE);
-    drawContours(im, contours, -1, Scalar(255, 0, 0), 2);
 
-    // Step 4: Find image points from contours
+    // Step 4: Filter contours
     vector<Point2f> image_points;
     for (const auto &contour : contours)
     {
+        double area = contourArea(contour);
+        if (area < 100) continue; // Skip small blobs
+
+        // Circularity = 4π × Area / Perimeter²
+        double perimeter = arcLength(contour, true);
+        double circularity = 4 * CV_PI * area / (perimeter * perimeter);
+        if (circularity < 0.75) continue; // Skip non-circular shapes
+
         Moments moments = cv::moments(contour);
-        if (moments.m00 > 9)
-        {
-            int center_x = int(moments.m10 / moments.m00);
-            int center_y = int(moments.m01 / moments.m00);
-            circle(im, cv::Point(center_x, center_y), 10, Scalar(0, 0, 255), -1);
-            image_points.push_back(Point2f(center_x, center_y));
-        }
+        if (moments.m00 == 0) continue;
+
+        int center_x = int(moments.m10 / moments.m00);
+        int center_y = int(moments.m01 / moments.m00);
+        circle(im, cv::Point(center_x, center_y), 10, Scalar(0, 0, 255), -1);
+        image_points.push_back(Point2f(center_x, center_y));
     }
+
+    // Optional: Draw remaining contours
+    drawContours(im, contours, -1, Scalar(255, 0, 0), 2);
 
     // Step 5: Validate image points
     if (image_points.size() != 4)
     {
-        //        cout << "Not enough points found!" << endl;
         return {im, Mat(), Mat(), Vec3d()};
     }
 
