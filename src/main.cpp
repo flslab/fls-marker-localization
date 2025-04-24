@@ -129,7 +129,7 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
     // Step 2: Convert to grayscale and threshold
     Mat grey;
     cvtColor(im, grey, COLOR_BGR2GRAY);
-    threshold(grey, grey, 255 * 0.65, 255, THRESH_BINARY);
+    threshold(grey, grey, 255 * 0.8, 255, THRESH_BINARY);
 
     // Step 3: Find contours
     vector<vector<cv::Point>> contours;
