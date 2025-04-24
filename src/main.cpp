@@ -132,7 +132,7 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
     threshold(grey, grey, 255 * 0.8, 255, THRESH_BINARY);
 
     // Step 2.5: Morphological opening to remove noise
-    Mat kernel = getStructuringElement(MORPH_ELLIPSE, Size(5, 5));
+    Mat kernel = getStructuringElement(MORPH_ELLIPSE, cv::Size(5, 5));
     morphologyEx(grey, grey, MORPH_OPEN, kernel);
 
     // Step 3: Find contours
