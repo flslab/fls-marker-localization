@@ -278,7 +278,7 @@ int main(int argc, char **argv)
         } else if ((arg == "--config") && i + 1 < argc) {
             config_file = argv[++i];
         } else if ((arg == "--save-rate") && i + 1 < argc) {
-            save_rate = argv[++i];
+            save_rate = stoi(argv[++i]);
         }
     }
 
