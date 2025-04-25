@@ -237,6 +237,7 @@ int main(int argc, char **argv)
     bool preview = false;
     double distance = -1.0;  // Default invalid value for distance
     int execution_time = 0; // Default to unlimited execution
+    int save_rate = 1
     string save_dir = "";
     string config_file = "camera_config.json";
 
@@ -276,6 +277,8 @@ int main(int argc, char **argv)
             }
         } else if ((arg == "--config") && i + 1 < argc) {
             config_file = argv[++i];
+        } else if ((arg == "--save-rate") && i + 1 < argc) {
+            save_rate = argv[++i];
         }
     }
 
@@ -396,7 +399,7 @@ int main(int argc, char **argv)
                 imshow("libcamera-demo", result.img);
             }
             // Save frames if enabled
-            if (!save_dir.empty()) {
+            if (!save_dir.empty() && frameCount % save_rate == 0) {
                 string filename = save_dir + "/frame_" + to_string(frameCount) + ".png";
                 imwrite(filename, result.img);
             }
