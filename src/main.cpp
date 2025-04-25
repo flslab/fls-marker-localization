@@ -145,7 +145,7 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
         {
             int center_x = int(moments.m10 / moments.m00);
             int center_y = int(moments.m01 / moments.m00);
-            circle(im, cv::Point(center_x, center_y), 10, Scalar(0, 0, 255), -1);
+            circle(im, cv::Point(center_x, center_y), 10, Scalar(0, 0, 255), 1);
             image_points.push_back(Point2f(center_x, center_y));
         }
     }
