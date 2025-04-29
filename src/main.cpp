@@ -241,8 +241,8 @@ int main(int argc, char **argv)
     string save_dir = "";
     string config_file = "camera_config.json";
 
-    double contrast = 5.0;
-    double brightness = 0.5;
+    double contrast = 2.5;
+    double brightness = 1.0;
     int exposure_time = 500;
     int frame_rate = 120;
 
@@ -480,3 +480,5 @@ int main(int argc, char **argv)
     cam.closeCamera();
     return 0;
 }
+
+//./eye -t 5 -v --save-rate 10 -s frame_8 --brightness 1.0 --contrast 2.5 exposure 500
