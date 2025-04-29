@@ -241,6 +241,11 @@ int main(int argc, char **argv)
     string save_dir = "";
     string config_file = "camera_config.json";
 
+    double contrast = 5.0;
+    double brightness = 0.5;
+    int exposure_time = 500;
+    int frame_rate = 120;
+
     // Parse command-line arguments
     for (int i = 1; i < argc; i++) {
         string arg = argv[i];
@@ -279,6 +284,14 @@ int main(int argc, char **argv)
             config_file = argv[++i];
         } else if ((arg == "--save-rate") && i + 1 < argc) {
             save_rate = stoi(argv[++i]);
+        } else if ((arg == "--contrast") && i + 1 < argc) {
+            contrast = stod(argv[++i]);
+        } else if ((arg == "--brightness") && i + 1 < argc) {
+            brightness = stod(argv[++i]);
+        } else if ((arg == "--exposure") && i + 1 < argc) {
+            exposure_time = stoi(argv[++i]);
+        } else if ((arg == "--fps") && i + 1 < argc) {
+            frame_rate = stoi(argv[++i]);
         }
     }
 
@@ -308,15 +321,15 @@ int main(int argc, char **argv)
     cam.configureStill(width, height, formats::RGB888, 1, 0);
     ControlList controls_;
     // 30 fps
-    int64_t frame_time = 1000000 / 120;
+    int64_t frame_time = 1000000 / frame_rate;
     // Set frame rate
     controls_.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({frame_time, frame_time}));
     // Adjust the brightness of the output images, in the range -1.0 to 1.0
-    controls_.set(controls::Brightness, 0.5);
+    controls_.set(controls::Brightness, brightness);
     // Adjust the contrast of the output image, where 1.0 = normal contrast
-    controls_.set(controls::Contrast, 5.0);
+    controls_.set(controls::Contrast, contrast);
     // Set the exposure time
-    controls_.set(controls::ExposureTime, 500);
+    controls_.set(controls::ExposureTime, exposure_time);
     cam.set(controls_);
 
     Mat cameraMatrix, distCoeffs;
