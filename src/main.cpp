@@ -316,7 +316,7 @@ int main(int argc, char **argv)
     // Adjust the contrast of the output image, where 1.0 = normal contrast
     //    controls_.set(controls::Contrast, 1.5);
     // Set the exposure time
-    // controls_.set(controls::ExposureTime, 20000);
+    controls_.set(controls::ExposureTime, 500);
     cam.set(controls_);
 
     Mat cameraMatrix, distCoeffs;
