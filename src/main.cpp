@@ -312,7 +312,7 @@ int main(int argc, char **argv)
     // Set frame rate
     controls_.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({frame_time, frame_time}));
     // Adjust the brightness of the output images, in the range -1.0 to 1.0
-//    controls_.set(controls::Brightness, 1.0);
+    controls_.set(controls::Brightness, 0.5);
     // Adjust the contrast of the output image, where 1.0 = normal contrast
     controls_.set(controls::Contrast, 5.0);
     // Set the exposure time
