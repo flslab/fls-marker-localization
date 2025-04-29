@@ -314,7 +314,7 @@ int main(int argc, char **argv)
     // Adjust the brightness of the output images, in the range -1.0 to 1.0
 //    controls_.set(controls::Brightness, 1.0);
     // Adjust the contrast of the output image, where 1.0 = normal contrast
-    controls_.set(controls::Contrast, 1.5);
+    controls_.set(controls::Contrast, 5.0);
     // Set the exposure time
     controls_.set(controls::ExposureTime, 500);
     cam.set(controls_);
