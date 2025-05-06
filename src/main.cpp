@@ -274,7 +274,7 @@ int main(int argc, char **argv)
                 cerr << "Invalid value for time. Must be a positive number." << endl;
                 return -1;
             }
-        } else if ((arg == "--save_frames" || arg == "-s") && i + 1 < argc) {
+        } else if ((arg == "--save-frames" || arg == "-s") && i + 1 < argc) {
             save_dir = argv[++i];
             if (!createDirectory(save_dir)) {
                 cerr << "Error: Unable to create directory " << save_dir << endl;
