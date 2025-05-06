@@ -241,9 +241,9 @@ int main(int argc, char **argv)
     string save_dir = "";
     string config_file = "camera_config.json";
 
-    double contrast = 2.5;
-    double brightness = 1.0;
-    int exposure_time = 500;
+    double contrast = -2.0;
+    double brightness = -2.0;
+    int exposure_time = -2;
     int frame_rate = 120;
 
     // Parse command-line arguments
@@ -324,12 +324,22 @@ int main(int argc, char **argv)
     int64_t frame_time = 1000000 / frame_rate;
     // Set frame rate
     controls_.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({frame_time, frame_time}));
-    // Adjust the brightness of the output images, in the range -1.0 to 1.0
-    controls_.set(controls::Brightness, brightness);
-    // Adjust the contrast of the output image, where 1.0 = normal contrast
-    controls_.set(controls::Contrast, contrast);
-    // Set the exposure time
-    controls_.set(controls::ExposureTime, exposure_time);
+
+    if (brightness >= -1.0 && brightness <= 1.0) {
+        // Adjust the brightness of the output images, in the range -1.0 to 1.0
+        controls_.set(controls::Brightness, brightness);
+    }
+
+    if (contrast >= 0.0) {
+        // Adjust the contrast of the output image, where 1.0 = normal contrast
+        controls_.set(controls::Contrast, contrast);
+    }
+
+    if (exposure_time >= 0) {
+        // Set the exposure time
+        controls_.set(controls::ExposureTime, exposure_time);
+    }
+
     cam.set(controls_);
 
     Mat cameraMatrix, distCoeffs;
@@ -481,4 +491,5 @@ int main(int argc, char **argv)
     return 0;
 }
 
-//./eye -t 5 -v --save-rate 10 -s frame_8 --brightness 1.0 --contrast 2.5 exposure 500
+// camera moudule 3 setting:
+//./eye -t 5 -v --save-rate 10 -s frame_1 --brightness 1.0 --contrast 2.5 exposure 500
