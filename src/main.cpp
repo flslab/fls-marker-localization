@@ -423,7 +423,7 @@ int main(int argc, char **argv)
                 imshow("libcamera-demo", result.img);
             }
             // Save frames if enabled
-            if (!save_dir.empty() && frameCount % save_rate == 0) {
+            if (!save_frames && frameCount % save_rate == 0) {
                 string filename = log_dir + "/frame_" + to_string(frameCount) + ".png";
                 imwrite(filename, result.img);
             }
