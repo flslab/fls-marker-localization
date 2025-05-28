@@ -37,15 +37,14 @@ struct Position {
 };
 
 // Function to get a timestamped filename
-std::string generateFilename()
+std::string generateLogName()
 {
     std::time_t now = std::time(nullptr);
     std::tm *localTime = std::localtime(&now);
 
     std::ostringstream filename;
-    filename << "logs/pose_logs_"
-             << std::put_time(localTime, "%Y-%m-%d_%H-%M-%S")
-             << ".json";
+    filename << "logs/"
+             << std::put_time(localTime, "%H_%M_%S_%m_%d_%Y");
 
     return filename.str();
 }
@@ -238,7 +237,7 @@ int main(int argc, char **argv)
     double distance = -1.0;  // Default invalid value for distance
     int execution_time = 0; // Default to unlimited execution
     int save_rate = 1;
-    string save_dir = "";
+    bool save_frames = false;
     string config_file = "camera_config.json";
 
     double contrast = -2.0;
@@ -274,12 +273,8 @@ int main(int argc, char **argv)
                 cerr << "Invalid value for time. Must be a positive number." << endl;
                 return -1;
             }
-        } else if ((arg == "--save-frames" || arg == "-s") && i + 1 < argc) {
-            save_dir = argv[++i];
-            if (!createDirectory(save_dir)) {
-                cerr << "Error: Unable to create directory " << save_dir << endl;
-                return -1;
-            }
+        } else if ((arg == "--save-frames" || arg == "-s")) {
+            save_frames = true;
         } else if ((arg == "--config") && i + 1 < argc) {
             config_file = argv[++i];
         } else if ((arg == "--save-rate") && i + 1 < argc) {
@@ -293,6 +288,12 @@ int main(int argc, char **argv)
         } else if ((arg == "--fps") && i + 1 < argc) {
             frame_rate = stoi(argv[++i]);
         }
+    }
+
+    string log_dir = generateLogName();
+    if (!createDirectory(log_dir)) {
+        cerr << "Error: Unable to create directory " << log_dir << endl;
+        return -1;
     }
 
     time_t start_time = time(0);
@@ -423,7 +424,7 @@ int main(int argc, char **argv)
             }
             // Save frames if enabled
             if (!save_dir.empty() && frameCount % save_rate == 0) {
-                string filename = save_dir + "/frame_" + to_string(frameCount) + ".png";
+                string filename = log_dir + "/frame_" + to_string(frameCount) + ".png";
                 imwrite(filename, result.img);
             }
 
@@ -469,19 +470,18 @@ int main(int argc, char **argv)
         destroyAllWindows();
         cam.stopCamera();
 
-        std::string filename = generateFilename();
-
+        string log_filename = log_dir + "/log.json"
 
         json log;
         log["config"] = {{"distance", distance}};
         log["frames"] = frames;
 
         // Write to JSON file
-        std::ofstream file(filename);
+        std::ofstream file(log_filename);
         if (file.is_open()) {
             file << log.dump(4);  // Pretty-print JSON with 4-space indentation
             file.close();
-            std::cout << "Logs saved to " << filename << std::endl;
+            std::cout << "Logs saved to " << log_filename << std::endl;
         } else {
             std::cerr << "Failed to write logs to file." << std::endl;
         }
