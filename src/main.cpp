@@ -470,7 +470,7 @@ int main(int argc, char **argv)
         destroyAllWindows();
         cam.stopCamera();
 
-        string log_filename = log_dir + "/log.json"
+        string log_filename = log_dir + "/log.json";
 
         json log;
         log["config"] = {{"distance", distance}};
