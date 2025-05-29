@@ -132,8 +132,20 @@ public:
     }
 
     void updateFrame(const Mat& frame) {
+        if (frame.empty()) return;
+
         std::lock_guard<std::mutex> lock(frame_mutex);
-        current_frame = frame.clone();
+
+        // Ensure proper memory alignment and continuous memory layout
+        if (frame.isContinuous()) {
+            current_frame = frame.clone();
+        } else {
+            // Create a continuous copy if the frame is not continuous
+            Mat temp_frame;
+            frame.copyTo(temp_frame);
+            current_frame = temp_frame;
+        }
+
         new_frame_available = true;
     }
 
@@ -150,52 +162,96 @@ public:
 private:
     void udpStreamingLoop() {
         vector<uchar> buffer;
-        vector<int> encode_params = {IMWRITE_JPEG_QUALITY, 80};
+        vector<int> encode_params = {IMWRITE_JPEG_QUALITY, 60}; // Lower quality for stability
 
-        // Wait for initial client connection
+        // Wait for initial client connection with timeout
         char dummy_buffer[1];
-        recvfrom(socket_fd, dummy_buffer, 1, 0, (struct sockaddr*)&client_addr, &client_len);
+        struct timeval timeout;
+        timeout.tv_sec = 1;
+        timeout.tv_usec = 0;
+        setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
+        cout << "Waiting for UDP client connection..." << endl;
+        if (recvfrom(socket_fd, dummy_buffer, 1, 0, (struct sockaddr*)&client_addr, &client_len) < 0) {
+            cout << "No UDP client connected, continuing without streaming..." << endl;
+            return;
+        }
         cout << "UDP client connected from " << inet_ntoa(client_addr.sin_addr) << endl;
 
         while (is_running) {
-            if (new_frame_available) {
+            if (new_frame_available.load()) {
                 Mat frame_to_send;
                 {
                     std::lock_guard<std::mutex> lock(frame_mutex);
-                    frame_to_send = current_frame.clone();
+                    if (!current_frame.empty() && current_frame.isContinuous()) {
+                        frame_to_send = current_frame.clone();
+                    }
                     new_frame_available = false;
                 }
 
                 if (!frame_to_send.empty()) {
-                    // Encode frame as JPEG
-                    if (imencode(".jpg", frame_to_send, buffer, encode_params)) {
-                        // Send frame size first
-                        uint32_t frame_size = htonl(buffer.size());
-                        sendto(socket_fd, &frame_size, sizeof(frame_size), 0,
-                               (struct sockaddr*)&client_addr, client_len);
+                    // Resize frame for network efficiency
+                    Mat resized_frame;
+                    if (frame_to_send.cols > 320) {
+                        resize(frame_to_send, resized_frame, Size(320, 240));
+                    } else {
+                        resized_frame = frame_to_send;
+                    }
 
-                        // Send frame data in chunks
-                        const size_t chunk_size = 1024;
-                        size_t bytes_sent = 0;
-                        while (bytes_sent < buffer.size()) {
-                            size_t remaining = buffer.size() - bytes_sent;
-                            size_t to_send = min(chunk_size, remaining);
+                    // Encode frame as JPEG with error checking
+                    buffer.clear();
+                    try {
+                        if (imencode(".jpg", resized_frame, buffer, encode_params) && !buffer.empty()) {
+                            // Limit max frame size
+                            if (buffer.size() < 65536) { // 64KB limit
+                                // Send frame size first
+                                uint32_t frame_size = htonl(buffer.size());
+                                if (sendto(socket_fd, &frame_size, sizeof(frame_size), 0,
+                                          (struct sockaddr*)&client_addr, client_len) < 0) {
+                                    break; // Client disconnected
+                                }
 
-                            sendto(socket_fd, buffer.data() + bytes_sent, to_send, 0,
-                                   (struct sockaddr*)&client_addr, client_len);
-                            bytes_sent += to_send;
+                                // Send frame data in smaller chunks
+                                const size_t chunk_size = 512; // Smaller chunks for stability
+                                size_t bytes_sent = 0;
+                                while (bytes_sent < buffer.size() && is_running) {
+                                    size_t remaining = buffer.size() - bytes_sent;
+                                    size_t to_send = min(chunk_size, remaining);
+
+                                    if (sendto(socket_fd, buffer.data() + bytes_sent, to_send, 0,
+                                              (struct sockaddr*)&client_addr, client_len) < 0) {
+                                        goto udp_loop_end; // Break out of nested loops
+                                    }
+                                    bytes_sent += to_send;
+                                }
+                            }
                         }
+                    } catch (const cv::Exception& e) {
+                        cerr << "OpenCV encoding error: " << e.what() << endl;
                     }
                 }
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(33)); // ~30 FPS
+            std::this_thread::sleep_for(std::chrono::milliseconds(50)); // ~20 FPS for stability
         }
+
+        udp_loop_end:
+        cout << "UDP streaming ended" << endl;
     }
 
     void httpStreamingLoop() {
         while (is_running) {
+            struct timeval timeout;
+            timeout.tv_sec = 1;
+            timeout.tv_usec = 0;
+            setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
             int client_socket = accept(socket_fd, (struct sockaddr*)&client_addr, &client_len);
-            if (client_socket < 0) continue;
+            if (client_socket < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    continue; // Timeout, try again
+                }
+                break; // Real error
+            }
 
             cout << "HTTP client connected from " << inet_ntoa(client_addr.sin_addr) << endl;
 
@@ -204,38 +260,61 @@ private:
                 "HTTP/1.1 200 OK\r\n"
                 "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n"
                 "Connection: keep-alive\r\n"
-                "Cache-Control: no-cache\r\n\r\n";
+                "Cache-Control: no-cache\r\n"
+                "Access-Control-Allow-Origin: *\r\n\r\n";
 
-            send(client_socket, headers.c_str(), headers.length(), 0);
+            if (send(client_socket, headers.c_str(), headers.length(), MSG_NOSIGNAL) < 0) {
+                close(client_socket);
+                continue;
+            }
 
             vector<uchar> buffer;
-            vector<int> encode_params = {IMWRITE_JPEG_QUALITY, 80};
+            vector<int> encode_params = {IMWRITE_JPEG_QUALITY, 60}; // Lower quality for stability
 
             while (is_running) {
-                if (new_frame_available) {
+                if (new_frame_available.load()) {
                     Mat frame_to_send;
                     {
                         std::lock_guard<std::mutex> lock(frame_mutex);
-                        frame_to_send = current_frame.clone();
+                        if (!current_frame.empty() && current_frame.isContinuous()) {
+                            frame_to_send = current_frame.clone();
+                        }
                         new_frame_available = false;
                     }
 
                     if (!frame_to_send.empty()) {
-                        if (imencode(".jpg", frame_to_send, buffer, encode_params)) {
-                            string frame_header =
-                                "--frame\r\n"
-                                "Content-Type: image/jpeg\r\n"
-                                "Content-Length: " + to_string(buffer.size()) + "\r\n\r\n";
+                        // Resize frame for network efficiency
+                        Mat resized_frame;
+                        if (frame_to_send.cols > 320) {
+                            resize(frame_to_send, resized_frame, Size(320, 240));
+                        } else {
+                            resized_frame = frame_to_send;
+                        }
 
-                            if (send(client_socket, frame_header.c_str(), frame_header.length(), 0) < 0 ||
-                                send(client_socket, buffer.data(), buffer.size(), 0) < 0 ||
-                                send(client_socket, "\r\n", 2, 0) < 0) {
-                                break; // Client disconnected
+                        buffer.clear();
+                        try {
+                            if (imencode(".jpg", resized_frame, buffer, encode_params) && !buffer.empty()) {
+                                // Limit max frame size
+                                if (buffer.size() < 65536) { // 64KB limit
+                                    string frame_header =
+                                        "--frame\r\n"
+                                        "Content-Type: image/jpeg\r\n"
+                                        "Content-Length: " + to_string(buffer.size()) + "\r\n\r\n";
+
+                                    if (send(client_socket, frame_header.c_str(), frame_header.length(), MSG_NOSIGNAL) < 0 ||
+                                        send(client_socket, buffer.data(), buffer.size(), MSG_NOSIGNAL) < 0 ||
+                                        send(client_socket, "\r\n", 2, MSG_NOSIGNAL) < 0) {
+                                        break; // Client disconnected
+                                    }
+                                }
                             }
+                        } catch (const cv::Exception& e) {
+                            cerr << "OpenCV encoding error: " << e.what() << endl;
+                            break;
                         }
                     }
                 }
-                std::this_thread::sleep_for(std::chrono::milliseconds(33)); // ~30 FPS
+                std::this_thread::sleep_for(std::chrono::milliseconds(50)); // ~20 FPS for stability
             }
 
             close(client_socket);
@@ -569,7 +648,17 @@ int main(int argc, char **argv)
             if (!flag)
                 continue;
 
-            Mat im(height, width, CV_8UC3, frameData.imageData, stride);
+            // Create a properly aligned and continuous Mat from camera data
+            Mat raw_frame(height, width, CV_8UC3, frameData.imageData, stride);
+            Mat im;
+
+            // Ensure the frame is continuous and properly aligned
+            if (raw_frame.isContinuous() && stride == width * 3) {
+                im = raw_frame.clone(); // Safe copy
+            } else {
+                // Create a properly aligned copy
+                raw_frame.copyTo(im);
+            }
 
             // Process the image
             PoseResult result = processImage(im, cameraMatrix, distCoeffs, marker_points);
@@ -607,9 +696,13 @@ int main(int argc, char **argv)
                 pos->valid = false;
             }
 
-            // Update streaming frame
-            if (enable_streaming && streamer) {
-                streamer->updateFrame(result.img);
+            // Update streaming frame (only if streaming is enabled and frame is valid)
+            if (enable_streaming && streamer && !result.img.empty()) {
+                try {
+                    streamer->updateFrame(result.img);
+                } catch (const std::exception& e) {
+                    cerr << "Streaming error: " << e.what() << endl;
+                }
             }
 
             if (preview) {
