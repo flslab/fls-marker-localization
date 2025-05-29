@@ -22,7 +22,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
-#pragma pack(1)
+//#pragma pack(1)
 
 using namespace cv;
 using namespace std;
