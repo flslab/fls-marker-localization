@@ -9,13 +9,19 @@
 #include <iomanip>
 #include <nlohmann/json.hpp>
 #include <Eigen/Dense>
-#include <sys/stat.h>  // For stat and mkdir
-#include <sys/types.h> // For mode_t
-#include <unistd.h>    // For access function
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <cstring>
 #include <chrono>
+#include <thread>
+#include <atomic>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+
 #pragma pack(1)
 
 using namespace cv;
@@ -36,6 +42,208 @@ struct Position {
     float qx, qy, qz, qw;
 };
 
+// Video streaming class
+class VideoStreamer {
+private:
+    int socket_fd;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t client_len;
+    bool is_running;
+    std::thread streaming_thread;
+    std::atomic<bool> new_frame_available;
+    Mat current_frame;
+    std::mutex frame_mutex;
+    int stream_port;
+    string stream_type;
+
+public:
+    VideoStreamer(int port = 8080, const string& type = "udp")
+        : stream_port(port), stream_type(type), is_running(false), new_frame_available(false) {
+        client_len = sizeof(client_addr);
+    }
+
+    ~VideoStreamer() {
+        stop();
+    }
+
+    bool start() {
+        if (stream_type == "udp") {
+            return startUDPStreaming();
+        } else if (stream_type == "http") {
+            return startHTTPStreaming();
+        }
+        return false;
+    }
+
+    bool startUDPStreaming() {
+        socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (socket_fd < 0) {
+            cerr << "Error creating UDP socket" << endl;
+            return false;
+        }
+
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_addr.s_addr = INADDR_ANY;
+        server_addr.sin_port = htons(stream_port);
+
+        if (bind(socket_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+            cerr << "Error binding UDP socket to port " << stream_port << endl;
+            close(socket_fd);
+            return false;
+        }
+
+        is_running = true;
+        streaming_thread = std::thread(&VideoStreamer::udpStreamingLoop, this);
+        cout << "UDP streaming started on port " << stream_port << endl;
+        return true;
+    }
+
+    bool startHTTPStreaming() {
+        socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (socket_fd < 0) {
+            cerr << "Error creating HTTP socket" << endl;
+            return false;
+        }
+
+        int opt = 1;
+        setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_addr.s_addr = INADDR_ANY;
+        server_addr.sin_port = htons(stream_port);
+
+        if (bind(socket_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+            cerr << "Error binding HTTP socket to port " << stream_port << endl;
+            close(socket_fd);
+            return false;
+        }
+
+        if (listen(socket_fd, 5) < 0) {
+            cerr << "Error listening on HTTP socket" << endl;
+            close(socket_fd);
+            return false;
+        }
+
+        is_running = true;
+        streaming_thread = std::thread(&VideoStreamer::httpStreamingLoop, this);
+        cout << "HTTP streaming started on port " << stream_port << endl;
+        cout << "Open http://localhost:" << stream_port << "/stream in your browser" << endl;
+        return true;
+    }
+
+    void updateFrame(const Mat& frame) {
+        std::lock_guard<std::mutex> lock(frame_mutex);
+        current_frame = frame.clone();
+        new_frame_available = true;
+    }
+
+    void stop() {
+        is_running = false;
+        if (streaming_thread.joinable()) {
+            streaming_thread.join();
+        }
+        if (socket_fd >= 0) {
+            close(socket_fd);
+        }
+    }
+
+private:
+    void udpStreamingLoop() {
+        vector<uchar> buffer;
+        vector<int> encode_params = {IMWRITE_JPEG_QUALITY, 80};
+
+        // Wait for initial client connection
+        char dummy_buffer[1];
+        recvfrom(socket_fd, dummy_buffer, 1, 0, (struct sockaddr*)&client_addr, &client_len);
+        cout << "UDP client connected from " << inet_ntoa(client_addr.sin_addr) << endl;
+
+        while (is_running) {
+            if (new_frame_available) {
+                Mat frame_to_send;
+                {
+                    std::lock_guard<std::mutex> lock(frame_mutex);
+                    frame_to_send = current_frame.clone();
+                    new_frame_available = false;
+                }
+
+                if (!frame_to_send.empty()) {
+                    // Encode frame as JPEG
+                    if (imencode(".jpg", frame_to_send, buffer, encode_params)) {
+                        // Send frame size first
+                        uint32_t frame_size = htonl(buffer.size());
+                        sendto(socket_fd, &frame_size, sizeof(frame_size), 0,
+                               (struct sockaddr*)&client_addr, client_len);
+
+                        // Send frame data in chunks
+                        const size_t chunk_size = 1024;
+                        size_t bytes_sent = 0;
+                        while (bytes_sent < buffer.size()) {
+                            size_t remaining = buffer.size() - bytes_sent;
+                            size_t to_send = min(chunk_size, remaining);
+
+                            sendto(socket_fd, buffer.data() + bytes_sent, to_send, 0,
+                                   (struct sockaddr*)&client_addr, client_len);
+                            bytes_sent += to_send;
+                        }
+                    }
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(33)); // ~30 FPS
+        }
+    }
+
+    void httpStreamingLoop() {
+        while (is_running) {
+            int client_socket = accept(socket_fd, (struct sockaddr*)&client_addr, &client_len);
+            if (client_socket < 0) continue;
+
+            cout << "HTTP client connected from " << inet_ntoa(client_addr.sin_addr) << endl;
+
+            // Send HTTP headers for MJPEG stream
+            string headers =
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n"
+                "Connection: keep-alive\r\n"
+                "Cache-Control: no-cache\r\n\r\n";
+
+            send(client_socket, headers.c_str(), headers.length(), 0);
+
+            vector<uchar> buffer;
+            vector<int> encode_params = {IMWRITE_JPEG_QUALITY, 80};
+
+            while (is_running) {
+                if (new_frame_available) {
+                    Mat frame_to_send;
+                    {
+                        std::lock_guard<std::mutex> lock(frame_mutex);
+                        frame_to_send = current_frame.clone();
+                        new_frame_available = false;
+                    }
+
+                    if (!frame_to_send.empty()) {
+                        if (imencode(".jpg", frame_to_send, buffer, encode_params)) {
+                            string frame_header =
+                                "--frame\r\n"
+                                "Content-Type: image/jpeg\r\n"
+                                "Content-Length: " + to_string(buffer.size()) + "\r\n\r\n";
+
+                            if (send(client_socket, frame_header.c_str(), frame_header.length(), 0) < 0 ||
+                                send(client_socket, buffer.data(), buffer.size(), 0) < 0 ||
+                                send(client_socket, "\r\n", 2, 0) < 0) {
+                                break; // Client disconnected
+                            }
+                        }
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(33)); // ~30 FPS
+            }
+
+            close(client_socket);
+            cout << "HTTP client disconnected" << endl;
+        }
+    }
+};
+
 // Function to get a timestamped filename
 std::string generateLogName()
 {
@@ -48,36 +256,6 @@ std::string generateLogName()
 
     return filename.str();
 }
-
-// Eigen::Matrix3d cvMatToEigen(const cv::Mat &mat)
-// {
-//     Eigen::Matrix3d eigen_mat;
-//     for (int i = 0; i < 3; i++)
-//     {
-//         for (int j = 0; j < 3; j++)
-//         {
-//             eigen_mat(i, j) = mat.at<double>(i, j);
-//         }
-//     }
-//     return eigen_mat;
-// }
-
-// Vec3d yawPitchRollDecomposition(const Mat &rmat)
-// {
-//     // Convert OpenCV Mat to Eigen Matrix
-//     Eigen::Matrix3d R = cvMatToEigen(rmat);
-
-//     // Get euler angles in XYZ order (roll, pitch, yaw)
-//     Eigen::Vector3d euler_angles = R.eulerAngles(0, 1, 2);
-
-//     // Convert to degrees
-//     const double rad2deg = 180.0 / M_PI;
-//     euler_angles *= rad2deg;
-
-//     // Return as OpenCV Vec3d (yaw, pitch, roll)
-//     // Note: We reorder from XYZ (roll, pitch, yaw) to ZYX (yaw, pitch, roll)
-//     return Vec3d(euler_angles[2], euler_angles[1], euler_angles[0]);
-// }
 
 Vec3d yawPitchRollDecomposition(const Mat &rmat)
 {
@@ -152,7 +330,6 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
     // Step 5: Validate image points
     if (image_points.size() != 4)
     {
-        //        cout << "Not enough points found!" << endl;
         return {im, Mat(), Mat(), Vec3d()};
     }
 
@@ -234,11 +411,16 @@ int main(int argc, char **argv)
 {
     bool print_logs = false;
     bool preview = false;
-    double distance = -1.0;  // Default invalid value for distance
-    int execution_time = 0; // Default to unlimited execution
+    double distance = -1.0;
+    int execution_time = 0;
     int save_rate = 1;
     bool save_frames = false;
     string config_file = "camera_config.json";
+
+    // Streaming parameters
+    bool enable_streaming = false;
+    int stream_port = 8080;
+    string stream_type = "http"; // "http" or "udp"
 
     double contrast = -2.0;
     double brightness = -2.0;
@@ -255,7 +437,7 @@ int main(int argc, char **argv)
             preview = true;
         } else if ((arg == "--distance" || arg == "-d") && i + 1 < argc) {
             try {
-                distance = stod(argv[++i]);  // Convert the next argument to a double
+                distance = stod(argv[++i]);
                 if (distance <= 0) {
                     throw invalid_argument("Distance must be positive");
                 }
@@ -265,7 +447,7 @@ int main(int argc, char **argv)
             }
         } else if ((arg == "--time" || arg == "-t") && i + 1 < argc) {
             try {
-                execution_time = stoi(argv[++i]);  // Convert the next argument to an integer
+                execution_time = stoi(argv[++i]);
                 if (execution_time <= 0) {
                     throw invalid_argument("Time must be positive");
                 }
@@ -287,6 +469,16 @@ int main(int argc, char **argv)
             exposure_time = stoi(argv[++i]);
         } else if ((arg == "--fps") && i + 1 < argc) {
             frame_rate = stoi(argv[++i]);
+        } else if ((arg == "--stream") || arg == "--streaming") {
+            enable_streaming = true;
+        } else if ((arg == "--stream-port") && i + 1 < argc) {
+            stream_port = stoi(argv[++i]);
+        } else if ((arg == "--stream-type") && i + 1 < argc) {
+            stream_type = argv[++i];
+            if (stream_type != "http" && stream_type != "udp") {
+                cerr << "Invalid stream type. Use 'http' or 'udp'." << endl;
+                return -1;
+            }
         }
     }
 
@@ -294,6 +486,17 @@ int main(int argc, char **argv)
     if (!createDirectory(log_dir)) {
         cerr << "Error: Unable to create directory " << log_dir << endl;
         return -1;
+    }
+
+    // Initialize video streamer
+    VideoStreamer* streamer = nullptr;
+    if (enable_streaming) {
+        streamer = new VideoStreamer(stream_port, stream_type);
+        if (!streamer->start()) {
+            cerr << "Failed to start video streaming" << endl;
+            delete streamer;
+            return -1;
+        }
     }
 
     time_t start_time = time(0);
@@ -321,23 +524,18 @@ int main(int argc, char **argv)
     int ret = cam.initCamera();
     cam.configureStill(width, height, formats::RGB888, 1, 0);
     ControlList controls_;
-    // 30 fps
     int64_t frame_time = 1000000 / frame_rate;
-    // Set frame rate
     controls_.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({frame_time, frame_time}));
 
     if (brightness >= -1.0 && brightness <= 1.0) {
-        // Adjust the brightness of the output images, in the range -1.0 to 1.0
         controls_.set(controls::Brightness, brightness);
     }
 
     if (contrast >= 0.0) {
-        // Adjust the contrast of the output image, where 1.0 = normal contrast
         controls_.set(controls::Contrast, contrast);
     }
 
     if (exposure_time >= 0) {
-        // Set the exposure time
         controls_.set(controls::ExposureTime, exposure_time);
     }
 
@@ -351,7 +549,6 @@ int main(int argc, char **argv)
         cerr << "Failed to read camera configuration" << endl;
         return -1;
     }
-
 
     if (!ret)
     {
@@ -371,12 +568,8 @@ int main(int argc, char **argv)
             flag = cam.readFrame(&frameData);
             if (!flag)
                 continue;
-            // CV_8UC3 for color CV_8UC1 for grayscale image
-            Mat im(height, width, CV_8UC3, frameData.imageData, stride);
 
-            cv::Mat frame;
-            //            cv::cvtColor(im, frame, cv::COLOR_BGR2GRAY);
-            // Mat frame(height, width, CV_8UC1, frameData.imageData, stride);
+            Mat im(height, width, CV_8UC3, frameData.imageData, stride);
 
             // Process the image
             PoseResult result = processImage(im, cameraMatrix, distCoeffs, marker_points);
@@ -391,11 +584,7 @@ int main(int argc, char **argv)
                                         result.tvec.at<double>(2, 0)};
 
                 auto now = std::chrono::system_clock::now();
-
-                // Calculate the duration since the epoch
                 auto duration = now.time_since_epoch();
-
-                // Convert the duration to milliseconds
                 auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
 
                 frames.push_back({
@@ -415,13 +604,18 @@ int main(int argc, char **argv)
                 pos->qw = 0.0;
             }
             else {
-                //                cout << "Failed to compute pose!" << endl;
                 pos->valid = false;
+            }
+
+            // Update streaming frame
+            if (enable_streaming && streamer) {
+                streamer->updateFrame(result.img);
             }
 
             if (preview) {
                 imshow("libcamera-demo", result.img);
             }
+
             // Save frames if enabled
             if (save_frames && frameCount % save_rate == 0) {
                 string filename = log_dir + "/frame_" + to_string(frameCount) + ".png";
@@ -445,7 +639,6 @@ int main(int argc, char **argv)
                 lens_position -= focus_step;
             }
 
-            // To use the manual focus function, libcamera-dev needs to be updated to version 0.0.10 and above.
             if (key == 'a' || key == 'A' || key == 'd' || key == 'D') {
                 ControlList controls;
                 controls.set(controls::AfMode, controls::AfModeManual);
@@ -462,34 +655,35 @@ int main(int argc, char **argv)
                 elapsed_seconds += 1;
             }
 
-            if (elapsed_seconds >= execution_time) {
-              break;
+            if (execution_time > 0 && elapsed_seconds >= execution_time) {
+                break;
             }
             cam.returnFrameBuffer(frameData);
         }
+
         destroyAllWindows();
         cam.stopCamera();
 
         string log_filename = log_dir + "/log.json";
-
         json log;
         log["config"] = {{"distance", distance}};
         log["frames"] = frames;
 
-        // Write to JSON file
         std::ofstream file(log_filename);
         if (file.is_open()) {
-            file << log.dump(4);  // Pretty-print JSON with 4-space indentation
+            file << log.dump(4);
             file.close();
             std::cout << "Logs saved to " << log_filename << std::endl;
         } else {
             std::cerr << "Failed to write logs to file." << std::endl;
         }
-
     }
+
+    // Clean up streaming
+    if (streamer) {
+        delete streamer;
+    }
+
     cam.closeCamera();
     return 0;
 }
-
-// camera moudule 3 setting:
-//./eye -t 5 -v --save-rate 10 -s frame_1 --brightness 1.0 --contrast 2.5 exposure 500
