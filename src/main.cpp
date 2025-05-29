@@ -608,14 +608,17 @@ int main(int argc, char **argv)
 
     if (brightness >= -1.0 && brightness <= 1.0) {
         controls_.set(controls::Brightness, brightness);
+        cout << "Brightness: " << brightness << endl;
     }
 
     if (contrast >= 0.0) {
         controls_.set(controls::Contrast, contrast);
+        cout << "Contrast: " << contrast << endl;
     }
 
     if (exposure_time >= 0) {
         controls_.set(controls::ExposureTime, exposure_time);
+        cout << "Exposure time: " << exposure_time << endl;
     }
 
     cam.set(controls_);
