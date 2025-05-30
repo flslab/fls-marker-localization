@@ -39,7 +39,7 @@ struct PoseResult
 struct Position {
     bool valid;
     float x, y, z;
-    float qx, qy, qz, qw;
+    float roll, pitch, yaw;
 };
 
 // Video streaming class
@@ -690,10 +690,9 @@ int main(int argc, char **argv)
                 pos->x = tvec_vec[0];
                 pos->y = tvec_vec[1];
                 pos->z = tvec_vec[2];
-                pos->qx = 0.0;
-                pos->qy = 0.0;
-                pos->qz = 0.0;
-                pos->qw = 0.0;
+                pos->roll = result.yaw_pitch_roll[2];
+                pos->pitch = result.yaw_pitch_roll[1];
+                pos->yaw = result.yaw_pitch_roll[0];
             }
             else {
                 pos->valid = false;
