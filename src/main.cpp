@@ -579,6 +579,11 @@ int main(int argc, char **argv)
             delete streamer;
             return -1;
         }
+        cout << "Streamin at " << fps / stream_rate << " fps" << endl;
+    }
+
+    if (save_frames) {
+        cout << "Saving frames at " << fps / save_rate << " fps" << endl;
     }
 
     time_t start_time = time(0);
