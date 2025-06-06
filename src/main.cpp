@@ -500,6 +500,7 @@ int main(int argc, char **argv)
     bool enable_streaming = false;
     int stream_port = 8080;
     string stream_type = "http"; // "http" or "udp"
+    int stream_rate = 10;
 
     double contrast = -2.0;
     double brightness = -2.0;
@@ -558,6 +559,8 @@ int main(int argc, char **argv)
                 cerr << "Invalid stream type. Use 'http' or 'udp'." << endl;
                 return -1;
             }
+        } else if ((arg == "--stream-rate") && i + 1 < argc) {
+            stream_rate = stoi(argv[++i]);
         }
     }
 
@@ -699,7 +702,7 @@ int main(int argc, char **argv)
             }
 
             // Update streaming frame (only if streaming is enabled and frame is valid)
-            if (enable_streaming && streamer && !result.img.empty()) {
+            if (enable_streaming && frameCount % stream_rate == 0 && streamer && !result.img.empty()) {
                 try {
                     streamer->updateFrame(result.img);
                 } catch (const std::exception& e) {
