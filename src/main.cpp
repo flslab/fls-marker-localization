@@ -583,7 +583,7 @@ int main(int argc, char **argv)
     }
 
     if (save_frames) {
-        cout << "Saving frames at " << frame_rate / save_rate << " fps" << endl;
+        cout << "Saving frames at " << frame_ratefps / save_rate << " fps" << endl;
     }
 
     time_t start_time = time(0);
@@ -752,7 +752,9 @@ int main(int argc, char **argv)
             frame_count++;
             frameCount++;
             if ((time(0) - start_time) >= 1) {
-                printf("fps: %d\n", frame_count);
+                if (print_logs) {
+                    cout << frame_count << "fps" << endl;
+                }
                 frame_count = 0;
                 start_time = time(0);
                 elapsed_seconds += 1;
