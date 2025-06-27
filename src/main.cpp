@@ -583,7 +583,7 @@ int main(int argc, char **argv)
     }
 
     if (save_frames) {
-        cout << "Saving frames at " << frame_ratefps / save_rate << " fps" << endl;
+        cout << "Saving frames at " << frame_rate / save_rate << " fps" << endl;
     }
 
     time_t start_time = time(0);
