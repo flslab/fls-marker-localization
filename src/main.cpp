@@ -386,7 +386,7 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
     equalizeHist(grey, grey);
 
     // Apply adaptive threshold
-    adaptiveThreshold(grey, grey, 255, ADAPTIVE_THRESH_MEAN_C, THRESH_BINARY, 31, -10);
+    adaptiveThreshold(grey, grey, 255, ADAPTIVE_THRESH_MEAN_C, THRESH_BINARY, 31, -20);
 
 //    // Apply Gaussian Blur
 //    GaussianBlur(im, im, cv::Size(9, 9), 0);
