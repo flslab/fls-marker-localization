@@ -385,16 +385,13 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
     // Normalize brightness (optional)
     equalizeHist(grey, grey);
 
-    // Apply adaptive threshold
-    adaptiveThreshold(grey, grey, 255, ADAPTIVE_THRESH_MEAN_C, THRESH_BINARY, 31, -20);
-
 //    // Apply Gaussian Blur
 //    GaussianBlur(im, im, cv::Size(9, 9), 0);
 //
 //    // Convert to grayscale and threshold
 //    Mat grey;
 //    cvtColor(im, grey, COLOR_BGR2GRAY);
-//    threshold(grey, grey, 255 * 0.8, 255, THRESH_BINARY);
+    threshold(grey, grey, 255 * 0.8, 255, THRESH_BINARY);
 
     // Find contours
     vector<vector<cv::Point>> contours;
