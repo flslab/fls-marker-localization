@@ -378,20 +378,14 @@ void sortClockwise(vector<Point2f>& points) {
 PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &distCoeffs, const vector<Point3f> &marker_points)
 {
     Mat im = input.clone();
+
+    // Apply Gaussian Blur
+    GaussianBlur(im, im, cv::Size(9, 9), 0);
+
+    // Convert to grayscale and threshold
     Mat grey;
-
     cvtColor(im, grey, COLOR_BGR2GRAY);
-
-    // Normalize brightness (optional)
-    equalizeHist(grey, grey);
-
-//    // Apply Gaussian Blur
-//    GaussianBlur(im, im, cv::Size(9, 9), 0);
-//
-//    // Convert to grayscale and threshold
-//    Mat grey;
-//    cvtColor(im, grey, COLOR_BGR2GRAY);
-    threshold(grey, grey, 255 * 0.95, 255, THRESH_BINARY);
+    threshold(grey, grey, 255 * 0.8, 255, THRESH_BINARY);
 
     // Find contours
     vector<vector<cv::Point>> contours;
@@ -415,13 +409,13 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
     // Validate image points
     if (image_points.size() != 4)
     {
-        return {grey, Mat(), Mat(), Vec3d()};
+        return {im, Mat(), Mat(), Vec3d()};
     }
 
     // Use provided marker points
     if (marker_points.size() != 4)
     {
-        return {grey, Mat(), Mat(), Vec3d()};
+        return {im, Mat(), Mat(), Vec3d()};
     }
 
     sortClockwise(image_points);
@@ -437,7 +431,7 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
     // Extract pose and orientation
     Vec3d yaw_pitch_roll = yawPitchRollDecomposition(rmat);
 
-    return {grey, tvec, rmat, yaw_pitch_roll};
+    return {im, tvec, rmat, yaw_pitch_roll};
 }
 
 bool readConfigFile(const string &filename, Mat &cameraMatrix, Mat &distCoeffs, vector<Point3f> &marker_points)
