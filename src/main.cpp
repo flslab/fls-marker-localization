@@ -378,21 +378,30 @@ void sortClockwise(vector<Point2f>& points) {
 PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &distCoeffs, const vector<Point3f> &marker_points)
 {
     Mat im = input.clone();
-
-    // Step 1: Apply Gaussian Blur
-    GaussianBlur(im, im, cv::Size(9, 9), 0);
-
-    // Step 2: Convert to grayscale and threshold
     Mat grey;
-    cvtColor(im, grey, COLOR_BGR2GRAY);
-    threshold(grey, grey, 255 * 0.8, 255, THRESH_BINARY);
 
-    // Step 3: Find contours
+    cvtColor(im, grey, COLOR_BGR2GRAY);
+
+    // Normalize brightness (optional)
+    equalizeHist(grey, grey);
+
+    // Apply adaptive threshold
+    adaptiveThreshold(grey, grey, 255, ADAPTIVE_THRESH_MEAN_C, THRESH_BINARY, 31, -10);
+
+//    // Apply Gaussian Blur
+//    GaussianBlur(im, im, cv::Size(9, 9), 0);
+//
+//    // Convert to grayscale and threshold
+//    Mat grey;
+//    cvtColor(im, grey, COLOR_BGR2GRAY);
+//    threshold(grey, grey, 255 * 0.8, 255, THRESH_BINARY);
+
+    // Find contours
     vector<vector<cv::Point>> contours;
     findContours(grey, contours, RETR_TREE, CHAIN_APPROX_SIMPLE);
     drawContours(im, contours, -1, Scalar(255, 0, 0), 2);
 
-    // Step 4: Find image points from contours
+    // Find image points from contours
     vector<Point2f> image_points;
     for (const auto &contour : contours)
     {
@@ -406,13 +415,13 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
         }
     }
 
-    // Step 5: Validate image points
+    // Validate image points
     if (image_points.size() != 4)
     {
         return {im, Mat(), Mat(), Vec3d()};
     }
 
-    // Step 6: Use provided marker points
+    // Use provided marker points
     if (marker_points.size() != 4)
     {
         return {im, Mat(), Mat(), Vec3d()};
@@ -420,15 +429,15 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
 
     sortClockwise(image_points);
 
-    // Step 7: SolvePnP
+    // SolvePnP
     Mat rvec, tvec;
     solvePnP(marker_points, image_points, cameraMatrix, distCoeffs, rvec, tvec, false, SOLVEPNP_AP3P);
 
-    // Step 8: Convert rotation vector to matrix
+    // Convert rotation vector to matrix
     Mat rmat;
     Rodrigues(rvec, rmat);
 
-    // Step 9: Extract pose and orientation
+    // Extract pose and orientation
     Vec3d yaw_pitch_roll = yawPitchRollDecomposition(rmat);
 
     return {im, tvec, rmat, yaw_pitch_roll};
