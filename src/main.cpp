@@ -418,13 +418,13 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
     // Validate image points
     if (image_points.size() != 4)
     {
-        return {im, Mat(), Mat(), Vec3d()};
+        return {grey, Mat(), Mat(), Vec3d()};
     }
 
     // Use provided marker points
     if (marker_points.size() != 4)
     {
-        return {im, Mat(), Mat(), Vec3d()};
+        return {grey, Mat(), Mat(), Vec3d()};
     }
 
     sortClockwise(image_points);
@@ -440,7 +440,7 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
     // Extract pose and orientation
     Vec3d yaw_pitch_roll = yawPitchRollDecomposition(rmat);
 
-    return {im, tvec, rmat, yaw_pitch_roll};
+    return {grey, tvec, rmat, yaw_pitch_roll};
 }
 
 bool readConfigFile(const string &filename, Mat &cameraMatrix, Mat &distCoeffs, vector<Point3f> &marker_points)
