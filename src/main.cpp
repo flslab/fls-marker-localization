@@ -609,7 +609,7 @@ int main(int argc, char **argv)
     }
 
     int ret = cam.initCamera();
-    cam.configureStill(width, height, formats::YUV420, 1, 0);
+    cam.configureStill(width, height, formats::R8, 1, 0);
     ControlList controls_;
     int64_t frame_time = 1000000 / frame_rate;
     controls_.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({frame_time, frame_time}));
@@ -660,7 +660,7 @@ int main(int argc, char **argv)
                 continue;
 
             // Create a properly aligned and continuous Mat from camera data
-            Mat raw_frame(height, width, CV_16UC1, frameData.imageData, stride);
+            Mat raw_frame(height, width, CV_8UC3, frameData.imageData, stride);
             Mat im;
 
             // Ensure the frame is continuous and properly aligned
