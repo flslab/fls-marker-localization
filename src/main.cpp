@@ -384,8 +384,8 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
 
     // Convert to grayscale and threshold
     Mat grey;
-    cvtColor(im, grey, COLOR_BGR2GRAY);
-    threshold(grey, grey, 255 * 0.8, 255, THRESH_BINARY);
+//    cvtColor(im, grey, COLOR_BGR2GRAY);
+    threshold(im, grey, 255 * 0.8, 255, THRESH_BINARY);
 
     // Find contours
     vector<vector<cv::Point>> contours;
@@ -662,7 +662,7 @@ int main(int argc, char **argv)
             // Create a properly aligned and continuous Mat from camera data
             Mat raw_frame(height, width, CV_16UC1, frameData.imageData, stride);
             raw_frame.convertTo(raw_frame, CV_8U, 255.0 / 1023.0);
-            cvtColor(raw_frame, raw_frame, cv::COLOR_GRAY2BGR);
+//            cvtColor(raw_frame, raw_frame, cv::COLOR_GRAY2BGR);
             Mat im;
 
             // Ensure the frame is continuous and properly aligned
