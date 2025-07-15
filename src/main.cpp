@@ -661,7 +661,7 @@ int main(int argc, char **argv)
 
             // Create a properly aligned and continuous Mat from camera data
             Mat raw_frame(height, width, CV_16UC1, frameData.imageData, stride);
-            raw_frame.convertTo(raw_frame, CV_8U, 255.0 / 1023.0);
+            raw_frame.convertTo(raw_frame, CV_8UC3, 255.0 / 1023.0);
             Mat im;
 
             // Ensure the frame is continuous and properly aligned
