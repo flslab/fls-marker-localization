@@ -661,8 +661,8 @@ int main(int argc, char **argv)
 
             // Create a properly aligned and continuous Mat from camera data
             Mat raw_frame(height, width, CV_16UC1, frameData.imageData, stride);
-            (raw_frame >> 6).convertTo(raw_frame, CV_8U, 255.0 / 1023.0);
-
+            cv::Mat shifted = raw_frame / 64; // assumes raw_frame is CV_16UC1
+            shifted.convertTo(raw_frame, CV_8U, 255.0 / 1023.0);
 //            cvtColor(raw_frame, raw_frame, cv::COLOR_GRAY2BGR);
             Mat im;
 
