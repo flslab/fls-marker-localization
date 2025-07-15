@@ -594,11 +594,11 @@ int main(int argc, char **argv)
     float focus_step = 50;
     LibCamera cam;
     uint32_t width = 640;
-    uint32_t height = 480;
+    uint32_t height = 400;
     uint32_t stride;
     char key;
     int window_width = 640;
-    int window_height = 480;
+    int window_height = 400;
 
     if (preview) {
         if (width > window_width)
@@ -609,7 +609,7 @@ int main(int argc, char **argv)
     }
 
     int ret = cam.initCamera();
-    cam.configureStill(width, height, formats::RGB888, 1, 0);
+    cam.configureStill(width, height, formats::YUV420, 1, 0);
     ControlList controls_;
     int64_t frame_time = 1000000 / frame_rate;
     controls_.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({frame_time, frame_time}));
