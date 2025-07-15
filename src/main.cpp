@@ -660,7 +660,7 @@ int main(int argc, char **argv)
                 continue;
 
             // Create a properly aligned and continuous Mat from camera data
-            Mat raw_frame(height, width, CV_8UC3, frameData.imageData, stride);
+            Mat raw_frame(height, width, CV_16UC1, frameData.imageData, stride);
             Mat im;
 
             // Ensure the frame is continuous and properly aligned
