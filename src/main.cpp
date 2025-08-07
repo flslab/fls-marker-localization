@@ -594,11 +594,11 @@ int main(int argc, char **argv)
     float focus_step = 50;
     LibCamera cam;
     uint32_t width = 640;
-    uint32_t height = 400;
+    uint32_t height = 480;
     uint32_t stride;
     char key;
     int window_width = 640;
-    int window_height = 400;
+    int window_height = 480;
 
     if (preview) {
         if (width > window_width)
