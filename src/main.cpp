@@ -422,7 +422,7 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
 
     // SolvePnP
     Mat rvec, tvec;
-    solvePnP(marker_points, image_points, cameraMatrix, distCoeffs, rvec, tvec, false, SOLVEPNP_AP3P);
+    solvePnP(marker_points, image_points, cameraMatrix, distCoeffs, rvec, tvec, false, SOLVEPNP_SQPNP);
 
     // Convert rotation vector to matrix
     Mat rmat;
