@@ -374,6 +374,23 @@ void sortClockwise(vector<Point2f>& points) {
     });
 }
 
+void invertPose(const cv::Mat& rvec_in, const cv::Mat& tvec_in,
+                cv::Mat& rvec_out, cv::Mat& tvec_out) {
+    // 1. Convert the input rotation vector to a rotation matrix
+    cv::Mat R;
+    cv::Rodrigues(rvec_in, R);
+
+    // 2. Invert the rotation: The inverse of a rotation matrix is its transpose
+    cv::Mat R_inv = R.t();
+
+    // 3. Invert the translation: t_inv = -R_inv * t
+    cv::Mat t_inv = -R_inv * tvec_in;
+
+    // 4. Convert the inverse rotation matrix back to a rotation vector
+    cv::Rodrigues(R_inv, rvec_out);
+    tvec_out = t_inv;
+}
+
 // Main function to process an image and compute pose
 PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &distCoeffs, const vector<Point3f> &marker_points)
 {
@@ -424,14 +441,16 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
     Mat rvec, tvec;
     solvePnP(marker_points, image_points, cameraMatrix, distCoeffs, rvec, tvec, false, SOLVEPNP_SQPNP);
 
+    Mat rvec_cam, tvec_cam;
+    invertPose(rvec, tvec, rvec_cam, tvec_cam);
     // Convert rotation vector to matrix
     Mat rmat;
-    Rodrigues(rvec, rmat);
+    Rodrigues(rvec_cam, rmat);
 
     // Extract pose and orientation
     Vec3d yaw_pitch_roll = yawPitchRollDecomposition(rmat);
 
-    return {im, tvec, rmat, yaw_pitch_roll};
+    return {im, tvec_cam, rmat, yaw_pitch_roll};
 }
 
 bool readConfigFile(const string &filename, Mat &cameraMatrix, Mat &distCoeffs, vector<Point3f> &marker_points)
