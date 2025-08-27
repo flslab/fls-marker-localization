@@ -441,16 +441,16 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
     Mat rvec, tvec;
     solvePnP(marker_points, image_points, cameraMatrix, distCoeffs, rvec, tvec, false, SOLVEPNP_AP3P);
 
-    Mat rvec_cam, tvec_cam;
-    invertPose(rvec, tvec, rvec_cam, tvec_cam);
+//    Mat rvec_cam, tvec_cam;
+//    invertPose(rvec, tvec, rvec_cam, tvec_cam);
     // Convert rotation vector to matrix
     Mat rmat;
-    Rodrigues(rvec_cam, rmat);
+    Rodrigues(rvec, rmat);
 
     // Extract pose and orientation
     Vec3d yaw_pitch_roll = yawPitchRollDecomposition(rmat);
 
-    return {im, tvec_cam, rmat, yaw_pitch_roll};
+    return {im, tvec, rmat, yaw_pitch_roll};
 }
 
 bool readConfigFile(const string &filename, Mat &cameraMatrix, Mat &distCoeffs, vector<Point3f> &marker_points)
