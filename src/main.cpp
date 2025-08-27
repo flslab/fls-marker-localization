@@ -439,7 +439,7 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
 
     // SolvePnP
     Mat rvec, tvec;
-    solvePnP(marker_points, image_points, cameraMatrix, distCoeffs, rvec, tvec, false, SOLVEPNP_SQPNP);
+    solvePnP(marker_points, image_points, cameraMatrix, distCoeffs, rvec, tvec, false, SOLVEPNP_AP3P);
 
     Mat rvec_cam, tvec_cam;
     invertPose(rvec, tvec, rvec_cam, tvec_cam);
