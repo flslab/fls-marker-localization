@@ -193,7 +193,7 @@ private:
                     // Resize frame for network efficiency
                     Mat resized_frame;
                     if (frame_to_send.cols > 320) {
-                        resize(frame_to_send, resized_frame, cv::Size(320, 240));
+                        resize(frame_to_send, resized_frame, cv::Size(320, 200));
                     } else {
                         resized_frame = frame_to_send;
                     }
