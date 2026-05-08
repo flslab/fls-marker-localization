@@ -323,6 +323,102 @@ private:
     }
 };
 
+// Background saver class
+class BackgroundSaver {
+private:
+    struct SaveTask {
+        Mat img;
+        string filename;
+        bool write_video;
+    };
+
+    std::queue<SaveTask> task_queue;
+    std::mutex queue_mutex;
+    std::condition_variable cv_;
+    bool is_running;
+    std::thread worker_thread;
+    cv::VideoWriter video_writer;
+
+public:
+    BackgroundSaver() : is_running(false) {}
+
+    ~BackgroundSaver() {
+        stop();
+    }
+
+    bool startVideo(const string& filename, int codec, double fps, Size size, bool isColor) {
+        if (video_writer.isOpened()) return true;
+        video_writer.open(filename, codec, fps, size, isColor);
+        return video_writer.isOpened();
+    }
+
+    bool isVideoOpened() const {
+        return video_writer.isOpened();
+    }
+
+    void start() {
+        if (is_running) return;
+        is_running = true;
+        worker_thread = std::thread(&BackgroundSaver::savingLoop, this);
+    }
+
+    void stop() {
+        if (!is_running) return;
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex);
+            is_running = false;
+        }
+        cv_.notify_all();
+        if (worker_thread.joinable()) {
+            worker_thread.join();
+        }
+        if (video_writer.isOpened()) {
+            video_writer.release();
+        }
+    }
+
+    void push(const Mat& img, const string& filename, bool write_video) {
+        if (!is_running && !write_video && filename.empty()) return;
+
+        SaveTask task;
+        // MUST deep copy the image because the original buffer will be reused by libcamera
+        task.img = img.clone();
+        task.filename = filename;
+        task.write_video = write_video;
+
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex);
+            task_queue.push(task);
+        }
+        cv_.notify_one();
+    }
+
+private:
+    void savingLoop() {
+        while (true) {
+            SaveTask task;
+            {
+                std::unique_lock<std::mutex> lock(queue_mutex);
+                cv_.wait(lock, [this]{ return !task_queue.empty() || !is_running; });
+
+                if (!is_running && task_queue.empty()) {
+                    break;
+                }
+
+                task = task_queue.front();
+                task_queue.pop();
+            }
+
+            if (!task.filename.empty() && !task.img.empty()) {
+                imwrite(task.filename, task.img);
+            }
+            if (task.write_video && video_writer.isOpened() && !task.img.empty()) {
+                video_writer.write(task.img);
+            }
+        }
+    }
+};
+
 // Function to get a timestamped filename
 std::string generateLogName()
 {
@@ -513,7 +609,11 @@ int main(int argc, char **argv)
     int execution_time = 0;
     int save_rate = 1;
     bool save_frames = false;
+    bool save_video = false;
+    int video_fps = 30;
+    string video_path = "";
     string config_file = "camera_config.json";
+    string log_tag = "";
 
     // Streaming parameters
     bool enable_streaming = false;
@@ -556,6 +656,14 @@ int main(int argc, char **argv)
             }
         } else if ((arg == "--save-frames" || arg == "-s")) {
             save_frames = true;
+        } else if ((arg == "--save-video")) {
+            save_video = true;
+        } else if ((arg == "--video-fps") && i + 1 < argc) {
+            video_fps = stoi(argv[++i]);
+        } else if ((arg == "--video-path") && i + 1 < argc) {
+            video_path = argv[++i];
+        } else if ((arg == "--tag") && i + 1 < argc) {
+            log_tag = argv[++i];
         } else if ((arg == "--config") && i + 1 < argc) {
             config_file = argv[++i];
         } else if ((arg == "--save-rate") && i + 1 < argc) {
@@ -583,7 +691,7 @@ int main(int argc, char **argv)
         }
     }
 
-    string log_dir = generateLogName();
+    string log_dir = log_tag.empty() ? generateLogName() : ("logs/" + log_tag);
     if (!createDirectory(log_dir)) {
         cerr << "Error: Unable to create directory " << log_dir << endl;
         return -1;
@@ -601,8 +709,27 @@ int main(int argc, char **argv)
         cout << "Streamin at " << frame_rate / stream_rate << " fps" << endl;
     }
 
+    double image_save_fps = save_rate > 0 ? (frame_rate / (double)save_rate) : 0;
     if (save_frames) {
-        cout << "Saving frames at " << frame_rate / save_rate << " fps" << endl;
+        cout << "Saving frames at " << image_save_fps << " fps" << endl;
+    }
+
+    if (save_video) {
+        cout << "Saving video at " << video_fps << " fps" << endl;
+    }
+
+    string video_filename = video_path.empty() ? (log_dir + "/video.mp4") : video_path;
+    double video_start_time = -1.0;
+
+    double video_interval = save_video && video_fps > 0 ? (1.0 / video_fps) : 0;
+    double video_next_time = 0;
+
+    double image_interval = save_frames && image_save_fps > 0 ? (1.0 / image_save_fps) : 0;
+    double image_next_time = 0;
+
+    BackgroundSaver saver;
+    if (save_frames || save_video) {
+        saver.start();
     }
 
     time_t start_time = time(0);
@@ -741,13 +868,53 @@ int main(int argc, char **argv)
                 imshow("libcamera-demo", result.img);
             }
 
-            // Save frames if enabled
-            if (save_frames && frameCount % save_rate == 0) {
-                string filename = log_dir + "/frame_" + to_string(frameCount) + ".png";
-                imwrite(filename, result.img);
+            auto now_time = std::chrono::system_clock::now();
+            double current_time_sec = std::chrono::duration<double>(now_time.time_since_epoch()).count();
+
+            // Handle background saving for images and video
+            bool do_save_image = false;
+            bool do_save_video = false;
+            string save_filename = "";
+
+            if (save_frames && current_time_sec >= image_next_time) {
+                do_save_image = true;
+                // Only advance next_time by interval, or reset if it's falling way behind
+                image_next_time = (image_next_time == 0) ? current_time_sec + image_interval : image_next_time + image_interval;
+                if (image_next_time < current_time_sec) image_next_time = current_time_sec + image_interval;
+                
+                save_filename = log_dir + "/frame_" + to_string(frameCount) + ".png";
             }
 
-            key = waitKey(1);
+            if (save_video && current_time_sec >= video_next_time) {
+                if (!saver.isVideoOpened() && !result.img.empty()) {
+                    int codec = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
+                    if (saver.startVideo(video_filename, codec, video_fps, result.img.size(), result.img.channels() == 3)) {
+                        video_start_time = current_time_sec;
+                        // Initialize next time to now + interval
+                        video_next_time = current_time_sec + video_interval;
+                    } else {
+                        cerr << "Could not open the output video file for write" << endl;
+                        save_video = false;
+                    }
+                }
+                
+                if (saver.isVideoOpened()) {
+                    do_save_video = true;
+                    // Only advance next_time by interval, or reset if it's falling way behind
+                    video_next_time = (video_next_time == 0) ? current_time_sec + video_interval : video_next_time + video_interval;
+                    if (video_next_time < current_time_sec) video_next_time = current_time_sec + video_interval;
+                }
+            }
+
+            if ((do_save_image || do_save_video) && !result.img.empty()) {
+                saver.push(result.img, save_filename, do_save_video);
+            }
+
+            if (preview) {
+                key = waitKey(1);
+            } else {
+                key = -1;
+            }
             if (key == 'q') {
                 break;
             }
@@ -788,12 +955,16 @@ int main(int argc, char **argv)
             cam.returnFrameBuffer(frameData);
         }
 
+        saver.stop();
         destroyAllWindows();
         cam.stopCamera();
 
         string log_filename = log_dir + "/log.json";
         json log;
         log["config"] = {{"distance", distance}};
+        if (video_start_time > 0) {
+            log["config"]["video_start_time"] = video_start_time;
+        }
         log["frames"] = frames;
 
         std::ofstream file(log_filename);
