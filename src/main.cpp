@@ -22,12 +22,17 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
-
-//#pragma pack(1)
+#include <csignal>
 
 using namespace cv;
 using namespace std;
 using json = nlohmann::json;
+
+std::atomic<bool> keep_running(true);
+
+void signalHandler(int signum) {
+    keep_running = false;
+}
 
 struct PoseResult
 {
@@ -604,6 +609,9 @@ bool createDirectory(const string &dir) {
 
 int main(int argc, char **argv)
 {
+    signal(SIGINT, signalHandler);
+    signal(SIGTERM, signalHandler);
+
     bool print_logs = false;
     bool preview = false;
     double distance = -1.0;
@@ -648,16 +656,13 @@ int main(int argc, char **argv)
         } else if ((arg == "--time" || arg == "-t") && i + 1 < argc) {
             try {
                 execution_time = stoi(argv[++i]);
-                if (execution_time <= 0) {
-                    throw invalid_argument("Time must be positive");
-                }
             } catch (const invalid_argument &e) {
-                cerr << "Invalid value for time. Must be a positive number." << endl;
+                cerr << "Invalid value for time. Must be a number." << endl;
                 return -1;
             }
-        } else if ((arg == "--save-frames" || arg == "-s")) {
+        } else if ((arg == "--save-frames")) {
             save_frames = true;
-        } else if ((arg == "--save-video")) {
+        } else if ((arg == "--save-video" || arg == "-s")) {
             save_video = true;
         } else if ((arg == "--video-fps") && i + 1 < argc) {
             video_fps = stoi(argv[++i]);
@@ -800,7 +805,7 @@ int main(int argc, char **argv)
         ftruncate(shm_fd, sizeof(Position));
         Position* pos = (Position*)mmap(0, sizeof(Position), PROT_WRITE, MAP_SHARED, shm_fd, 0);
 
-        while (true)
+        while (keep_running)
         {
             flag = cam.readFrame(&frameData);
             if (!flag)
