@@ -18,6 +18,7 @@
 #include <chrono>
 #include <thread>
 #include <atomic>
+#include <condition_variable>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -346,7 +347,7 @@ public:
         stop();
     }
 
-    bool startVideo(const string& filename, int codec, double fps, Size size, bool isColor) {
+    bool startVideo(const string& filename, int codec, double fps, cv::Size size, bool isColor) {
         if (video_writer.isOpened()) return true;
         video_writer.open(filename, codec, fps, size, isColor);
         return video_writer.isOpened();
