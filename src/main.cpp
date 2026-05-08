@@ -622,7 +622,7 @@ int main(int argc, char **argv)
     int video_fps = 30;
     string video_path = "";
     string config_file = "camera_config.json";
-    string log_tag = "";
+    string json_path = "";
 
     // Streaming parameters
     bool enable_streaming = false;
@@ -668,8 +668,8 @@ int main(int argc, char **argv)
             video_fps = stoi(argv[++i]);
         } else if ((arg == "--video-path") && i + 1 < argc) {
             video_path = argv[++i];
-        } else if ((arg == "--tag") && i + 1 < argc) {
-            log_tag = argv[++i];
+        } else if ((arg == "--json-path") && i + 1 < argc) {
+            json_path = argv[++i];
         } else if ((arg == "--config") && i + 1 < argc) {
             config_file = argv[++i];
         } else if ((arg == "--save-rate") && i + 1 < argc) {
@@ -697,7 +697,7 @@ int main(int argc, char **argv)
         }
     }
 
-    string log_dir = log_tag.empty() ? generateLogName() : ("logs/" + log_tag);
+    string log_dir = generateLogName();
     if (!createDirectory(log_dir)) {
         cerr << "Error: Unable to create directory " << log_dir << endl;
         return -1;
@@ -965,7 +965,7 @@ int main(int argc, char **argv)
         destroyAllWindows();
         cam.stopCamera();
 
-        string log_filename = log_dir + "/log.json";
+        string log_filename = json_path.empty() ? (log_dir + "/log.json") : json_path;
         json log;
         log["config"] = {{"distance", distance}};
         if (video_start_time > 0) {
