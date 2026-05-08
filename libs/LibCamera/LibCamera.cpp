@@ -162,7 +162,10 @@ int LibCamera::queueRequest(Request *request) {
         return -1;
     {
         std::lock_guard<std::mutex> lock(control_mutex_);
-        request->controls() = std::move(controls_);
+        if (!controls_.empty()) {
+            request->controls().merge(controls_);
+            controls_.clear();
+        }
     }
     return camera_->queueRequest(request);
 }
