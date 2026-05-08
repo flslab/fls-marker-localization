@@ -893,7 +893,7 @@ int main(int argc, char **argv)
 
             if (save_video && current_time_sec >= video_next_time) {
                 if (!saver.isVideoOpened() && !result.img.empty()) {
-                    int codec = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
+                    int codec = cv::VideoWriter::fourcc('a', 'v', 'c', '1');
                     if (saver.startVideo(video_filename, codec, video_fps, result.img.size(), result.img.channels() == 3)) {
                         video_start_time = current_time_sec;
                         // Initialize next time to now + interval
