@@ -616,7 +616,7 @@ int main(int argc, char **argv)
     bool preview = false;
     double distance = -1.0;
     int execution_time = 0;
-    int save_rate = 1;
+    double save_rate = 1.0;
     bool save_frames = false;
     bool save_video = false;
     int video_fps = 30;
@@ -628,7 +628,7 @@ int main(int argc, char **argv)
     bool enable_streaming = false;
     int stream_port = 8080;
     string stream_type = "http"; // "http" or "udp"
-    int stream_rate = 10;
+    double stream_rate = 10.0;
 
     double contrast = -2.0;
     double brightness = -2.0;
@@ -673,7 +673,7 @@ int main(int argc, char **argv)
         } else if ((arg == "--config") && i + 1 < argc) {
             config_file = argv[++i];
         } else if ((arg == "--save-rate") && i + 1 < argc) {
-            save_rate = stoi(argv[++i]);
+            save_rate = stod(argv[++i]);
         } else if ((arg == "--contrast") && i + 1 < argc) {
             contrast = stod(argv[++i]);
         } else if ((arg == "--brightness") && i + 1 < argc) {
@@ -693,7 +693,7 @@ int main(int argc, char **argv)
                 return -1;
             }
         } else if ((arg == "--stream-rate") && i + 1 < argc) {
-            stream_rate = stoi(argv[++i]);
+            stream_rate = stod(argv[++i]);
         }
     }
 
@@ -712,10 +712,10 @@ int main(int argc, char **argv)
             delete streamer;
             return -1;
         }
-        cout << "Streamin at " << frame_rate / stream_rate << " fps" << endl;
+        cout << "Streaming at " << stream_rate << " fps" << endl;
     }
 
-    double image_save_fps = save_rate > 0 ? (frame_rate / (double)save_rate) : 0;
+    double image_save_fps = save_rate > 0 ? save_rate : 0;
     if (save_frames) {
         cout << "Saving frames at " << image_save_fps << " fps" << endl;
     }
@@ -732,6 +732,9 @@ int main(int argc, char **argv)
 
     double image_interval = save_frames && image_save_fps > 0 ? (1.0 / image_save_fps) : 0;
     double image_next_time = 0;
+
+    double stream_interval = enable_streaming && stream_rate > 0 ? (1.0 / stream_rate) : 0;
+    double stream_next_time = 0;
 
     BackgroundSaver saver;
     if (save_frames || save_video) {
@@ -861,10 +864,15 @@ int main(int argc, char **argv)
                 pos->valid = false;
             }
 
+            auto now_time = std::chrono::system_clock::now();
+            double current_time_sec = std::chrono::duration<double>(now_time.time_since_epoch()).count();
+
             // Update streaming frame (only if streaming is enabled and frame is valid)
-            if (enable_streaming && frameCount % stream_rate == 0 && streamer && !result.img.empty()) {
+            if (enable_streaming && streamer && !result.img.empty() && current_time_sec >= stream_next_time) {
                 try {
                     streamer->updateFrame(result.img);
+                    stream_next_time = (stream_next_time == 0) ? current_time_sec + stream_interval : stream_next_time + stream_interval;
+                    if (stream_next_time < current_time_sec) stream_next_time = current_time_sec + stream_interval;
                 } catch (const std::exception& e) {
                     cerr << "Streaming error: " << e.what() << endl;
                 }
@@ -873,9 +881,6 @@ int main(int argc, char **argv)
             if (preview) {
                 imshow("libcamera-demo", result.img);
             }
-
-            auto now_time = std::chrono::system_clock::now();
-            double current_time_sec = std::chrono::duration<double>(now_time.time_since_epoch()).count();
 
             // Handle background saving for images and video
             bool do_save_image = false;
