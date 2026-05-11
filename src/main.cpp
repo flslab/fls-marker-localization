@@ -494,7 +494,7 @@ void invertPose(const cv::Mat& rvec_in, const cv::Mat& tvec_in,
 }
 
 // Main function to process an image and compute pose
-PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &distCoeffs, const vector<Point3f> &marker_points)
+PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &distCoeffs, const vector<Point3f> &marker_points, double blob_area_threshold)
 {
     Mat im = input.clone();
 
@@ -516,7 +516,7 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
     for (const auto &contour : contours)
     {
         Moments moments = cv::moments(contour);
-        if (moments.m00 > 9)
+        if (moments.m00 > blob_area_threshold)
         {
             int center_x = int(moments.m10 / moments.m00);
             int center_y = int(moments.m01 / moments.m00);
@@ -635,6 +635,8 @@ int main(int argc, char **argv)
     int exposure_time = -2;
     int frame_rate = 120;
 
+    double blob_area_threshold = 3;
+
     // Parse command-line arguments
     for (int i = 1; i < argc; i++) {
         string arg = argv[i];
@@ -694,6 +696,8 @@ int main(int argc, char **argv)
             }
         } else if ((arg == "--stream-rate") && i + 1 < argc) {
             stream_rate = stod(argv[++i]);
+        } else if ((arg == "--blob-area-threshold") && i + 1 < argc) {
+            blob_area_threshold = stod(argv[++i]);
         }
     }
 
@@ -830,7 +834,7 @@ int main(int argc, char **argv)
             }
 
             // Process the image
-            PoseResult result = processImage(im, cameraMatrix, distCoeffs, marker_points);
+            PoseResult result = processImage(im, cameraMatrix, distCoeffs, marker_points, blob_area_threshold);
 
             if (!result.tvec.empty()) {
                 if (print_logs) {
