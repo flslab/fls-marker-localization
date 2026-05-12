@@ -539,6 +539,17 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
 
     sortClockwise(image_points);
 
+    // Overlay sorted marker indices on image for debugging
+    for (int i = 0; i < (int)image_points.size(); i++)
+    {
+        cv::Point2f pt = image_points[i];
+        // Draw a filled circle at the centroid
+        circle(im, pt, 8, Scalar(0, 255, 0), -1);
+        // Draw the index label offset slightly from the centroid
+        putText(im, std::to_string(i), cv::Point(pt.x + 12, pt.y - 12),
+                FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 255, 0), 2, LINE_AA);
+    }
+
     // SolvePnP
     Mat rvec, tvec;
     solvePnP(marker_points, image_points, cameraMatrix, distCoeffs, rvec, tvec, false, SOLVEPNP_AP3P);
