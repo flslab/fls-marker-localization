@@ -496,17 +496,25 @@ void invertPose(const cv::Mat& rvec_in, const cv::Mat& tvec_in,
 // Main function to process an image and compute pose
 PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &distCoeffs, const vector<Point3f> &marker_points, double blob_area_threshold)
 {
-    Mat im = input.clone();
+    // Grayscale copy for processing (thresholding, contour detection)
+    Mat grey_proc;
+    if (input.channels() == 1)
+        grey_proc = input.clone();
+    else
+        cvtColor(input, grey_proc, COLOR_BGR2GRAY);
 
-    // Apply Gaussian Blur
-    GaussianBlur(im, im, cv::Size(9, 9), 0);
+    // Color image for display (overlays, saving, streaming)
+    Mat im;
+    cvtColor(grey_proc, im, COLOR_GRAY2BGR);
 
-    // Convert to grayscale and threshold
+    // Apply Gaussian Blur on the processing copy
+    GaussianBlur(grey_proc, grey_proc, cv::Size(9, 9), 0);
+
+    // Threshold the grayscale processing copy
     Mat grey;
-//    cvtColor(im, grey, COLOR_BGR2GRAY);
-    threshold(im, grey, 255 * 0.8, 255, THRESH_BINARY);
+    threshold(grey_proc, grey, 255 * 0.8, 255, THRESH_BINARY);
 
-    // Find contours
+    // Find contours and draw them on the color display image
     vector<vector<cv::Point>> contours;
     findContours(grey, contours, RETR_TREE, CHAIN_APPROX_SIMPLE);
     drawContours(im, contours, -1, Scalar(255, 0, 0), 2);
@@ -520,7 +528,7 @@ PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &di
         {
             int center_x = int(moments.m10 / moments.m00);
             int center_y = int(moments.m01 / moments.m00);
-            circle(im, cv::Point(center_x, center_y), 10, Scalar(0, 0, 255), 1);
+            circle(im, cv::Point(center_x, center_y), 10, Scalar(0, 0, 255), 1); // red on BGR
             image_points.push_back(Point2f(center_x, center_y));
         }
     }
