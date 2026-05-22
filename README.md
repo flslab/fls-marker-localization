@@ -59,3 +59,13 @@ Run for 10 seconds:
 ## Visualize Logs
 
 Use https://github.com/Hamedamz/cam-pose-vis repository to visualize the logs.
+
+## Blink Marker
+
+```
+g++ -O2 blinker.cpp -o blinker -llgpio
+```
+
+```
+./bin/blinker --fps <fps>
+```
