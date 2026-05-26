@@ -20,8 +20,8 @@ void sig_handler(int sig) {
     keep_running = 0;
 }
 
-// Generate the OOK packet array: [1 Start] + [0 Sync] + [10-bit ID] + [5 Rest]
-std::vector<int> build_packet(uint16_t marker_id) {
+// Generate the OOK packet array: [1 Start] + [0 Sync] + [Payload] + [5 Rest]
+std::vector<int> build_packet(uint16_t marker_id, int payload_size) {
     std::vector<int> packet;
     
     // 1. Start Bit (High) - Wakes up the receiver
@@ -30,8 +30,8 @@ std::vector<int> build_packet(uint16_t marker_id) {
     // 2. Sync Bit (Low) - Creates a guaranteed falling edge
     packet.push_back(0);
     
-    // 3. Payload: 10-bit ID (MSB first)
-    for (int i = 9; i >= 0; --i) {
+    // 3. Payload: ID (MSB first)
+    for (int i = payload_size - 1; i >= 0; --i) {
         packet.push_back((marker_id >> i) & 1);
     }
     
@@ -45,10 +45,17 @@ std::vector<int> build_packet(uint16_t marker_id) {
 
 int main(int argc, char* argv[]) {
     double fps = 100.0; // default
+    uint16_t my_marker_id = 42;
+    int payload_size = 10;
+    
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--fps" && i + 1 < argc) {
             fps = std::stod(argv[++i]);
+        } else if (arg == "--marker-id" && i + 1 < argc) {
+            my_marker_id = static_cast<uint16_t>(std::stoi(argv[++i]));
+        } else if (arg == "--payload-size" && i + 1 < argc) {
+            payload_size = std::stoi(argv[++i]);
         }
     }
     // 1/fps * 3 seconds = 3000/fps milliseconds
@@ -71,11 +78,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Set the Marker ID you want to broadcast (0 to 1023)
-    uint16_t my_marker_id = 42; 
-    std::vector<int> packet = build_packet(my_marker_id);
+    std::vector<int> packet = build_packet(my_marker_id, payload_size);
 
-    std::cout << "Broadcasting Marker ID " << my_marker_id << " on Pin " << CONTROL_PIN << "...\n";
+    std::cout << "Broadcasting Marker ID " << my_marker_id << " (Payload: " << payload_size << " bits) on Pin " << CONTROL_PIN << "...\n";
     std::cout << "Press Ctrl+C to stop.\n";
 
     // Setup absolute timing baseline

@@ -36,7 +36,7 @@ void signalHandler(int signum) {
 
 struct PoseResult
 {
-    Mat img;
+    uint16_t marker_id;
     Mat tvec;
     Mat rmat;
     Vec3d yaw_pitch_roll;
@@ -493,86 +493,167 @@ void invertPose(const cv::Mat& rvec_in, const cv::Mat& tvec_in,
     tvec_out = t_inv;
 }
 
-// Main function to process an image and compute pose
-PoseResult processImage(const Mat &input, const Mat &cameraMatrix, const Mat &distCoeffs, const vector<Point3f> &marker_points, double blob_area_threshold)
-{
-    // Grayscale copy for processing (thresholding, contour detection)
-    Mat grey_proc;
-    if (input.channels() == 1)
-        grey_proc = input.clone();
-    else
-        cvtColor(input, grey_proc, COLOR_BGR2GRAY);
+enum class DecoderState {
+    IDLE,
+    DECODING
+};
 
-    // Color image for display (overlays, saving, streaming)
-    Mat im;
-    cvtColor(grey_proc, im, COLOR_GRAY2BGR);
+struct TrackedBlob {
+    Point2f position;
+    bool active;
+    double last_seen_time;
+    
+    DecoderState state;
+    double sync_time;
+    int bit_index;
+    uint16_t current_id;
+    bool last_state;
+    
+    bool id_valid;
+    uint16_t decoded_id;
+    
+    TrackedBlob(Point2f p, double time) 
+        : position(p), active(true), last_seen_time(time), 
+          state(DecoderState::IDLE), sync_time(0), bit_index(0), 
+          current_id(0), last_state(true), id_valid(false), decoded_id(0) {}
+};
 
-    // Apply Gaussian Blur on the processing copy
-    GaussianBlur(grey_proc, grey_proc, cv::Size(9, 9), 0);
+class MarkerTracker {
+private:
+    std::vector<TrackedBlob> tracked_blobs;
+    double bit_duration_ms;
+    int payload_size;
+    double tracking_threshold;
 
-    // Threshold the grayscale processing copy
-    Mat grey;
-    threshold(grey_proc, grey, 255 * 0.8, 255, THRESH_BINARY);
+public:
+    MarkerTracker(double bit_duration, int payload, double tracking_thresh) 
+        : bit_duration_ms(bit_duration), payload_size(payload), tracking_threshold(tracking_thresh) {}
 
-    // Find contours and draw them on the color display image
-    vector<vector<cv::Point>> contours;
-    findContours(grey, contours, RETR_TREE, CHAIN_APPROX_SIMPLE);
-    drawContours(im, contours, -1, Scalar(255, 0, 0), 2);
-
-    // Find image points from contours
-    vector<Point2f> image_points;
-    for (const auto &contour : contours)
+    std::vector<PoseResult> processFrame(Mat &im, double current_time, 
+                                         const Mat &cameraMatrix, const Mat &distCoeffs, 
+                                         const vector<Point3f> &marker_points, double blob_area_threshold) 
     {
-        Moments moments = cv::moments(contour);
-        if (moments.m00 > blob_area_threshold)
-        {
-            int center_x = int(moments.m10 / moments.m00);
-            int center_y = int(moments.m01 / moments.m00);
-            circle(im, cv::Point(center_x, center_y), 10, Scalar(0, 0, 255), 1); // red on BGR
-            image_points.push_back(Point2f(center_x, center_y));
+        Mat grey_proc;
+        if (im.channels() == 1)
+            grey_proc = im.clone();
+        else
+            cvtColor(im, grey_proc, COLOR_BGR2GRAY);
+            
+        cvtColor(grey_proc, im, COLOR_GRAY2BGR);
+
+        GaussianBlur(grey_proc, grey_proc, cv::Size(9, 9), 0);
+        Mat grey;
+        threshold(grey_proc, grey, 255 * 0.8, 255, THRESH_BINARY);
+
+        vector<vector<cv::Point>> contours;
+        findContours(grey, contours, RETR_TREE, CHAIN_APPROX_SIMPLE);
+        
+        vector<Point2f> current_blobs;
+        for (const auto &contour : contours) {
+            Moments moments = cv::moments(contour);
+            if (moments.m00 > blob_area_threshold) {
+                int center_x = int(moments.m10 / moments.m00);
+                int center_y = int(moments.m01 / moments.m00);
+                circle(im, cv::Point(center_x, center_y), 10, Scalar(0, 0, 255), 1);
+                current_blobs.push_back(Point2f(center_x, center_y));
+            }
         }
+
+        std::vector<bool> blob_matched(current_blobs.size(), false);
+        for (auto &tb : tracked_blobs) {
+            if (!tb.active) continue;
+            
+            double min_dist = 1e9;
+            int best_idx = -1;
+            for (size_t i = 0; i < current_blobs.size(); ++i) {
+                if (blob_matched[i]) continue;
+                double dist = norm(tb.position - current_blobs[i]);
+                if (dist < min_dist) {
+                    min_dist = dist;
+                    best_idx = i;
+                }
+            }
+
+            bool current_state = false;
+            if (best_idx != -1 && min_dist < tracking_threshold) {
+                tb.position = current_blobs[best_idx];
+                tb.last_seen_time = current_time;
+                blob_matched[best_idx] = true;
+                current_state = true;
+            }
+
+            if (tb.state == DecoderState::IDLE) {
+                if (tb.last_state == true && current_state == false) {
+                    tb.state = DecoderState::DECODING;
+                    tb.sync_time = current_time;
+                    tb.bit_index = 0;
+                    tb.current_id = 0;
+                }
+            } else if (tb.state == DecoderState::DECODING) {
+                double target_time = tb.sync_time + (1.5 + tb.bit_index) * (bit_duration_ms / 1000.0);
+                if (current_time >= target_time) {
+                    tb.current_id = (tb.current_id << 1) | (current_state ? 1 : 0);
+                    tb.bit_index++;
+                    if (tb.bit_index >= payload_size) {
+                        tb.decoded_id = tb.current_id;
+                        tb.id_valid = true;
+                        tb.state = DecoderState::IDLE;
+                    }
+                }
+            }
+
+            tb.last_state = current_state;
+
+            if (current_time - tb.last_seen_time > 0.2) {
+                tb.active = false;
+            }
+        }
+
+        for (size_t i = 0; i < current_blobs.size(); ++i) {
+            if (!blob_matched[i]) {
+                tracked_blobs.push_back(TrackedBlob(current_blobs[i], current_time));
+            }
+        }
+
+        tracked_blobs.erase(std::remove_if(tracked_blobs.begin(), tracked_blobs.end(), 
+            [](const TrackedBlob& tb) { return !tb.active; }), tracked_blobs.end());
+
+        std::map<uint16_t, std::vector<Point2f>> groups;
+        for (const auto &tb : tracked_blobs) {
+            if (tb.id_valid && (current_time - tb.last_seen_time < 0.1)) {
+                groups[tb.decoded_id].push_back(tb.position);
+            }
+        }
+
+        std::vector<PoseResult> results;
+        for (auto const& [id, pts] : groups) {
+            if (pts.size() == 4 && marker_points.size() == 4) {
+                std::vector<Point2f> sorted_pts = pts;
+                sortClockwise(sorted_pts);
+
+                for (int i = 0; i < 4; i++) {
+                    circle(im, sorted_pts[i], 8, Scalar(0, 255, 0), -1);
+                    putText(im, std::to_string(i), cv::Point(sorted_pts[i].x + 12, sorted_pts[i].y - 12),
+                            FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 255, 0), 2, LINE_AA);
+                }
+                
+                Point2f center = findCentroid(sorted_pts);
+                putText(im, "ID: " + std::to_string(id), cv::Point(center.x - 20, center.y - 20),
+                        FONT_HERSHEY_SIMPLEX, 1.0, Scalar(0, 255, 255), 2, LINE_AA);
+
+                Mat rvec, tvec;
+                solvePnP(marker_points, sorted_pts, cameraMatrix, distCoeffs, rvec, tvec, false, SOLVEPNP_AP3P);
+                Mat rmat;
+                Rodrigues(rvec, rmat);
+                Vec3d yaw_pitch_roll = yawPitchRollDecomposition(rmat);
+
+                results.push_back({id, tvec, rmat, yaw_pitch_roll});
+            }
+        }
+
+        return results;
     }
-
-    // Validate image points
-    if (image_points.size() != 4)
-    {
-        return {im, Mat(), Mat(), Vec3d()};
-    }
-
-    // Use provided marker points
-    if (marker_points.size() != 4)
-    {
-        return {im, Mat(), Mat(), Vec3d()};
-    }
-
-    sortClockwise(image_points);
-
-    // Overlay sorted marker indices on image for debugging
-    for (int i = 0; i < (int)image_points.size(); i++)
-    {
-        cv::Point2f pt = image_points[i];
-        // Draw a filled circle at the centroid
-        circle(im, pt, 8, Scalar(0, 255, 0), -1);
-        // Draw the index label offset slightly from the centroid
-        putText(im, std::to_string(i), cv::Point(pt.x + 12, pt.y - 12),
-                FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 255, 0), 2, LINE_AA);
-    }
-
-    // SolvePnP
-    Mat rvec, tvec;
-    solvePnP(marker_points, image_points, cameraMatrix, distCoeffs, rvec, tvec, false, SOLVEPNP_AP3P);
-
-//    Mat rvec_cam, tvec_cam;
-//    invertPose(rvec, tvec, rvec_cam, tvec_cam);
-    // Convert rotation vector to matrix
-    Mat rmat;
-    Rodrigues(rvec, rmat);
-
-    // Extract pose and orientation
-    Vec3d yaw_pitch_roll = yawPitchRollDecomposition(rmat);
-
-    return {im, tvec, rmat, yaw_pitch_roll};
-}
+};
 
 bool readConfigFile(const string &filename, Mat &cameraMatrix, Mat &distCoeffs, vector<Point3f> &marker_points)
 {
@@ -655,6 +736,9 @@ int main(int argc, char **argv)
     int frame_rate = 120;
 
     double blob_area_threshold = 3;
+    int payload_size = 10;
+    int target_id = -1;
+    double tracking_threshold = 30.0;
 
     // Parse command-line arguments
     for (int i = 1; i < argc; i++) {
@@ -717,6 +801,12 @@ int main(int argc, char **argv)
             stream_rate = stod(argv[++i]);
         } else if ((arg == "--blob-area-threshold") && i + 1 < argc) {
             blob_area_threshold = stod(argv[++i]);
+        } else if ((arg == "--payload-size") && i + 1 < argc) {
+            payload_size = stoi(argv[++i]);
+        } else if ((arg == "--target-id") && i + 1 < argc) {
+            target_id = stoi(argv[++i]);
+        } else if ((arg == "--tracking-threshold") && i + 1 < argc) {
+            tracking_threshold = stod(argv[++i]);
         }
     }
 
@@ -770,6 +860,7 @@ int main(int argc, char **argv)
     int elapsed_seconds = 0;
     float lens_position = 100;
     float focus_step = 50;
+    MarkerTracker tracker(3000.0 / frame_rate, payload_size, tracking_threshold);
     LibCamera cam;
     uint32_t width = 640;
     uint32_t height = 400;
@@ -852,48 +943,59 @@ int main(int argc, char **argv)
                 raw_frame.copyTo(im);
             }
 
-            // Process the image
-            PoseResult result = processImage(im, cameraMatrix, distCoeffs, marker_points, blob_area_threshold);
+            auto now_time = std::chrono::system_clock::now();
+            double current_time_sec = std::chrono::duration<double>(now_time.time_since_epoch()).count();
 
-            if (!result.tvec.empty()) {
+            // Process the image
+            std::vector<PoseResult> results = tracker.processFrame(im, current_time_sec, cameraMatrix, distCoeffs, marker_points, blob_area_threshold);
+
+            std::vector<json> current_frame_poses;
+            bool pos_updated = false;
+
+            for (const auto& result : results) {
                 if (print_logs) {
-                    cout << "Translation Vector: " << result.tvec.t() << "Yaw, Pitch, Roll: " << result.yaw_pitch_roll << endl;
+                    cout << "ID: " << result.marker_id << " Translation Vector: " << result.tvec.t() << "Yaw, Pitch, Roll: " << result.yaw_pitch_roll << endl;
                 }
 
                 std::vector<double> tvec_vec = {result.tvec.at<double>(0, 0),
                                         result.tvec.at<double>(1, 0),
                                         result.tvec.at<double>(2, 0)};
 
-                auto now = std::chrono::system_clock::now();
-                auto duration = now.time_since_epoch();
-                auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
-
-                frames.push_back({
-                    {"time", milliseconds},
-                    {"frame_id", frameCount},
+                current_frame_poses.push_back({
+                    {"marker_id", result.marker_id},
                     {"tvec", tvec_vec},
                     {"yaw_pitch_roll", {result.yaw_pitch_roll[0], result.yaw_pitch_roll[1], result.yaw_pitch_roll[2]}}
                 });
 
-                pos->valid = true;
-                pos->x = tvec_vec[0];
-                pos->y = tvec_vec[1];
-                pos->z = tvec_vec[2];
-                pos->roll = result.yaw_pitch_roll[2];
-                pos->pitch = result.yaw_pitch_roll[1];
-                pos->yaw = result.yaw_pitch_roll[0];
+                if (!pos_updated && (target_id == -1 || result.marker_id == target_id)) {
+                    pos->valid = true;
+                    pos->x = tvec_vec[0];
+                    pos->y = tvec_vec[1];
+                    pos->z = tvec_vec[2];
+                    pos->roll = result.yaw_pitch_roll[2];
+                    pos->pitch = result.yaw_pitch_roll[1];
+                    pos->yaw = result.yaw_pitch_roll[0];
+                    pos_updated = true;
+                }
             }
-            else {
+
+            if (!pos_updated) {
                 pos->valid = false;
             }
 
-            auto now_time = std::chrono::system_clock::now();
-            double current_time_sec = std::chrono::duration<double>(now_time.time_since_epoch()).count();
+            auto duration = now_time.time_since_epoch();
+            auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+
+            frames.push_back({
+                {"time", milliseconds},
+                {"frame_id", frameCount},
+                {"poses", current_frame_poses}
+            });
 
             // Update streaming frame (only if streaming is enabled and frame is valid)
-            if (enable_streaming && streamer && !result.img.empty() && current_time_sec >= stream_next_time) {
+            if (enable_streaming && streamer && !im.empty() && current_time_sec >= stream_next_time) {
                 try {
-                    streamer->updateFrame(result.img);
+                    streamer->updateFrame(im);
                     stream_next_time = (stream_next_time == 0) ? current_time_sec + stream_interval : stream_next_time + stream_interval;
                     if (stream_next_time < current_time_sec) stream_next_time = current_time_sec + stream_interval;
                 } catch (const std::exception& e) {
@@ -902,7 +1004,7 @@ int main(int argc, char **argv)
             }
 
             if (preview) {
-                imshow("libcamera-demo", result.img);
+                imshow("libcamera-demo", im);
             }
 
             // Handle background saving for images and video
@@ -920,9 +1022,9 @@ int main(int argc, char **argv)
             }
 
             if (save_video && current_time_sec >= video_next_time) {
-                if (!saver.isVideoOpened() && !result.img.empty()) {
+                if (!saver.isVideoOpened() && !im.empty()) {
                     int codec = cv::VideoWriter::fourcc('a', 'v', 'c', '1');
-                    if (saver.startVideo(video_filename, codec, video_fps, result.img.size(), result.img.channels() == 3)) {
+                    if (saver.startVideo(video_filename, codec, video_fps, im.size(), im.channels() == 3)) {
                         video_start_time = current_time_sec;
                         // Initialize next time to now + interval
                         video_next_time = current_time_sec + video_interval;
@@ -940,8 +1042,8 @@ int main(int argc, char **argv)
                 }
             }
 
-            if ((do_save_image || do_save_video) && !result.img.empty()) {
-                saver.push(result.img, save_filename, do_save_video);
+            if ((do_save_image || do_save_video) && !im.empty()) {
+                saver.push(im, save_filename, do_save_video);
             }
 
             if (preview) {
