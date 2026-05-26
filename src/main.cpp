@@ -588,16 +588,24 @@ public:
                     tb.sync_time = current_time;
                     tb.bit_index = 0;
                     tb.current_id = 0;
+                    std::cout << "[Decoder] Started decoding for blob at (" 
+                              << tb.position.x << ", " << tb.position.y << ")" << std::endl;
                 }
             } else if (tb.state == DecoderState::DECODING) {
                 double target_time = tb.sync_time + (1.5 + tb.bit_index) * (bit_duration_ms / 1000.0);
                 if (current_time >= target_time) {
-                    tb.current_id = (tb.current_id << 1) | (current_state ? 1 : 0);
+                    int bit = current_state ? 1 : 0;
+                    tb.current_id = (tb.current_id << 1) | bit;
                     tb.bit_index++;
+                    std::cout << "[Decoder] Blob at (" << tb.position.x << ", " << tb.position.y 
+                              << ") bit " << tb.bit_index << "/" << payload_size 
+                              << " = " << bit << " (current ID: " << tb.current_id << ")" << std::endl;
                     if (tb.bit_index >= payload_size) {
                         tb.decoded_id = tb.current_id;
                         tb.id_valid = true;
                         tb.state = DecoderState::IDLE;
+                        std::cout << "[Decoder] Successfully decoded ID: " << tb.decoded_id 
+                                  << " for blob at (" << tb.position.x << ", " << tb.position.y << ")" << std::endl;
                     }
                 }
             }
