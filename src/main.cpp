@@ -648,6 +648,19 @@ public:
                 Vec3d yaw_pitch_roll = yawPitchRollDecomposition(rmat);
 
                 results.push_back({id, tvec, rmat, yaw_pitch_roll});
+            } else if (pts.size() < 4) {
+                std::vector<Point2f> sorted_pts = pts;
+                sortClockwise(sorted_pts);
+
+                for (size_t i = 0; i < sorted_pts.size(); i++) {
+                    circle(im, sorted_pts[i], 8, Scalar(0, 165, 255), -1);
+                    putText(im, std::to_string(i), cv::Point(sorted_pts[i].x + 12, sorted_pts[i].y - 12),
+                            FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 165, 255), 2, LINE_AA);
+                }
+                
+                Point2f center = findCentroid(sorted_pts);
+                putText(im, "ID: " + std::to_string(id) + " (" + std::to_string(pts.size()) + "/4)", cv::Point(center.x - 20, center.y - 20),
+                        FONT_HERSHEY_SIMPLEX, 1.0, Scalar(0, 165, 255), 2, LINE_AA);
             }
         }
 
