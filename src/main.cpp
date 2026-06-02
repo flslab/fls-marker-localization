@@ -690,12 +690,14 @@ public:
                         FONT_HERSHEY_SIMPLEX, 1.0, Scalar(0, 255, 255), 2, LINE_AA);
 
                 Mat rvec, tvec;
-                solvePnP(marker_points, sorted_pts, cameraMatrix, distCoeffs, rvec, tvec, false, SOLVEPNP_AP3P);
-                Mat rmat;
-                Rodrigues(rvec, rmat);
-                Vec3d yaw_pitch_roll = yawPitchRollDecomposition(rmat);
+                bool pnp_ok = solvePnP(marker_points, sorted_pts, cameraMatrix, distCoeffs, rvec, tvec, false, SOLVEPNP_AP3P);
+                if (pnp_ok && !rvec.empty()) {
+                    Mat rmat;
+                    Rodrigues(rvec, rmat);
+                    Vec3d yaw_pitch_roll = yawPitchRollDecomposition(rmat);
 
-                results.push_back({id, tvec, rmat, yaw_pitch_roll});
+                    results.push_back({id, tvec, rmat, yaw_pitch_roll});
+                }
             } else if (pts.size() < 4) {
                 std::vector<Point2f> sorted_pts = pts;
                 sortClockwise(sorted_pts);
