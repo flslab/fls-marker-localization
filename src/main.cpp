@@ -944,7 +944,8 @@ int main(int argc, char **argv)
     int ret = cam.initCamera();
     cam.configureStill(width, height, formats::R8, 1, 0);
     ControlList controls_;
-    int64_t frame_time = 1000000 / frame_rate;
+    // int64_t frame_time = 1000000 / frame_rate;
+    int64_t frame_time = 1000000 / 120;
     controls_.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({frame_time, frame_time}));
 
     if (brightness >= -1.0 && brightness <= 1.0) {
