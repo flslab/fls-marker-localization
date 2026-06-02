@@ -494,7 +494,7 @@ void invertPose(const cv::Mat& rvec_in, const cv::Mat& tvec_in,
 }
 
 enum class DecoderState {
-    IDLE,
+    WAIT_FOR_SYNC,
     DECODING
 };
 
@@ -508,6 +508,7 @@ struct TrackedBlob {
     int bit_index;
     uint16_t current_id;
     bool last_state;
+    double high_run_start;  // timestamp when current consecutive-high run began
     
     bool id_valid;
     uint16_t decoded_id;
@@ -515,8 +516,9 @@ struct TrackedBlob {
     
     TrackedBlob(Point2f p, double time) 
         : position(p), active(true), last_seen_time(time), creation_time(time),
-          state(DecoderState::IDLE), sync_time(0), bit_index(0), 
-          current_id(0), last_state(true), id_valid(false), decoded_id(0) {}
+          state(DecoderState::WAIT_FOR_SYNC), sync_time(0), bit_index(0), 
+          current_id(0), last_state(false), id_valid(false), decoded_id(0),
+          high_run_start(0) {}
 };
 
 class MarkerTracker {
@@ -525,10 +527,12 @@ private:
     double bit_duration_ms;
     int payload_size;
     double tracking_threshold;
+    double sync_threshold;  // minimum consecutive-high duration (in bit-durations) required before accepting sync
 
 public:
-    MarkerTracker(double bit_duration, int payload, double tracking_thresh) 
-        : bit_duration_ms(bit_duration), payload_size(payload), tracking_threshold(tracking_thresh) {}
+    MarkerTracker(double bit_duration, int payload, double tracking_thresh, double sync_thresh = 4.5) 
+        : bit_duration_ms(bit_duration), payload_size(payload), tracking_threshold(tracking_thresh),
+          sync_threshold(sync_thresh) {}
 
     std::vector<PoseResult> processFrame(Mat &im, double current_time, 
                                          const Mat &cameraMatrix, const Mat &distCoeffs, 
@@ -583,7 +587,8 @@ public:
                 current_state = true;
             }
 
-            if (tb.state == DecoderState::IDLE) {
+            if (tb.state == DecoderState::WAIT_FOR_SYNC) {
+                // Auto-detect static (always-on) markers that never blink
                 if (!tb.id_valid) {
                     double static_timeout = (payload_size + 10.0) * (bit_duration_ms / 1000.0);
                     if (current_time - tb.creation_time > static_timeout) {
@@ -594,13 +599,27 @@ public:
                     }
                 }
 
-                if (tb.last_state == true && current_state == false) {
-                    tb.state = DecoderState::DECODING;
-                    tb.sync_time = current_time;
-                    tb.bit_index = 0;
-                    tb.current_id = 0;
-                    std::cout << "[Decoder] Started decoding for blob at (" 
-                              << tb.position.x << ", " << tb.position.y << ")" << std::endl;
+                if (current_state) {
+                    // LED is ON: track start of consecutive high run
+                    if (!tb.last_state) {
+                        tb.high_run_start = current_time;  // rising edge
+                    }
+                } else {
+                    // LED is OFF: check if preceding high run was long enough for sync
+                    if (tb.last_state && tb.high_run_start > 0) {
+                        double high_duration = current_time - tb.high_run_start;
+                        double min_high_for_sync = sync_threshold * (bit_duration_ms / 1000.0);
+                        if (high_duration >= min_high_for_sync) {
+                            // Valid sync detected — rest+start period was long enough
+                            tb.state = DecoderState::DECODING;
+                            tb.sync_time = current_time;
+                            tb.bit_index = 0;
+                            tb.current_id = 0;
+                            std::cout << "[Decoder] Sync detected for blob at (" 
+                                      << tb.position.x << ", " << tb.position.y << ")" << std::endl;
+                        }
+                    }
+                    tb.high_run_start = 0;  // not in a high run
                 }
             } else if (tb.state == DecoderState::DECODING) {
                 double target_time = tb.sync_time + (1.5 + tb.bit_index) * (bit_duration_ms / 1000.0);
@@ -614,17 +633,23 @@ public:
                     if (tb.bit_index >= payload_size) {
                         tb.decoded_id = tb.current_id;
                         tb.id_valid = true;
-                        tb.state = DecoderState::IDLE;
+                        tb.state = DecoderState::WAIT_FOR_SYNC;  // continue monitoring for re-validation
                         std::cout << "[Decoder] Successfully decoded ID: " << tb.decoded_id 
                                   << " for blob at (" << tb.position.x << ", " << tb.position.y << ")" << std::endl;
                     }
+                }
+                // Timeout: if decoding takes too long, the sync was probably false — abort
+                double decode_timeout = (payload_size + 2.0) * (bit_duration_ms / 1000.0);
+                if (current_time - tb.sync_time > decode_timeout) {
+                    tb.state = DecoderState::WAIT_FOR_SYNC;
+                    tb.high_run_start = 0;
                 }
             }
 
             tb.last_state = current_state;
 
-            // Timeout must be greater than max possible OFF duration (Sync + Payload)
-            double active_timeout = (payload_size + 2.0) * (bit_duration_ms / 1000.0);
+            // Timeout covers the full packet period plus margin
+            double active_timeout = (payload_size + 7.0) * (bit_duration_ms / 1000.0);
             if (current_time - tb.last_seen_time > active_timeout) {
                 tb.active = false;
             }
@@ -641,7 +666,7 @@ public:
 
         std::map<uint16_t, std::vector<Point2f>> groups;
         // Hold the last known position during the entire transmission
-        double group_seen_limit = (payload_size + 2.0) * (bit_duration_ms / 1000.0);
+        double group_seen_limit = (payload_size + 7.0) * (bit_duration_ms / 1000.0);
         for (const auto &tb : tracked_blobs) {
             if (tb.id_valid && (current_time - tb.last_seen_time < group_seen_limit)) {
                 groups[tb.decoded_id].push_back(tb.position);
@@ -775,6 +800,7 @@ int main(int argc, char **argv)
     int payload_size = 10;
     int target_id = -1;
     double tracking_threshold = 30.0;
+    double sync_threshold = 4.5;  // minimum consecutive-high duration (in bit-durations) for sync
 
     // Parse command-line arguments
     for (int i = 1; i < argc; i++) {
@@ -843,6 +869,8 @@ int main(int argc, char **argv)
             target_id = stoi(argv[++i]);
         } else if ((arg == "--tracking-threshold") && i + 1 < argc) {
             tracking_threshold = stod(argv[++i]);
+        } else if ((arg == "--sync-threshold") && i + 1 < argc) {
+            sync_threshold = stod(argv[++i]);
         }
     }
 
@@ -896,7 +924,7 @@ int main(int argc, char **argv)
     int elapsed_seconds = 0;
     float lens_position = 100;
     float focus_step = 50;
-    MarkerTracker tracker(3000.0 / frame_rate, payload_size, tracking_threshold);
+    MarkerTracker tracker(3000.0 / frame_rate, payload_size, tracking_threshold, sync_threshold);
     LibCamera cam;
     uint32_t width = 640;
     uint32_t height = 400;
