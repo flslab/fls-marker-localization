@@ -24,10 +24,10 @@ void sig_handler(int sig) {
 std::vector<int> build_packet(uint16_t marker_id, int payload_size) {
     std::vector<int> packet;
     
-    // 1. Start Bit (High) - Wakes up the receiver
+    // 1. Start Bit (High)
     packet.push_back(1);
     
-    // 2. Sync Bit (Low) - Creates a guaranteed falling edge
+    // 2. Sync Bit (Low) - Creates a falling edge
     packet.push_back(0);
     
     // 3. Payload: ID (MSB first)
@@ -35,9 +35,9 @@ std::vector<int> build_packet(uint16_t marker_id, int payload_size) {
         packet.push_back((marker_id >> i) & 1);
     }
     
-    // 4. Rest Period (Low) - 5 bit-times to separate transmissions
-    for (int i = 0; i < 5; ++i) {
-        packet.push_back(0);
+    // 4. Rest Period (High) - 4 bit-times to separate transmissions and increase tracking frames
+    for (int i = 0; i < 4; ++i) {
+        packet.push_back(1);
     }
     
     return packet;

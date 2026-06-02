@@ -511,9 +511,10 @@ struct TrackedBlob {
     
     bool id_valid;
     uint16_t decoded_id;
+    double creation_time;
     
     TrackedBlob(Point2f p, double time) 
-        : position(p), active(true), last_seen_time(time), 
+        : position(p), active(true), last_seen_time(time), creation_time(time),
           state(DecoderState::IDLE), sync_time(0), bit_index(0), 
           current_id(0), last_state(true), id_valid(false), decoded_id(0) {}
 };
@@ -583,6 +584,16 @@ public:
             }
 
             if (tb.state == DecoderState::IDLE) {
+                if (!tb.id_valid) {
+                    double static_timeout = (payload_size + 10.0) * (bit_duration_ms / 1000.0);
+                    if (current_time - tb.creation_time > static_timeout) {
+                        tb.id_valid = true;
+                        tb.decoded_id = 0;
+                        std::cout << "[Decoder] Auto-detected static marker 0 for blob at (" 
+                                  << tb.position.x << ", " << tb.position.y << ")" << std::endl;
+                    }
+                }
+
                 if (tb.last_state == true && current_state == false) {
                     tb.state = DecoderState::DECODING;
                     tb.sync_time = current_time;
@@ -612,7 +623,9 @@ public:
 
             tb.last_state = current_state;
 
-            if (current_time - tb.last_seen_time > 0.2) {
+            // Timeout must be greater than max possible OFF duration (Sync + Payload)
+            double active_timeout = (payload_size + 2.0) * (bit_duration_ms / 1000.0);
+            if (current_time - tb.last_seen_time > active_timeout) {
                 tb.active = false;
             }
         }
@@ -627,8 +640,10 @@ public:
             [](const TrackedBlob& tb) { return !tb.active; }), tracked_blobs.end());
 
         std::map<uint16_t, std::vector<Point2f>> groups;
+        // Hold the last known position during the entire transmission
+        double group_seen_limit = (payload_size + 2.0) * (bit_duration_ms / 1000.0);
         for (const auto &tb : tracked_blobs) {
-            if (tb.id_valid && (current_time - tb.last_seen_time < 0.1)) {
+            if (tb.id_valid && (current_time - tb.last_seen_time < group_seen_limit)) {
                 groups[tb.decoded_id].push_back(tb.position);
             }
         }
