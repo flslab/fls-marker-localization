@@ -63,6 +63,7 @@ int main(int argc, char* argv[]) {
 
     // Register signal handler for clean shutdown
     std::signal(SIGINT, sig_handler);
+    std::signal(SIGTERM, sig_handler);
 
     // Open the GPIO chip
     int handle = lgGpiochipOpen(GPIO_CHIP);

@@ -594,8 +594,8 @@ public:
                     if (current_time - tb.creation_time > static_timeout) {
                         tb.id_valid = true;
                         tb.decoded_id = 0;
-                        std::cout << "[Decoder] Auto-detected static marker 0 for blob at (" 
-                                  << tb.position.x << ", " << tb.position.y << ")" << std::endl;
+                        // std::cout << "[Decoder] Auto-detected static marker 0 for blob at (" 
+                                //   << tb.position.x << ", " << tb.position.y << ")" << std::endl;
                     }
                 }
 
@@ -615,8 +615,8 @@ public:
                             tb.sync_time = current_time;
                             tb.bit_index = 0;
                             tb.current_id = 0;
-                            std::cout << "[Decoder] Sync detected for blob at (" 
-                                      << tb.position.x << ", " << tb.position.y << ")" << std::endl;
+                            // std::cout << "[Decoder] Sync detected for blob at (" 
+                                    //   << tb.position.x << ", " << tb.position.y << ")" << std::endl;
                         }
                     }
                     tb.high_run_start = 0;  // not in a high run
@@ -627,15 +627,15 @@ public:
                     int bit = current_state ? 1 : 0;
                     tb.current_id = (tb.current_id << 1) | bit;
                     tb.bit_index++;
-                    std::cout << "[Decoder] Blob at (" << tb.position.x << ", " << tb.position.y 
-                              << ") bit " << tb.bit_index << "/" << payload_size 
-                              << " = " << bit << " (current ID: " << tb.current_id << ")" << std::endl;
+                    // std::cout << "[Decoder] Blob at (" << tb.position.x << ", " << tb.position.y 
+                    //           << ") bit " << tb.bit_index << "/" << payload_size 
+                    //           << " = " << bit << " (current ID: " << tb.current_id << ")" << std::endl;
                     if (tb.bit_index >= payload_size) {
                         tb.decoded_id = tb.current_id;
                         tb.id_valid = true;
                         tb.state = DecoderState::WAIT_FOR_SYNC;  // continue monitoring for re-validation
-                        std::cout << "[Decoder] Successfully decoded ID: " << tb.decoded_id 
-                                  << " for blob at (" << tb.position.x << ", " << tb.position.y << ")" << std::endl;
+                        // std::cout << "[Decoder] Successfully decoded ID: " << tb.decoded_id 
+                        //           << " for blob at (" << tb.position.x << ", " << tb.position.y << ")" << std::endl;
                     }
                 }
                 // Timeout: if decoding takes too long, the sync was probably false — abort
