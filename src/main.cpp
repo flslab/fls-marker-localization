@@ -346,6 +346,7 @@ private:
     bool is_running;
     std::thread worker_thread;
     cv::VideoWriter video_writer;
+    string video_filename;
 
 public:
     BackgroundSaver() : is_running(false) {}
@@ -356,6 +357,7 @@ public:
 
     bool startVideo(const string& filename, int codec, double fps, cv::Size size, bool isColor) {
         if (video_writer.isOpened()) return true;
+        video_filename = filename;
         video_writer.open(filename, codec, fps, size, isColor);
         return video_writer.isOpened();
     }
@@ -382,6 +384,7 @@ public:
         }
         if (video_writer.isOpened()) {
             video_writer.release();
+            cout << "Video saved to " << video_filename << endl;
         }
     }
 
