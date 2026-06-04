@@ -45,7 +45,7 @@ std::vector<int> build_packet(uint16_t marker_id, int payload_size) {
 
 int main(int argc, char* argv[]) {
     double fps = 100.0; // default
-    uint16_t my_marker_id = 42;
+    int my_marker_id = -1;
     int payload_size = 10;
     
     for (int i = 1; i < argc; ++i) {
@@ -53,7 +53,7 @@ int main(int argc, char* argv[]) {
         if (arg == "--fps" && i + 1 < argc) {
             fps = std::stod(argv[++i]);
         } else if (arg == "--marker-id" && i + 1 < argc) {
-            my_marker_id = static_cast<uint16_t>(std::stoi(argv[++i]));
+            my_marker_id = std::stoi(argv[++i]);
         } else if (arg == "--payload-size" && i + 1 < argc) {
             payload_size = std::stoi(argv[++i]);
         }
@@ -79,26 +79,36 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    std::vector<int> packet = build_packet(my_marker_id, payload_size);
+    if (my_marker_id == -1) {
+        std::cout << "Marker ID is -1. LEDs will remain ON without blinking.\n";
+        std::cout << "Press Ctrl+C to stop.\n";
+        
+        lgGpioWrite(handle, CONTROL_PIN, 1);
+        while (keep_running) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    } else {
+        std::vector<int> packet = build_packet(static_cast<uint16_t>(my_marker_id), payload_size);
 
-    std::cout << "Broadcasting Marker ID " << my_marker_id << " (Payload: " << payload_size << " bits) on Pin " << CONTROL_PIN << "...\n";
-    std::cout << "Press Ctrl+C to stop.\n";
+        std::cout << "Broadcasting Marker ID " << my_marker_id << " (Payload: " << payload_size << " bits) on Pin " << CONTROL_PIN << "...\n";
+        std::cout << "Press Ctrl+C to stop.\n";
 
-    // Setup absolute timing baseline
-    auto next_tick = std::chrono::steady_clock::now();
+        // Setup absolute timing baseline
+        auto next_tick = std::chrono::steady_clock::now();
 
-    while (keep_running) {
-        for (int bit : packet) {
-            if (!keep_running) break;
+        while (keep_running) {
+            for (int bit : packet) {
+                if (!keep_running) break;
 
-            // Write the current bit to the single control pin
-            lgGpioWrite(handle, CONTROL_PIN, bit);
+                // Write the current bit to the single control pin
+                lgGpioWrite(handle, CONTROL_PIN, bit);
 
-            // Calculate the exact time the NEXT bit should occur
-            next_tick += bit_duration;
+                // Calculate the exact time the NEXT bit should occur
+                next_tick += bit_duration;
 
-            // Sleep exactly until that absolute time to prevent drift
-            std::this_thread::sleep_until(next_tick);
+                // Sleep exactly until that absolute time to prevent drift
+                std::this_thread::sleep_until(next_tick);
+            }
         }
     }
 

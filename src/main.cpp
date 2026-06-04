@@ -947,9 +947,10 @@ int main(int argc, char **argv)
     cam.configureStill(width, height, formats::R8, 1, 0);
     ControlList controls_;
     // int64_t frame_time = 1000000 / frame_rate;
-    int64_t frame_time = 1000000 / 120;
-    controls_.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({frame_time, frame_time}));
-
+    // int64_t frame_time = 1000000 / 120;
+    // controls_.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({frame_time, frame_time}));
+    // Frame pacing is handled by sleep_until in the main loop,
+    // not by FrameDurationLimits, to avoid constraining exposure time.
     if (brightness >= -1.0 && brightness <= 1.0) {
         controls_.set(controls::Brightness, brightness);
         cout << "Brightness: " << brightness << endl;
@@ -988,6 +989,10 @@ int main(int argc, char **argv)
         int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0666);
         ftruncate(shm_fd, sizeof(Position));
         Position* pos = (Position*)mmap(0, sizeof(Position), PROT_WRITE, MAP_SHARED, shm_fd, 0);
+
+        // Frame pacing: process at frame_rate without affecting camera exposure
+        auto frame_interval = std::chrono::microseconds(1000000 / frame_rate);
+        auto next_frame_time = std::chrono::steady_clock::now();
 
         while (keep_running)
         {
@@ -1156,6 +1161,10 @@ int main(int argc, char **argv)
                 break;
             }
             cam.returnFrameBuffer(frameData);
+
+            // Pace the loop to maintain frame_rate without affecting camera exposure
+            next_frame_time += frame_interval;
+            std::this_thread::sleep_until(next_frame_time);
         }
 
         saver.stop();
