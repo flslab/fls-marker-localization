@@ -80,7 +80,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (my_marker_id == 0) {
-        std::cout << "Marker ID is -1. LEDs will remain ON without blinking.\n";
+        std::cout << "Marker ID is 0. LEDs will remain ON without blinking.\n";
         std::cout << "Press Ctrl+C to stop.\n";
         
         lgGpioWrite(handle, CONTROL_PIN, 1);
