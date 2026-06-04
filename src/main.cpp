@@ -30,11 +30,9 @@ using json = nlohmann::json;
 
 std::atomic<bool> keep_running(true);
 
-// Forward declarations for signal handlers (defined after BackgroundSaver)
-class BackgroundSaver;
-BackgroundSaver* g_saver = nullptr;
-void signalHandler(int signum);
-void forceExitHandler(int signum);
+void signalHandler(int signum) {
+    keep_running = false;
+}
 
 struct PoseResult
 {
@@ -429,25 +427,6 @@ private:
         }
     }
 };
-
-void forceExitHandler(int signum) {
-    std::cerr << "\nForced exit." << std::endl;
-    _exit(1);
-}
-
-void signalHandler(int signum) {
-    keep_running = false;
-
-    // Flush and release the video writer immediately
-    if (g_saver) {
-        g_saver->stop();
-        g_saver = nullptr;
-    }
-
-    // If another signal comes during cleanup, force exit
-    signal(SIGINT, forceExitHandler);
-    signal(SIGTERM, forceExitHandler);
-}
 
 // Function to get a timestamped filename
 std::string generateLogName()
@@ -945,7 +924,6 @@ int main(int argc, char **argv)
     BackgroundSaver saver;
     if (save_frames || save_video) {
         saver.start();
-        g_saver = &saver;
     }
 
     time_t start_time = time(0);
@@ -1195,7 +1173,6 @@ int main(int argc, char **argv)
             std::this_thread::sleep_until(next_frame_time);
         }
 
-        g_saver = nullptr;
         saver.stop();
         destroyAllWindows();
         cam.stopCamera();
