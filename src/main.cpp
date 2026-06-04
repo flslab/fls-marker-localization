@@ -797,6 +797,7 @@ int main(int argc, char **argv)
     double brightness = -2.0;
     int exposure_time = -2;
     int frame_rate = 120;
+    int encoder_frame_rate = 60;
 
     double blob_area_threshold = 3;
     int payload_size = 10;
@@ -851,6 +852,8 @@ int main(int argc, char **argv)
             exposure_time = stoi(argv[++i]);
         } else if ((arg == "--fps") && i + 1 < argc) {
             frame_rate = stoi(argv[++i]);
+        } else if ((arg == "--encoder-fps") && i + 1 < argc) {
+            encoder_frame_rate = stoi(argv[++i]);
         } else if ((arg == "--stream") || arg == "--streaming") {
             enable_streaming = true;
         } else if ((arg == "--stream-port") && i + 1 < argc) {
@@ -926,7 +929,7 @@ int main(int argc, char **argv)
     int elapsed_seconds = 0;
     float lens_position = 100;
     float focus_step = 50;
-    MarkerTracker tracker(3000.0 / frame_rate, payload_size, tracking_threshold, sync_threshold);
+    MarkerTracker tracker(3000.0 / encoder_frame_rate, payload_size, tracking_threshold, sync_threshold);
     LibCamera cam;
     uint32_t width = 640;
     uint32_t height = 400;
