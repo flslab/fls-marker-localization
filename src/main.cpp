@@ -947,8 +947,8 @@ int main(int argc, char **argv)
     cam.configureStill(width, height, formats::R8, 1, 0);
     ControlList controls_;
     // int64_t frame_time = 1000000 / frame_rate;
-    // int64_t frame_time = 1000000 / 120;
-    // controls_.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({frame_time, frame_time}));
+    int64_t frame_time = 1000000 / 120;
+    controls_.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({frame_time, frame_time}));
     // Frame pacing is handled by sleep_until in the main loop,
     // not by FrameDurationLimits, to avoid constraining exposure time.
     if (brightness >= -1.0 && brightness <= 1.0) {
