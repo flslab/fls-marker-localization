@@ -44,9 +44,9 @@ std::vector<int> build_packet(uint16_t marker_id, int payload_size) {
 }
 
 int main(int argc, char* argv[]) {
-    double fps = 100.0; // default
-    int my_marker_id = -1;
-    int payload_size = 10;
+    double fps = 60.0; // default
+    int my_marker_id = 0;
+    int payload_size = 4;
     
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -79,7 +79,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    if (my_marker_id == -1) {
+    if (my_marker_id == 0) {
         std::cout << "Marker ID is -1. LEDs will remain ON without blinking.\n";
         std::cout << "Press Ctrl+C to stop.\n";
         
