@@ -593,7 +593,7 @@ public:
                     double static_timeout = (payload_size + 10.0) * (bit_duration_ms / 1000.0);
                     if (current_time - tb.creation_time > static_timeout) {
                         tb.id_valid = true;
-                        tb.decoded_id = -1;
+                        tb.decoded_id = 0;
                         // std::cout << "[Decoder] Auto-detected static marker 0 for blob at (" 
                                 //   << tb.position.x << ", " << tb.position.y << ")" << std::endl;
                     }
