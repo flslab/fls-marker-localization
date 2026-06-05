@@ -90,7 +90,7 @@ int main(int argc, char* argv[]) {
     } else {
         std::vector<int> packet = build_packet(static_cast<uint16_t>(my_marker_id), payload_size);
 
-        std::cout << "Broadcasting Marker ID " << my_marker_id << " (Payload: " << payload_size << " bits) on Pin " << CONTROL_PIN << "...\n";
+        std::cout << "Broadcasting Marker ID " << my_marker_id << " (Payload: " << payload_size << " bits) at " << fps << " Hz...\n";
         std::cout << "Press Ctrl+C to stop.\n";
 
         // Setup absolute timing baseline

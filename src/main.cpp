@@ -799,11 +799,11 @@ int main(int argc, char **argv)
     double contrast = -2.0;
     double brightness = -2.0;
     int exposure_time = -2;
-    int frame_rate = 100;
+    int frame_rate = 120;
     int encoder_frame_rate = 50;
 
     double blob_area_threshold = 3;
-    int payload_size = 10;
+    int payload_size = 4;
     int target_id = -1;
     double tracking_threshold = 30.0;
     double sync_threshold = 4.5;  // minimum consecutive-high duration (in bit-durations) for sync
