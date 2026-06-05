@@ -799,8 +799,8 @@ int main(int argc, char **argv)
     double contrast = -2.0;
     double brightness = -2.0;
     int exposure_time = -2;
-    int frame_rate = 120;
-    int encoder_frame_rate = 60;
+    int frame_rate = 100;
+    int encoder_frame_rate = 50;
 
     double blob_area_threshold = 3;
     int payload_size = 10;
@@ -881,6 +881,9 @@ int main(int argc, char **argv)
             sync_threshold = stod(argv[++i]);
         }
     }
+
+    cout << "Running at " << frame_rate << " Hz" << endl;
+    cout << "Decoding marker IDs at " << encoder_frame_rate << " Hz" << endl; 
 
     string log_dir = generateLogName();
     if (!createDirectory(log_dir)) {
