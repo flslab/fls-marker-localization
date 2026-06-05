@@ -1,7 +1,9 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/calib3d.hpp>
+#include "position_kalman_filter.h"
 #include <iostream>
 #include <vector>
+#include <map>
 #include "LibCamera.h"
 #include <fstream>
 #include <sstream>
@@ -808,6 +810,11 @@ int main(int argc, char **argv)
     double tracking_threshold = 30.0;
     double sync_threshold = 4.5;  // minimum consecutive-high duration (in bit-durations) for sync
 
+    // Kalman filter parameters
+    bool enable_kalman_filter = false;
+    double kf_process_noise = 0.5;
+    double kf_measurement_noise = 0.02;
+
     // Parse command-line arguments
     for (int i = 1; i < argc; i++) {
         string arg = argv[i];
@@ -879,11 +886,21 @@ int main(int argc, char **argv)
             tracking_threshold = stod(argv[++i]);
         } else if ((arg == "--sync-threshold") && i + 1 < argc) {
             sync_threshold = stod(argv[++i]);
+        } else if (arg == "--kalman-filter" || arg == "--kf") {
+            enable_kalman_filter = true;
+        } else if ((arg == "--kf-process-noise") && i + 1 < argc) {
+            kf_process_noise = stod(argv[++i]);
+        } else if ((arg == "--kf-measurement-noise") && i + 1 < argc) {
+            kf_measurement_noise = stod(argv[++i]);
         }
     }
 
     cout << "Running at " << frame_rate << " Hz" << endl;
-    cout << "Decoding marker IDs at " << encoder_frame_rate << " Hz" << endl; 
+    cout << "Decoding marker IDs at " << encoder_frame_rate << " Hz" << endl;
+    if (enable_kalman_filter) {
+        cout << "Kalman filter ENABLED  (process_noise=" << kf_process_noise
+             << ", measurement_noise=" << kf_measurement_noise << ")" << endl;
+    }
 
     string log_dir = generateLogName();
     if (!createDirectory(log_dir)) {
@@ -994,6 +1011,9 @@ int main(int argc, char **argv)
         cam.VideoStream(&width, &height, &stride);
         std::vector<json> frames;
 
+        // Per-marker Kalman filters (created on demand)
+        std::map<uint16_t, PositionKalmanFilter> kalman_filters;
+
         const char* shm_name = "/pos_shared_mem";
         int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0666);
         ftruncate(shm_fd, sizeof(Position));
@@ -1042,17 +1062,41 @@ int main(int argc, char **argv)
                                         result.tvec.at<double>(1, 0),
                                         result.tvec.at<double>(2, 0)};
 
-                current_frame_poses.push_back({
+                // Build the per-frame pose JSON
+                json pose_entry = {
                     {"marker_id", result.marker_id},
                     {"tvec", tvec_vec},
                     {"yaw_pitch_roll", {result.yaw_pitch_roll[0], result.yaw_pitch_roll[1], result.yaw_pitch_roll[2]}}
-                });
+                };
+
+                // Kalman-filtered position
+                std::vector<double> filtered_vec = tvec_vec; // default: same as raw
+                if (enable_kalman_filter) {
+                    // Create KF for this marker on first sight
+                    if (kalman_filters.find(result.marker_id) == kalman_filters.end()) {
+                        kalman_filters.emplace(result.marker_id,
+                            PositionKalmanFilter(kf_process_noise, kf_measurement_noise));
+                    }
+                    Eigen::Vector3d meas(tvec_vec[0], tvec_vec[1], tvec_vec[2]);
+                    Eigen::Vector3d filt = kalman_filters.at(result.marker_id).update(meas, current_time_sec);
+                    filtered_vec = {filt[0], filt[1], filt[2]};
+                    pose_entry["tvec_filtered"] = filtered_vec;
+                }
+
+                current_frame_poses.push_back(pose_entry);
 
                 if (!pos_updated && (target_id == -1 || result.marker_id == target_id)) {
                     pos->valid = true;
-                    pos->x = tvec_vec[0];
-                    pos->y = tvec_vec[1];
-                    pos->z = tvec_vec[2];
+                    // Write filtered values to shared memory when KF is enabled
+                    if (enable_kalman_filter) {
+                        pos->x = filtered_vec[0];
+                        pos->y = filtered_vec[1];
+                        pos->z = filtered_vec[2];
+                    } else {
+                        pos->x = tvec_vec[0];
+                        pos->y = tvec_vec[1];
+                        pos->z = tvec_vec[2];
+                    }
                     pos->roll = result.yaw_pitch_roll[2];
                     pos->pitch = result.yaw_pitch_roll[1];
                     pos->yaw = result.yaw_pitch_roll[0];
@@ -1185,6 +1229,11 @@ int main(int argc, char **argv)
         log["config"] = {{"distance", distance}};
         if (video_start_time > 0) {
             log["config"]["video_start_time"] = video_start_time;
+        }
+        log["config"]["kalman_filter_enabled"] = enable_kalman_filter;
+        if (enable_kalman_filter) {
+            log["config"]["kf_process_noise"] = kf_process_noise;
+            log["config"]["kf_measurement_noise"] = kf_measurement_noise;
         }
         log["frames"] = frames;
 
