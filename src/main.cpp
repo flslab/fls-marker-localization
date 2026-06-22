@@ -1149,6 +1149,10 @@ int main(int argc, char **argv)
 
             if (aruco_mode && aruco_tracker) {
                 // ── ArUco detection mode ─────────────────────────────
+                // Convert to colour so annotations and saved frames are in colour
+                if (im.channels() == 1) {
+                    cvtColor(im, im, COLOR_GRAY2BGR);
+                }
                 auto aruco_result = aruco_tracker->processFrame(im, cameraMatrix, distCoeffs);
 
                 if (aruco_result.valid) {

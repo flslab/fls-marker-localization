@@ -143,6 +143,18 @@ public:
         cv::aruco::drawDetectedMarkers(frame, corners, ids);
         result.detected_ids = ids;
 
+        // 1b. Sub-pixel corner refinement ────────────────────────────
+        cv::Mat grey;
+        if (frame.channels() == 1)
+            grey = frame;
+        else
+            cv::cvtColor(frame, grey, cv::COLOR_BGR2GRAY);
+
+        cv::TermCriteria criteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 30, 0.001);
+        for (size_t i = 0; i < corners.size(); ++i) {
+            cv::cornerSubPix(grey, corners[i], cv::Size(11, 11), cv::Size(-1, -1), criteria);
+        }
+
         // 2. Marker-local 3D corners (same for every marker) ────────
         //    Order: top-left, top-right, bottom-right, bottom-left
         //    centred at the marker origin, lying in the XY plane.
