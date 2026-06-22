@@ -8,8 +8,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_BUILD_TYPE Debug)
 
-# Find OpenCV package
+# Find OpenCV package (aruco may be in contrib or bundled in objdetect on 4.7+)
 find_package(OpenCV REQUIRED)
+find_package(OpenCV QUIET COMPONENTS aruco)
 #find_package(Ceres REQUIRED) ${CERES_INCLUDE_DIRS} ${CERES_LIBRARIES}
 find_package(nlohmann_json REQUIRED)
 

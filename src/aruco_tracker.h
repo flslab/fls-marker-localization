@@ -8,13 +8,23 @@
  * world frame, and fuses the estimates via a weighted average (weights
  * are the inverse of the reprojection error).
  *
- * Uses the OpenCV 4.7+ ArucoDetector API
- *   (#include <opencv2/objdetect/aruco_detector.hpp>).
+ * Supports both:
+ *   - OpenCV 4.7+  (cv::aruco::ArucoDetector, objdetect module)
+ *   - OpenCV 4.0–4.6 / contrib  (cv::aruco::detectMarkers, aruco module)
  */
 
 #include <opencv2/opencv.hpp>
 #include <opencv2/calib3d.hpp>
-#include <opencv2/objdetect/aruco_detector.hpp>
+#include <opencv2/core/version.hpp>
+
+// ─── ArUco API version detection ────────────────────────────────────────
+#if CV_VERSION_MAJOR > 4 || (CV_VERSION_MAJOR == 4 && CV_VERSION_MINOR >= 7)
+  #define ARUCO_NEW_API 1
+  #include <opencv2/objdetect/aruco_detector.hpp>
+#else
+  #define ARUCO_NEW_API 0
+  #include <opencv2/aruco.hpp>
+#endif
 
 #include <map>
 #include <vector>
@@ -90,10 +100,16 @@ public:
         : marker_size_(marker_size),
           known_markers_(known_markers)
     {
-        cv::aruco::PredefinedDictionaryType dict_type = parseDictionary(dictionary_name);
-        cv::aruco::Dictionary dict = cv::aruco::getPredefinedDictionary(dict_type);
+        int dict_id = parseDictionary(dictionary_name);
+
+#if ARUCO_NEW_API
+        cv::aruco::Dictionary dict = cv::aruco::getPredefinedDictionary(dict_id);
         cv::aruco::DetectorParameters params;
         detector_ = cv::aruco::ArucoDetector(dict, params);
+#else
+        dictionary_ = cv::aruco::getPredefinedDictionary(dict_id);
+        det_params_ = cv::aruco::DetectorParameters::create();
+#endif
     }
 
     /**
@@ -114,7 +130,12 @@ public:
         // 1. Detect markers ──────────────────────────────────────────
         std::vector<int> ids;
         std::vector<std::vector<cv::Point2f>> corners, rejected;
+
+#if ARUCO_NEW_API
         detector_.detectMarkers(frame, corners, ids, rejected);
+#else
+        cv::aruco::detectMarkers(frame, dictionary_, corners, ids, det_params_, rejected);
+#endif
 
         if (ids.empty()) return result;
 
@@ -183,8 +204,7 @@ public:
 
         // 4. Weighted average of camera poses ───────────────────────
         //    Average translations directly; average rotations via
-        //    quaternion weighted averaging (simplified: use rotation
-        //    vectors and weight them, valid when poses are close).
+        //    rotation vectors and weight them (valid when poses are close).
 
         double total_weight = 0.0;
         cv::Mat avg_tvec = cv::Mat::zeros(3, 1, CV_64F);
@@ -223,7 +243,13 @@ public:
 private:
     double marker_size_;
     std::map<int, MarkerWorldPose> known_markers_;
+
+#if ARUCO_NEW_API
     cv::aruco::ArucoDetector detector_;
+#else
+    cv::Ptr<cv::aruco::Dictionary> dictionary_;
+    cv::Ptr<cv::aruco::DetectorParameters> det_params_;
+#endif
 
     // Euler decomposition (same convention as the rest of the codebase)
     static cv::Vec3d yawPitchRollDecomposition(const cv::Mat& rmat)
@@ -236,26 +262,26 @@ private:
         return cv::Vec3d(yaw, pitch, roll);
     }
 
-    // Map string name → OpenCV enum
-    static cv::aruco::PredefinedDictionaryType parseDictionary(const std::string& name)
+    // Map string name → OpenCV dictionary ID (works as both enum and int)
+    static int parseDictionary(const std::string& name)
     {
-        static const std::map<std::string, cv::aruco::PredefinedDictionaryType> lut = {
-            {"DICT_4X4_50",        cv::aruco::DICT_4X4_50},
-            {"DICT_4X4_100",       cv::aruco::DICT_4X4_100},
-            {"DICT_4X4_250",       cv::aruco::DICT_4X4_250},
-            {"DICT_4X4_1000",      cv::aruco::DICT_4X4_1000},
-            {"DICT_5X5_50",        cv::aruco::DICT_5X5_50},
-            {"DICT_5X5_100",       cv::aruco::DICT_5X5_100},
-            {"DICT_5X5_250",       cv::aruco::DICT_5X5_250},
-            {"DICT_5X5_1000",      cv::aruco::DICT_5X5_1000},
-            {"DICT_6X6_50",        cv::aruco::DICT_6X6_50},
-            {"DICT_6X6_100",       cv::aruco::DICT_6X6_100},
-            {"DICT_6X6_250",       cv::aruco::DICT_6X6_250},
-            {"DICT_6X6_1000",      cv::aruco::DICT_6X6_1000},
-            {"DICT_7X7_50",        cv::aruco::DICT_7X7_50},
-            {"DICT_7X7_100",       cv::aruco::DICT_7X7_100},
-            {"DICT_7X7_250",       cv::aruco::DICT_7X7_250},
-            {"DICT_7X7_1000",      cv::aruco::DICT_7X7_1000},
+        static const std::map<std::string, int> lut = {
+            {"DICT_4X4_50",         cv::aruco::DICT_4X4_50},
+            {"DICT_4X4_100",        cv::aruco::DICT_4X4_100},
+            {"DICT_4X4_250",        cv::aruco::DICT_4X4_250},
+            {"DICT_4X4_1000",       cv::aruco::DICT_4X4_1000},
+            {"DICT_5X5_50",         cv::aruco::DICT_5X5_50},
+            {"DICT_5X5_100",        cv::aruco::DICT_5X5_100},
+            {"DICT_5X5_250",        cv::aruco::DICT_5X5_250},
+            {"DICT_5X5_1000",       cv::aruco::DICT_5X5_1000},
+            {"DICT_6X6_50",         cv::aruco::DICT_6X6_50},
+            {"DICT_6X6_100",        cv::aruco::DICT_6X6_100},
+            {"DICT_6X6_250",        cv::aruco::DICT_6X6_250},
+            {"DICT_6X6_1000",       cv::aruco::DICT_6X6_1000},
+            {"DICT_7X7_50",         cv::aruco::DICT_7X7_50},
+            {"DICT_7X7_100",        cv::aruco::DICT_7X7_100},
+            {"DICT_7X7_250",        cv::aruco::DICT_7X7_250},
+            {"DICT_7X7_1000",       cv::aruco::DICT_7X7_1000},
             {"DICT_ARUCO_ORIGINAL", cv::aruco::DICT_ARUCO_ORIGINAL},
         };
         auto it = lut.find(name);
