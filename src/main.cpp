@@ -1,6 +1,7 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/calib3d.hpp>
 #include "position_kalman_filter.h"
+#include "aruco_tracker.h"
 #include <iostream>
 #include <vector>
 #include <map>
@@ -752,9 +753,11 @@ bool readConfigFile(const string &filename, Mat &cameraMatrix, Mat &distCoeffs, 
 
         // Read marker points
         marker_points.clear();
-        for (const auto &point : config["marker_points"])
-        {
-            marker_points.push_back(Point3f(point[0], point[1], point[2]));
+        if (config.contains("marker_points")) {
+            for (const auto &point : config["marker_points"])
+            {
+                marker_points.push_back(Point3f(point[0], point[1], point[2]));
+            }
         }
 
         return true;
@@ -762,6 +765,75 @@ bool readConfigFile(const string &filename, Mat &cameraMatrix, Mat &distCoeffs, 
     catch (const exception &e)
     {
         cerr << "Error reading config file: " << e.what() << endl;
+        return false;
+    }
+}
+
+/**
+ * Read the "aruco_markers" section from the config and build the
+ * data structures needed to construct an ArucoTracker.
+ */
+bool readArucoConfig(const string &filename,
+                     string &aruco_dictionary,
+                     double &aruco_marker_size,
+                     std::map<int, ArucoTracker::MarkerWorldPose> &known_markers)
+{
+    try {
+        std::ifstream file(filename);
+        if (!file.is_open()) {
+            cerr << "Failed to open config file: " << filename << endl;
+            return false;
+        }
+        json config = json::parse(file);
+
+        if (!config.contains("aruco_markers")) {
+            cerr << "Config file does not contain 'aruco_markers' section" << endl;
+            return false;
+        }
+
+        const auto &ac = config["aruco_markers"];
+        aruco_dictionary = ac.value("dictionary", "DICT_4X4_50");
+        aruco_marker_size = ac.value("marker_size", 0.20);
+
+        known_markers.clear();
+        if (ac.contains("markers")) {
+            for (auto it = ac["markers"].begin(); it != ac["markers"].end(); ++it) {
+                int marker_id = std::stoi(it.key());
+                const auto &m = it.value();
+
+                // Position (x, y, z) in world frame
+                double px = m["position"][0].get<double>();
+                double py = m["position"][1].get<double>();
+                double pz = m["position"][2].get<double>();
+
+                // Rotation (roll, pitch, yaw) in degrees
+                double roll_deg  = m["rotation_deg"][0].get<double>();
+                double pitch_deg = m["rotation_deg"][1].get<double>();
+                double yaw_deg   = m["rotation_deg"][2].get<double>();
+
+                double deg2rad = CV_PI / 180.0;
+                cv::Mat R = eulerToRotationMatrix(roll_deg * deg2rad,
+                                                  pitch_deg * deg2rad,
+                                                  yaw_deg * deg2rad);
+                cv::Mat t = (cv::Mat_<double>(3, 1) << px, py, pz);
+                cv::Mat T = makeTransform(R, t);
+
+                ArucoTracker::MarkerWorldPose mwp;
+                mwp.id = marker_id;
+                mwp.T_world_marker = T;
+                known_markers[marker_id] = mwp;
+
+                cout << "  ArUco marker " << marker_id
+                     << " at [" << px << ", " << py << ", " << pz << "]" << endl;
+            }
+        }
+
+        cout << "ArUco config: dictionary=" << aruco_dictionary
+             << ", marker_size=" << aruco_marker_size << "m"
+             << ", " << known_markers.size() << " known markers" << endl;
+        return true;
+    } catch (const exception &e) {
+        cerr << "Error reading ArUco config: " << e.what() << endl;
         return false;
     }
 }
@@ -791,6 +863,9 @@ int main(int argc, char **argv)
     string video_path = "";
     string config_file = "camera_config.json";
     string json_path = "";
+
+    // ArUco mode
+    bool aruco_mode = false;
 
     // Streaming parameters
     bool enable_streaming = false;
@@ -886,6 +961,8 @@ int main(int argc, char **argv)
             tracking_threshold = stod(argv[++i]);
         } else if ((arg == "--sync-threshold") && i + 1 < argc) {
             sync_threshold = stod(argv[++i]);
+        } else if (arg == "--aruco") {
+            aruco_mode = true;
         } else if (arg == "--kalman-filter" || arg == "--kf") {
             enable_kalman_filter = true;
         } else if ((arg == "--kf-process-noise") && i + 1 < argc) {
@@ -1003,6 +1080,25 @@ int main(int argc, char **argv)
         return -1;
     }
 
+    // ArUco tracker (only initialised when --aruco is active)
+    ArucoTracker* aruco_tracker = nullptr;
+    if (aruco_mode) {
+        string aruco_dictionary;
+        double aruco_marker_size;
+        std::map<int, ArucoTracker::MarkerWorldPose> known_markers;
+
+        if (!readArucoConfig(config_file, aruco_dictionary, aruco_marker_size, known_markers)) {
+            cerr << "Failed to read ArUco configuration" << endl;
+            return -1;
+        }
+        if (known_markers.empty()) {
+            cerr << "No ArUco markers defined in config" << endl;
+            return -1;
+        }
+        aruco_tracker = new ArucoTracker(aruco_dictionary, aruco_marker_size, known_markers);
+        cout << "ArUco detection mode ENABLED" << endl;
+    }
+
     if (!ret)
     {
         bool flag;
@@ -1048,46 +1144,57 @@ int main(int argc, char **argv)
             double current_time_sec = std::chrono::duration<double>(now_time.time_since_epoch()).count();
 
             // Process the image
-            std::vector<PoseResult> results = tracker.processFrame(im, current_time_sec, cameraMatrix, distCoeffs, marker_points, blob_area_threshold);
-
             std::vector<json> current_frame_poses;
             bool pos_updated = false;
 
-            for (const auto& result : results) {
-                if (print_logs) {
-                    cout << "ID: " << result.marker_id << " Translation Vector: " << result.tvec.t() << "Yaw, Pitch, Roll: " << result.yaw_pitch_roll << endl;
-                }
+            if (aruco_mode && aruco_tracker) {
+                // ── ArUco detection mode ─────────────────────────────
+                auto aruco_result = aruco_tracker->processFrame(im, cameraMatrix, distCoeffs);
 
-                std::vector<double> tvec_vec = {result.tvec.at<double>(0, 0),
-                                        result.tvec.at<double>(1, 0),
-                                        result.tvec.at<double>(2, 0)};
+                if (aruco_result.valid) {
+                    std::vector<double> tvec_vec = {
+                        aruco_result.tvec_world.at<double>(0, 0),
+                        aruco_result.tvec_world.at<double>(1, 0),
+                        aruco_result.tvec_world.at<double>(2, 0)
+                    };
 
-                // Build the per-frame pose JSON
-                json pose_entry = {
-                    {"marker_id", result.marker_id},
-                    {"tvec", tvec_vec},
-                    {"yaw_pitch_roll", {result.yaw_pitch_roll[0], result.yaw_pitch_roll[1], result.yaw_pitch_roll[2]}}
-                };
-
-                // Kalman-filtered position
-                std::vector<double> filtered_vec = tvec_vec; // default: same as raw
-                if (enable_kalman_filter) {
-                    // Create KF for this marker on first sight
-                    if (kalman_filters.find(result.marker_id) == kalman_filters.end()) {
-                        kalman_filters.emplace(result.marker_id,
-                            PositionKalmanFilter(kf_process_noise, kf_measurement_noise));
+                    if (print_logs) {
+                        cout << "[ArUco] Camera world pos: ["
+                             << tvec_vec[0] << ", " << tvec_vec[1] << ", " << tvec_vec[2]
+                             << "]  YPR: " << aruco_result.yaw_pitch_roll
+                             << "  markers: " << aruco_result.markers_used
+                             << "  reproj_err: " << aruco_result.reprojection_error << endl;
                     }
-                    Eigen::Vector3d meas(tvec_vec[0], tvec_vec[1], tvec_vec[2]);
-                    Eigen::Vector3d filt = kalman_filters.at(result.marker_id).update(meas, current_time_sec);
-                    filtered_vec = {filt[0], filt[1], filt[2]};
-                    pose_entry["tvec_filtered"] = filtered_vec;
-                }
 
-                current_frame_poses.push_back(pose_entry);
+                    json pose_entry = {
+                        {"camera_pose", true},
+                        {"tvec", tvec_vec},
+                        {"yaw_pitch_roll", {aruco_result.yaw_pitch_roll[0],
+                                            aruco_result.yaw_pitch_roll[1],
+                                            aruco_result.yaw_pitch_roll[2]}},
+                        {"markers_used", aruco_result.markers_used},
+                        {"detected_ids", aruco_result.detected_ids},
+                        {"reprojection_error", aruco_result.reprojection_error}
+                    };
 
-                if (!pos_updated && (target_id == -1 || result.marker_id == target_id)) {
+                    // Kalman-filtered position (uses marker_id 0 slot for camera pose)
+                    std::vector<double> filtered_vec = tvec_vec;
+                    if (enable_kalman_filter) {
+                        const uint16_t kf_id = 0xFFFF; // reserved KF slot for ArUco camera pose
+                        if (kalman_filters.find(kf_id) == kalman_filters.end()) {
+                            kalman_filters.emplace(kf_id,
+                                PositionKalmanFilter(kf_process_noise, kf_measurement_noise));
+                        }
+                        Eigen::Vector3d meas(tvec_vec[0], tvec_vec[1], tvec_vec[2]);
+                        Eigen::Vector3d filt = kalman_filters.at(kf_id).update(meas, current_time_sec);
+                        filtered_vec = {filt[0], filt[1], filt[2]};
+                        pose_entry["tvec_filtered"] = filtered_vec;
+                    }
+
+                    current_frame_poses.push_back(pose_entry);
+
+                    // Shared memory
                     pos->valid = true;
-                    // Write filtered values to shared memory when KF is enabled
                     if (enable_kalman_filter) {
                         pos->x = filtered_vec[0];
                         pos->y = filtered_vec[1];
@@ -1097,10 +1204,60 @@ int main(int argc, char **argv)
                         pos->y = tvec_vec[1];
                         pos->z = tvec_vec[2];
                     }
-                    pos->roll = result.yaw_pitch_roll[2];
-                    pos->pitch = result.yaw_pitch_roll[1];
-                    pos->yaw = result.yaw_pitch_roll[0];
+                    pos->roll  = aruco_result.yaw_pitch_roll[2];
+                    pos->pitch = aruco_result.yaw_pitch_roll[1];
+                    pos->yaw   = aruco_result.yaw_pitch_roll[0];
                     pos_updated = true;
+                }
+            } else {
+                // ── Blob tracker mode (original) ────────────────────
+                std::vector<PoseResult> results = tracker.processFrame(im, current_time_sec, cameraMatrix, distCoeffs, marker_points, blob_area_threshold);
+
+                for (const auto& result : results) {
+                    if (print_logs) {
+                        cout << "ID: " << result.marker_id << " Translation Vector: " << result.tvec.t() << "Yaw, Pitch, Roll: " << result.yaw_pitch_roll << endl;
+                    }
+
+                    std::vector<double> tvec_vec = {result.tvec.at<double>(0, 0),
+                                            result.tvec.at<double>(1, 0),
+                                            result.tvec.at<double>(2, 0)};
+
+                    json pose_entry = {
+                        {"marker_id", result.marker_id},
+                        {"tvec", tvec_vec},
+                        {"yaw_pitch_roll", {result.yaw_pitch_roll[0], result.yaw_pitch_roll[1], result.yaw_pitch_roll[2]}}
+                    };
+
+                    std::vector<double> filtered_vec = tvec_vec;
+                    if (enable_kalman_filter) {
+                        if (kalman_filters.find(result.marker_id) == kalman_filters.end()) {
+                            kalman_filters.emplace(result.marker_id,
+                                PositionKalmanFilter(kf_process_noise, kf_measurement_noise));
+                        }
+                        Eigen::Vector3d meas(tvec_vec[0], tvec_vec[1], tvec_vec[2]);
+                        Eigen::Vector3d filt = kalman_filters.at(result.marker_id).update(meas, current_time_sec);
+                        filtered_vec = {filt[0], filt[1], filt[2]};
+                        pose_entry["tvec_filtered"] = filtered_vec;
+                    }
+
+                    current_frame_poses.push_back(pose_entry);
+
+                    if (!pos_updated && (target_id == -1 || result.marker_id == target_id)) {
+                        pos->valid = true;
+                        if (enable_kalman_filter) {
+                            pos->x = filtered_vec[0];
+                            pos->y = filtered_vec[1];
+                            pos->z = filtered_vec[2];
+                        } else {
+                            pos->x = tvec_vec[0];
+                            pos->y = tvec_vec[1];
+                            pos->z = tvec_vec[2];
+                        }
+                        pos->roll = result.yaw_pitch_roll[2];
+                        pos->pitch = result.yaw_pitch_roll[1];
+                        pos->yaw = result.yaw_pitch_roll[0];
+                        pos_updated = true;
+                    }
                 }
             }
 
@@ -1227,6 +1384,7 @@ int main(int argc, char **argv)
         string log_filename = json_path.empty() ? (log_dir + "/log.json") : json_path;
         json log;
         log["config"] = {{"distance", distance}};
+        log["config"]["aruco_mode"] = aruco_mode;
         if (video_start_time > 0) {
             log["config"]["video_start_time"] = video_start_time;
         }
@@ -1250,6 +1408,11 @@ int main(int argc, char **argv)
     // Clean up streaming
     if (streamer) {
         delete streamer;
+    }
+
+    // Clean up ArUco tracker
+    if (aruco_tracker) {
+        delete aruco_tracker;
     }
 
     cam.closeCamera();

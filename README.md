@@ -55,6 +55,48 @@ Run for 10 seconds:
 | `--stream-port`           | —     | Int    | Port for video streaming                              | 8080               |
 | `--stream-type`           | —     | String | Streaming protocol type (`http` or `udp`)             | http               |
 | `--stream-rate`           | —     | Double | Target frames per second for streaming                | 10                 |
+| `--aruco`                 | —     | Flag   | Enables ArUco marker detection mode                   | false              |
+
+## ArUco Marker Detection Mode
+
+When `--aruco` is passed, the system uses OpenCV's ArUco marker detector instead of the LED blob tracker. Given known world poses of ArUco markers (defined in the config file), it computes the camera's position and orientation in world coordinates via PnP.
+
+### Config File Format
+
+Add an `aruco_markers` section to your camera config JSON:
+
+```json
+{
+  "camera_matrix": [...],
+  "dist_coeffs": [...],
+  "aruco_markers": {
+    "dictionary": "DICT_4X4_50",
+    "marker_size": 0.20,
+    "markers": {
+      "0": {
+        "position": [0.0, 0.0, 0.0],
+        "rotation_deg": [0, 0, 0]
+      },
+      "1": {
+        "position": [0.5, 0.0, 0.0],
+        "rotation_deg": [0, 0, 0]
+      }
+    }
+  }
+}
+```
+
+- **dictionary**: ArUco dictionary name (e.g. `DICT_4X4_50`, `DICT_6X6_250`)
+- **marker_size**: Physical side length of markers in meters
+- **markers**: Map of marker ID → world pose (position in meters, rotation as roll/pitch/yaw in degrees)
+
+### Example
+
+```
+./eye --aruco -v -t 10
+```
+
+When multiple markers are visible, their camera pose estimates are fused via weighted average (weighted by inverse reprojection error).
 
 ## Visualize Logs
 

@@ -44,5 +44,19 @@
       0.0,
       0.0
     ]
-  ]
+  ],
+  "aruco_markers": {
+    "dictionary": "DICT_4X4_50",
+    "marker_size": 0.20,
+    "markers": {
+      "0": {
+        "position": [0.0, 0.0, 0.0],
+        "rotation_deg": [0, 0, 0]
+      },
+      "1": {
+        "position": [0.5, 0.0, 0.0],
+        "rotation_deg": [0, 0, 0]
+      }
+    }
+  }
 }
