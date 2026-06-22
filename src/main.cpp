@@ -878,6 +878,8 @@ int main(int argc, char **argv)
     int exposure_time = -2;
     int frame_rate = 120;
     int encoder_frame_rate = 50;
+    int cam_width = 640;
+    int cam_height = 400;
 
     double blob_area_threshold = 3;
     int payload_size = 4;
@@ -963,6 +965,10 @@ int main(int argc, char **argv)
             sync_threshold = stod(argv[++i]);
         } else if (arg == "--aruco") {
             aruco_mode = true;
+        } else if ((arg == "--width") && i + 1 < argc) {
+            cam_width = stoi(argv[++i]);
+        } else if ((arg == "--height") && i + 1 < argc) {
+            cam_height = stoi(argv[++i]);
         } else if (arg == "--kalman-filter" || arg == "--kf") {
             enable_kalman_filter = true;
         } else if ((arg == "--kf-process-noise") && i + 1 < argc) {
@@ -1031,12 +1037,12 @@ int main(int argc, char **argv)
     float focus_step = 50;
     MarkerTracker tracker(3000.0 / encoder_frame_rate, payload_size, tracking_threshold, sync_threshold);
     LibCamera cam;
-    uint32_t width = 640;
-    uint32_t height = 400;
+    uint32_t width = cam_width;
+    uint32_t height = cam_height;
     uint32_t stride;
     char key;
-    int window_width = 640;
-    int window_height = 400;
+    int window_width = cam_width;
+    int window_height = cam_height;
 
     if (preview) {
         if (width > window_width)
