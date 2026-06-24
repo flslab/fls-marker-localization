@@ -142,8 +142,6 @@ public:
         if (ids.empty())
             return result;
 
-        // Draw all detected markers
-        cv::aruco::drawDetectedMarkers(frame, corners, ids);
         result.detected_ids = ids;
 
         // 1b. Sub-pixel corner refinement ────────────────────────────
@@ -158,6 +156,9 @@ public:
         {
             cv::cornerSubPix(grey, corners[i], cv::Size(11, 11), cv::Size(-1, -1), criteria);
         }
+
+        // Draw markers after refinement so annotations do not affect cornerSubPix.
+        cv::aruco::drawDetectedMarkers(frame, corners, ids);
 
         // 2. Marker-local 3D corners (same for every marker) ────────
         //    Order: top-left, top-right, bottom-right, bottom-left
@@ -186,12 +187,15 @@ public:
 
             const cv::Mat &T_world_marker = it->second.T_world_marker;
 
-            // Solve PnP: marker-local frame → camera frame
-            cv::Mat rvec, tvec;
-            bool ok = cv::solvePnP(obj_pts_local, corners[i],
-                                   cameraMatrix, distCoeffs,
-                                   rvec, tvec, false, cv::SOLVEPNP_IPPE_SQUARE);
-            if (!ok)
+            // Solve PnP with RANSAC: marker-local frame → camera frame.
+            // AP3P is stable for the four ArUco corners in solvePnPRansac.
+            cv::Mat rvec, tvec, inliers;
+            bool ok = cv::solvePnPRansac(obj_pts_local, corners[i],
+                                         cameraMatrix, distCoeffs,
+                                         rvec, tvec, false,
+                                         100, 4.0f, 0.99, inliers,
+                                         cv::SOLVEPNP_AP3P);
+            if (!ok || inliers.total() < 4)
                 continue;
 
             // Compute reprojection error
@@ -211,7 +215,6 @@ public:
 
             // T_world_camera = T_world_marker * inv(T_camera_marker)
             cv::Mat T_world_camera = T_world_marker * invertTransform(T_camera_marker);
-            // cv::Mat T_world_camera = T_camera_marker;
 
             double w = (err > 1e-6) ? (1.0 / err) : 1e6;
             estimates.push_back({T_world_camera, w});
