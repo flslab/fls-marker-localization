@@ -210,8 +210,8 @@ public:
             cv::Mat T_camera_marker = makeTransform(R_cm, tvec);
 
             // T_world_camera = T_world_marker * inv(T_camera_marker)
-            // cv::Mat T_world_camera = T_world_marker * invertTransform(T_camera_marker);
-            cv::Mat T_world_camera = T_camera_marker;
+            cv::Mat T_world_camera = T_world_marker * invertTransform(T_camera_marker);
+            // cv::Mat T_world_camera = T_camera_marker;
 
             double w = (err > 1e-6) ? (1.0 / err) : 1e6;
             estimates.push_back({T_world_camera, w});
