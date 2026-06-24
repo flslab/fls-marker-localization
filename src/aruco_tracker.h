@@ -31,8 +31,6 @@
 #include <string>
 #include <iostream>
 #include <cmath>
-#include <algorithm>
-#include <limits>
 
 // ─── helper: euler (ZYX intrinsic) → 3×3 rotation matrix ───────────────
 static cv::Mat eulerToRotationMatrix(double roll_rad, double pitch_rad, double yaw_rad)
@@ -178,14 +176,6 @@ public:
             cv::Mat T_world_camera; // 4×4
             double weight;          // 1 / reprojection_error
         };
-        struct PnPCandidate
-        {
-            cv::Mat rvec;
-            cv::Mat tvec;
-            cv::Mat T_world_camera;
-            double reprojection_error = std::numeric_limits<double>::infinity();
-            double continuity_cost = std::numeric_limits<double>::infinity();
-        };
         std::vector<PoseEstimate> estimates;
 
         for (size_t i = 0; i < ids.size(); ++i)
@@ -199,94 +189,38 @@ public:
 
             // Solve PnP with RANSAC: marker-local frame → camera frame.
             // AP3P is stable for the four ArUco corners in solvePnPRansac.
-            std::vector<PnPCandidate> candidates;
-            auto addCandidate = [&](const cv::Mat &candidate_rvec, const cv::Mat &candidate_tvec)
-            {
-                if (candidate_rvec.empty() || candidate_tvec.empty())
-                    return;
-
-                cv::Mat R_cm;
-                cv::Rodrigues(candidate_rvec, R_cm);
-                cv::Mat T_camera_marker = makeTransform(R_cm, candidate_tvec);
-                cv::Mat T_world_camera = T_world_marker * invertTransform(T_camera_marker);
-
-                double err = computeReprojectionError(obj_pts_local, corners[i],
-                                                      candidate_rvec, candidate_tvec,
-                                                      cameraMatrix, distCoeffs);
-                double continuity = has_last_pose_
-                    ? poseContinuityCost(T_world_camera, last_T_world_camera_, marker_size_)
-                    : 0.0;
-
-                candidates.push_back({candidate_rvec.clone(), candidate_tvec.clone(),
-                                      T_world_camera.clone(), err, continuity});
-            };
-
-            cv::Mat ransac_rvec, ransac_tvec, inliers;
-            bool ransac_ok = cv::solvePnPRansac(obj_pts_local, corners[i],
-                                                cameraMatrix, distCoeffs,
-                                                ransac_rvec, ransac_tvec, false,
-                                                100, 4.0f, 0.99, inliers,
-                                                cv::SOLVEPNP_AP3P);
-            if (ransac_ok && inliers.total() >= 4)
-                addCandidate(ransac_rvec, ransac_tvec);
-
-            // Planar square markers can have two very similar reprojection solutions.
-            // Expose both and pick the one that is temporally consistent.
-            std::vector<cv::Mat> generic_rvecs, generic_tvecs;
-            try
-            {
-                cv::solvePnPGeneric(obj_pts_local, corners[i],
-                                    cameraMatrix, distCoeffs,
-                                    generic_rvecs, generic_tvecs,
-                                    false, cv::SOLVEPNP_IPPE_SQUARE);
-                for (size_t c = 0; c < generic_rvecs.size(); ++c)
-                    addCandidate(generic_rvecs[c], generic_tvecs[c]);
-            }
-            catch (const cv::Exception &)
-            {
-                // Keep the RANSAC solution if IPPE cannot provide candidates.
-            }
-
-            if (candidates.empty())
+            cv::Mat rvec, tvec, inliers;
+            bool ok = cv::solvePnPRansac(obj_pts_local, corners[i],
+                                         cameraMatrix, distCoeffs,
+                                         rvec, tvec, false,
+                                         100, 4.0f, 0.99, inliers,
+                                         cv::SOLVEPNP_AP3P);
+            if (!ok || inliers.total() < 4)
                 continue;
 
-            const auto best_err_it = std::min_element(
-                candidates.begin(), candidates.end(),
-                [](const PnPCandidate &a, const PnPCandidate &b)
-                {
-                    return a.reprojection_error < b.reprojection_error;
-                });
-
-            auto selected_it = best_err_it;
-            if (has_last_pose_ && candidates.size() > 1)
+            // Compute reprojection error
+            std::vector<cv::Point2f> projected;
+            cv::projectPoints(obj_pts_local, rvec, tvec, cameraMatrix, distCoeffs, projected);
+            double err = 0.0;
+            for (int j = 0; j < 4; ++j)
             {
-                const double max_extra_reprojection_error_px = 2.0;
-                const double reprojection_limit =
-                    best_err_it->reprojection_error + max_extra_reprojection_error_px;
-
-                selected_it = std::min_element(
-                    candidates.begin(), candidates.end(),
-                    [reprojection_limit](const PnPCandidate &a, const PnPCandidate &b)
-                    {
-                        const bool a_allowed = a.reprojection_error <= reprojection_limit;
-                        const bool b_allowed = b.reprojection_error <= reprojection_limit;
-                        if (a_allowed != b_allowed)
-                            return a_allowed;
-                        if (a_allowed)
-                            return a.continuity_cost < b.continuity_cost;
-                        return a.reprojection_error < b.reprojection_error;
-                    });
+                err += cv::norm(corners[i][j] - projected[j]);
             }
+            err /= 4.0;
 
-            const PnPCandidate &selected = *selected_it;
+            // Build T_camera_marker from solvePnP output
+            cv::Mat R_cm;
+            cv::Rodrigues(rvec, R_cm);
+            cv::Mat T_camera_marker = makeTransform(R_cm, tvec);
 
-            double w = (selected.reprojection_error > 1e-6)
-                ? (1.0 / selected.reprojection_error)
-                : 1e6;
-            estimates.push_back({selected.T_world_camera, w});
+            // T_world_camera = T_world_marker * inv(T_camera_marker)
+            cv::Mat T_world_camera = T_world_marker * invertTransform(T_camera_marker);
+
+            double w = (err > 1e-6) ? (1.0 / err) : 1e6;
+            estimates.push_back({T_world_camera, w});
 
             // Draw axis on the frame for this marker
-            cv::drawFrameAxes(frame, cameraMatrix, distCoeffs, selected.rvec, selected.tvec,
+            cv::drawFrameAxes(frame, cameraMatrix, distCoeffs, rvec, tvec,
                               static_cast<float>(marker_size_ * 0.5));
         }
 
@@ -329,17 +263,12 @@ public:
         result.markers_used = static_cast<int>(estimates.size());
         result.reprojection_error = avg_err;
 
-        last_T_world_camera_ = makeTransform(avg_rmat, avg_tvec).clone();
-        has_last_pose_ = true;
-
         return result;
     }
 
 private:
     double marker_size_;
     std::map<int, MarkerWorldPose> known_markers_;
-    bool has_last_pose_ = false;
-    cv::Mat last_T_world_camera_;
 
 #if ARUCO_NEW_API
     cv::aruco::ArucoDetector detector_;
@@ -357,50 +286,6 @@ private:
                                             std::pow(rmat.at<double>(2, 2), 2)));
         double roll = std::atan2(rmat.at<double>(2, 1), rmat.at<double>(2, 2));
         return cv::Vec3d(yaw, pitch, roll);
-    }
-
-    static double computeReprojectionError(const std::vector<cv::Point3f> &object_points,
-                                           const std::vector<cv::Point2f> &image_points,
-                                           const cv::Mat &rvec,
-                                           const cv::Mat &tvec,
-                                           const cv::Mat &cameraMatrix,
-                                           const cv::Mat &distCoeffs)
-    {
-        std::vector<cv::Point2f> projected;
-        cv::projectPoints(object_points, rvec, tvec, cameraMatrix, distCoeffs, projected);
-
-        double err = 0.0;
-        for (size_t i = 0; i < image_points.size(); ++i)
-            err += cv::norm(image_points[i] - projected[i]);
-
-        return image_points.empty() ? std::numeric_limits<double>::infinity()
-                                    : err / static_cast<double>(image_points.size());
-    }
-
-    static double rotationDistanceRad(const cv::Mat &Ra, const cv::Mat &Rb)
-    {
-        cv::Mat R_delta = Ra * Rb.t();
-        double trace = R_delta.at<double>(0, 0) +
-                       R_delta.at<double>(1, 1) +
-                       R_delta.at<double>(2, 2);
-        double cos_angle = std::clamp((trace - 1.0) * 0.5, -1.0, 1.0);
-        return std::acos(cos_angle);
-    }
-
-    static double poseContinuityCost(const cv::Mat &T_world_camera,
-                                     const cv::Mat &last_T_world_camera,
-                                     double translation_scale)
-    {
-        cv::Mat R = T_world_camera(cv::Rect(0, 0, 3, 3));
-        cv::Mat last_R = last_T_world_camera(cv::Rect(0, 0, 3, 3));
-        cv::Mat t = T_world_camera(cv::Rect(3, 0, 1, 3));
-        cv::Mat last_t = last_T_world_camera(cv::Rect(3, 0, 1, 3));
-
-        double scale = std::max(std::abs(translation_scale), 1e-6);
-        double translation_cost = cv::norm(t - last_t) / scale;
-        double rotation_cost = rotationDistanceRad(R, last_R);
-
-        return translation_cost + rotation_cost;
     }
 
     // Map string name → OpenCV dictionary ID (works as both enum and int)
