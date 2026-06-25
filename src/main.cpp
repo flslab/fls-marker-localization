@@ -515,16 +515,22 @@ struct TrackedBlob {
     uint16_t current_id;
     bool last_state;
     double high_run_start;  // timestamp when current consecutive-high run began
+    double low_run_start;   // timestamp when current consecutive-low run began
+    bool sync_candidate;
     
     bool id_valid;
     uint16_t decoded_id;
+    uint16_t pending_id;
+    int pending_decode_count;
+    double last_decode_time;
     double creation_time;
     
     TrackedBlob(Point2f p, double time) 
         : position(p), active(true), last_seen_time(time), creation_time(time),
           state(DecoderState::WAIT_FOR_SYNC), sync_time(0), bit_index(0), 
-          current_id(0), last_state(false), id_valid(false), decoded_id(0),
-          high_run_start(0) {}
+          current_id(0), last_state(true), high_run_start(time), low_run_start(0),
+          sync_candidate(false), id_valid(false), decoded_id(0), pending_id(0),
+          pending_decode_count(0), last_decode_time(0) {}
 };
 
 class MarkerTracker {
@@ -534,6 +540,56 @@ private:
     int payload_size;
     double tracking_threshold;
     double sync_threshold;  // minimum consecutive-high duration (in bit-durations) required before accepting sync
+
+    static constexpr double MIN_SYNC_LOW_BITS = 0.45;
+    static constexpr double MAX_SYNC_LOW_BITS = 2.25;
+    static constexpr int REQUIRED_CONFIRMED_DECODES = 2;
+    static constexpr int REQUIRED_STATIC_REPLACEMENT_DECODES = 3;
+
+    double bitDurationSec() const {
+        return bit_duration_ms / 1000.0;
+    }
+
+    double packetDurationSec() const {
+        // [1 start] [0 sync] [payload] [4 rest]
+        return (payload_size + 6.0) * bitDurationSec();
+    }
+
+    void acceptStaticId(TrackedBlob &tb) {
+        tb.id_valid = true;
+        tb.decoded_id = 0;
+        tb.pending_decode_count = 0;
+        tb.pending_id = 0;
+        tb.last_decode_time = 0;
+    }
+
+    void acceptDecodedId(TrackedBlob &tb, uint16_t observed_id, double current_time) {
+        double confirm_window = 2.5 * packetDurationSec();
+        if (tb.pending_decode_count == 0 ||
+            tb.pending_id != observed_id ||
+            current_time - tb.last_decode_time > confirm_window) {
+            tb.pending_id = observed_id;
+            tb.pending_decode_count = 1;
+        } else {
+            tb.pending_decode_count++;
+        }
+        tb.last_decode_time = current_time;
+
+        int required_decodes = (observed_id != 0 && tb.id_valid && tb.decoded_id == 0)
+            ? REQUIRED_STATIC_REPLACEMENT_DECODES
+            : REQUIRED_CONFIRMED_DECODES;
+
+        if (tb.id_valid && tb.decoded_id == observed_id) {
+            tb.pending_decode_count = required_decodes;
+            return;
+        }
+
+        if (tb.pending_decode_count >= required_decodes) {
+            tb.decoded_id = observed_id;
+            tb.id_valid = true;
+            tb.pending_decode_count = 0;
+        }
+    }
 
 public:
     MarkerTracker(double bit_duration, int payload, double tracking_thresh, double sync_thresh = 4.5) 
@@ -594,38 +650,52 @@ public:
             }
 
             if (tb.state == DecoderState::WAIT_FOR_SYNC) {
-                // Auto-detect static (always-on) markers that never blink
-                if (!tb.id_valid) {
-                    double static_timeout = (payload_size + 10.0) * (bit_duration_ms / 1000.0);
-                    if (current_time - tb.creation_time > static_timeout) {
-                        tb.id_valid = true;
-                        tb.decoded_id = 0;
-                        // std::cout << "[Decoder] Auto-detected static marker 0 for blob at (" 
-                                //   << tb.position.x << ", " << tb.position.y << ")" << std::endl;
-                    }
-                }
-
                 if (current_state) {
-                    // LED is ON: track start of consecutive high run
                     if (!tb.last_state) {
-                        tb.high_run_start = current_time;  // rising edge
-                    }
-                } else {
-                    // LED is OFF: check if preceding high run was long enough for sync
-                    if (tb.last_state && tb.high_run_start > 0) {
-                        double high_duration = current_time - tb.high_run_start;
-                        double min_high_for_sync = sync_threshold * (bit_duration_ms / 1000.0);
-                        if (high_duration >= min_high_for_sync) {
-                            // Valid sync detected — rest+start period was long enough
+                        double low_duration = tb.low_run_start > 0 ? current_time - tb.low_run_start : 0.0;
+                        double min_low_for_sync = MIN_SYNC_LOW_BITS * bitDurationSec();
+                        double max_low_for_sync = MAX_SYNC_LOW_BITS * bitDurationSec();
+
+                        if (tb.sync_candidate &&
+                            low_duration >= min_low_for_sync &&
+                            low_duration <= max_low_for_sync) {
                             tb.state = DecoderState::DECODING;
-                            tb.sync_time = current_time;
+                            tb.sync_time = tb.low_run_start;
                             tb.bit_index = 0;
                             tb.current_id = 0;
                             // std::cout << "[Decoder] Sync detected for blob at (" 
                                     //   << tb.position.x << ", " << tb.position.y << ")" << std::endl;
                         }
+
+                        tb.high_run_start = current_time;
+                        tb.low_run_start = 0;
+                        tb.sync_candidate = false;
                     }
-                    tb.high_run_start = 0;  // not in a high run
+
+                    // Auto-detect static (always-on) markers from a sustained high run.
+                    // A real blinking packet has a sync-low every packet, so its high run
+                    // stays shorter than this timeout even for an all-ones payload.
+                    if (tb.state == DecoderState::WAIT_FOR_SYNC && (!tb.id_valid || tb.decoded_id == 0)) {
+                        double static_timeout = (payload_size + 10.0) * bitDurationSec();
+                        if (tb.high_run_start > 0 && current_time - tb.high_run_start > static_timeout) {
+                            acceptStaticId(tb);
+                            // std::cout << "[Decoder] Auto-detected static marker 0 for blob at ("
+                                    //   << tb.position.x << ", " << tb.position.y << ")" << std::endl;
+                        }
+                    }
+                } else {
+                    if (tb.last_state) {
+                        double high_duration = current_time - tb.high_run_start;
+                        double min_high_for_sync = sync_threshold * (bit_duration_ms / 1000.0);
+                        tb.low_run_start = current_time;
+                        tb.sync_candidate = (tb.high_run_start > 0 && high_duration >= min_high_for_sync);
+                    } else if (tb.sync_candidate && tb.low_run_start > 0) {
+                        double max_low_for_sync = MAX_SYNC_LOW_BITS * bitDurationSec();
+                        if (current_time - tb.low_run_start > max_low_for_sync) {
+                            tb.sync_candidate = false;
+                        }
+                    }
+                    tb.high_run_start = 0;
                 }
             } else if (tb.state == DecoderState::DECODING) {
                 double target_time = tb.sync_time + (1.5 + tb.bit_index) * (bit_duration_ms / 1000.0);
@@ -637,9 +707,11 @@ public:
                     //           << ") bit " << tb.bit_index << "/" << payload_size 
                     //           << " = " << bit << " (current ID: " << tb.current_id << ")" << std::endl;
                     if (tb.bit_index >= payload_size) {
-                        tb.decoded_id = tb.current_id;
-                        tb.id_valid = true;
+                        acceptDecodedId(tb, tb.current_id, current_time);
                         tb.state = DecoderState::WAIT_FOR_SYNC;  // continue monitoring for re-validation
+                        tb.high_run_start = current_state ? current_time : 0;
+                        tb.low_run_start = current_state ? 0 : current_time;
+                        tb.sync_candidate = false;
                         // std::cout << "[Decoder] Successfully decoded ID: " << tb.decoded_id 
                         //           << " for blob at (" << tb.position.x << ", " << tb.position.y << ")" << std::endl;
                     }
@@ -648,7 +720,9 @@ public:
                 double decode_timeout = (payload_size + 2.0) * (bit_duration_ms / 1000.0);
                 if (current_time - tb.sync_time > decode_timeout) {
                     tb.state = DecoderState::WAIT_FOR_SYNC;
-                    tb.high_run_start = 0;
+                    tb.high_run_start = current_state ? current_time : 0;
+                    tb.low_run_start = current_state ? 0 : current_time;
+                    tb.sync_candidate = false;
                 }
             }
 
