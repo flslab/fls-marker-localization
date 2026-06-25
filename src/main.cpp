@@ -616,8 +616,8 @@ class MarkerTracker {
                 if (pnp_ok && !rvec.empty()) {
                     Mat rmat;
                     Rodrigues(rvec, rmat);
-                    // rmat = rmat.t();
-                    // tvec = -rmat * tvec;
+                    rmat = rmat.t();
+                    tvec = -rmat * tvec;
                     Vec3d yaw_pitch_roll = yawPitchRollDecomposition(rmat);
                     results.push_back({id, tvec, rmat, yaw_pitch_roll});
                 }
