@@ -1,31 +1,33 @@
-#include <opencv2/opencv.hpp>
-#include <opencv2/calib3d.hpp>
-#include "position_kalman_filter.h"
-#include "aruco_tracker.h"
-#include <iostream>
-#include <vector>
-#include <map>
-#include "LibCamera.h"
-#include <fstream>
-#include <sstream>
-#include <ctime>
-#include <iomanip>
-#include <nlohmann/json.hpp>
-#include <Eigen/Dense>
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <cstring>
-#include <chrono>
-#include <thread>
+
+#include <Eigen/Dense>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
 #include <csignal>
+#include <cstring>
+#include <ctime>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <map>
+#include <nlohmann/json.hpp>
+#include <opencv2/calib3d.hpp>
+#include <opencv2/opencv.hpp>
+#include <sstream>
+#include <thread>
+#include <vector>
+
+#include "LibCamera.h"
+#include "aruco_tracker.h"
+#include "position_kalman_filter.h"
 
 using namespace cv;
 using namespace std;
@@ -37,8 +39,7 @@ void signalHandler(int signum) {
     keep_running = false;
 }
 
-struct PoseResult
-{
+struct PoseResult {
     uint16_t marker_id;
     Mat tvec;
     Mat rmat;
@@ -53,7 +54,7 @@ struct Position {
 
 // Video streaming class
 class VideoStreamer {
-private:
+   private:
     int socket_fd;
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_len;
@@ -65,7 +66,7 @@ private:
     int stream_port;
     string stream_type;
 
-public:
+   public:
     VideoStreamer(int port = 8080, const string& type = "udp")
         : stream_port(port), stream_type(type), is_running(false), new_frame_available(false) {
         client_len = sizeof(client_addr);
@@ -141,7 +142,8 @@ public:
     }
 
     void updateFrame(const Mat& frame) {
-        if (frame.empty()) return;
+        if (frame.empty())
+            return;
 
         std::lock_guard<std::mutex> lock(frame_mutex);
 
@@ -168,10 +170,10 @@ public:
         }
     }
 
-private:
+   private:
     void udpStreamingLoop() {
         vector<uchar> buffer;
-        vector<int> encode_params = {IMWRITE_JPEG_QUALITY, 60}; // Lower quality for stability
+        vector<int> encode_params = {IMWRITE_JPEG_QUALITY, 60};  // Lower quality for stability
 
         // Wait for initial client connection with timeout
         char dummy_buffer[1];
@@ -212,24 +214,24 @@ private:
                     try {
                         if (imencode(".jpg", resized_frame, buffer, encode_params) && !buffer.empty()) {
                             // Limit max frame size
-                            if (buffer.size() < 65536) { // 64KB limit
+                            if (buffer.size() < 65536) {  // 64KB limit
                                 // Send frame size first
                                 uint32_t frame_size = htonl(buffer.size());
                                 if (sendto(socket_fd, &frame_size, sizeof(frame_size), 0,
-                                          (struct sockaddr*)&client_addr, client_len) < 0) {
-                                    break; // Client disconnected
+                                           (struct sockaddr*)&client_addr, client_len) < 0) {
+                                    break;  // Client disconnected
                                 }
 
                                 // Send frame data in smaller chunks
-                                const size_t chunk_size = 512; // Smaller chunks for stability
+                                const size_t chunk_size = 512;  // Smaller chunks for stability
                                 size_t bytes_sent = 0;
                                 while (bytes_sent < buffer.size() && is_running) {
                                     size_t remaining = buffer.size() - bytes_sent;
                                     size_t to_send = min(chunk_size, remaining);
 
                                     if (sendto(socket_fd, buffer.data() + bytes_sent, to_send, 0,
-                                              (struct sockaddr*)&client_addr, client_len) < 0) {
-                                        goto udp_loop_end; // Break out of nested loops
+                                               (struct sockaddr*)&client_addr, client_len) < 0) {
+                                        goto udp_loop_end;  // Break out of nested loops
                                     }
                                     bytes_sent += to_send;
                                 }
@@ -240,10 +242,10 @@ private:
                     }
                 }
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(50)); // ~20 FPS for stability
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));  // ~20 FPS for stability
         }
 
-        udp_loop_end:
+    udp_loop_end:
         cout << "UDP streaming ended" << endl;
     }
 
@@ -257,9 +259,9 @@ private:
             int client_socket = accept(socket_fd, (struct sockaddr*)&client_addr, &client_len);
             if (client_socket < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    continue; // Timeout, try again
+                    continue;  // Timeout, try again
                 }
-                break; // Real error
+                break;  // Real error
             }
 
             cout << "HTTP client connected from " << inet_ntoa(client_addr.sin_addr) << endl;
@@ -278,7 +280,7 @@ private:
             }
 
             vector<uchar> buffer;
-            vector<int> encode_params = {IMWRITE_JPEG_QUALITY, 60}; // Lower quality for stability
+            vector<int> encode_params = {IMWRITE_JPEG_QUALITY, 60};  // Lower quality for stability
 
             while (is_running) {
                 if (new_frame_available.load()) {
@@ -304,16 +306,17 @@ private:
                         try {
                             if (imencode(".jpg", resized_frame, buffer, encode_params) && !buffer.empty()) {
                                 // Limit max frame size
-                                if (buffer.size() < 65536) { // 64KB limit
+                                if (buffer.size() < 65536) {  // 64KB limit
                                     string frame_header =
                                         "--frame\r\n"
                                         "Content-Type: image/jpeg\r\n"
-                                        "Content-Length: " + to_string(buffer.size()) + "\r\n\r\n";
+                                        "Content-Length: " +
+                                        to_string(buffer.size()) + "\r\n\r\n";
 
                                     if (send(client_socket, frame_header.c_str(), frame_header.length(), MSG_NOSIGNAL) < 0 ||
                                         send(client_socket, buffer.data(), buffer.size(), MSG_NOSIGNAL) < 0 ||
                                         send(client_socket, "\r\n", 2, MSG_NOSIGNAL) < 0) {
-                                        break; // Client disconnected
+                                        break;  // Client disconnected
                                     }
                                 }
                             }
@@ -323,7 +326,7 @@ private:
                         }
                     }
                 }
-                std::this_thread::sleep_for(std::chrono::milliseconds(50)); // ~20 FPS for stability
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));  // ~20 FPS for stability
             }
 
             close(client_socket);
@@ -334,7 +337,7 @@ private:
 
 // Background saver class
 class BackgroundSaver {
-private:
+   private:
     struct SaveTask {
         Mat img;
         string filename;
@@ -349,7 +352,7 @@ private:
     cv::VideoWriter video_writer;
     string video_filename;
 
-public:
+   public:
     BackgroundSaver() : is_running(false) {}
 
     ~BackgroundSaver() {
@@ -357,7 +360,8 @@ public:
     }
 
     bool startVideo(const string& filename, int codec, double fps, cv::Size size, bool isColor) {
-        if (video_writer.isOpened()) return true;
+        if (video_writer.isOpened())
+            return true;
         video_filename = filename;
         video_writer.open(filename, codec, fps, size, isColor);
         return video_writer.isOpened();
@@ -368,13 +372,15 @@ public:
     }
 
     void start() {
-        if (is_running) return;
+        if (is_running)
+            return;
         is_running = true;
         worker_thread = std::thread(&BackgroundSaver::savingLoop, this);
     }
 
     void stop() {
-        if (!is_running) return;
+        if (!is_running)
+            return;
         {
             std::lock_guard<std::mutex> lock(queue_mutex);
             is_running = false;
@@ -390,7 +396,8 @@ public:
     }
 
     void push(const Mat& img, const string& filename, bool write_video) {
-        if (!is_running && !write_video && filename.empty()) return;
+        if (!is_running && !write_video && filename.empty())
+            return;
 
         SaveTask task;
         // MUST deep copy the image because the original buffer will be reused by libcamera
@@ -405,13 +412,13 @@ public:
         cv_.notify_one();
     }
 
-private:
+   private:
     void savingLoop() {
         while (true) {
             SaveTask task;
             {
                 std::unique_lock<std::mutex> lock(queue_mutex);
-                cv_.wait(lock, [this]{ return !task_queue.empty() || !is_running; });
+                cv_.wait(lock, [this] { return !task_queue.empty() || !is_running; });
 
                 if (!is_running && task_queue.empty()) {
                     break;
@@ -432,10 +439,9 @@ private:
 };
 
 // Function to get a timestamped filename
-std::string generateLogName()
-{
+std::string generateLogName() {
     std::time_t now = std::time(nullptr);
-    std::tm *localTime = std::localtime(&now);
+    std::tm* localTime = std::localtime(&now);
 
     std::ostringstream filename;
     filename << "logs/"
@@ -444,8 +450,7 @@ std::string generateLogName()
     return filename.str();
 }
 
-Vec3d yawPitchRollDecomposition(const Mat &rmat)
-{
+Vec3d yawPitchRollDecomposition(const Mat& rmat) {
     double yaw = atan2(rmat.at<double>(1, 0), rmat.at<double>(0, 0));
     double pitch = atan2(-rmat.at<double>(2, 0),
                          sqrt(pow(rmat.at<double>(2, 1), 2) + pow(rmat.at<double>(2, 2), 2)));
@@ -468,7 +473,7 @@ bool clockwiseComparator(const Point2f& a, const Point2f& b, const Point2f& cent
     // Calculate angles relative to the center
     double angleA = atan2(a.y - center.y, a.x - center.x);
     double angleB = atan2(b.y - center.y, b.x - center.x);
-    return angleA < angleB; // Clockwise order
+    return angleA < angleB;  // Clockwise order
 }
 
 // Function to sort points in clockwise order
@@ -477,9 +482,7 @@ void sortClockwise(vector<Point2f>& points) {
     Point2f center = findCentroid(points);
 
     // Sort using the comparator
-    sort(points.begin(), points.end(), [&](const Point2f& a, const Point2f& b) {
-        return clockwiseComparator(a, b, center);
-    });
+    sort(points.begin(), points.end(), [&](const Point2f& a, const Point2f& b) { return clockwiseComparator(a, b, center); });
 }
 
 void invertPose(const cv::Mat& rvec_in, const cv::Mat& tvec_in,
@@ -508,7 +511,7 @@ struct TrackedBlob {
     Point2f position;
     bool active;
     double last_seen_time;
-    
+
     DecoderState state;
     double sync_time;
     int bit_index;
@@ -517,24 +520,20 @@ struct TrackedBlob {
     double high_run_start;  // timestamp when current consecutive-high run began
     double low_run_start;   // timestamp when current consecutive-low run began
     bool sync_candidate;
-    
+
     bool id_valid;
     uint16_t decoded_id;
     uint16_t pending_id;
     int pending_decode_count;
     double last_decode_time;
     double creation_time;
-    
-    TrackedBlob(Point2f p, double time) 
-        : position(p), active(true), last_seen_time(time), creation_time(time),
-          state(DecoderState::WAIT_FOR_SYNC), sync_time(0), bit_index(0), 
-          current_id(0), last_state(true), high_run_start(time), low_run_start(0),
-          sync_candidate(false), id_valid(false), decoded_id(0), pending_id(0),
-          pending_decode_count(0), last_decode_time(0) {}
+
+    TrackedBlob(Point2f p, double time)
+        : position(p), active(true), last_seen_time(time), creation_time(time), state(DecoderState::WAIT_FOR_SYNC), sync_time(0), bit_index(0), current_id(0), last_state(true), high_run_start(time), low_run_start(0), sync_candidate(false), id_valid(false), decoded_id(0), pending_id(0), pending_decode_count(0), last_decode_time(0) {}
 };
 
 class MarkerTracker {
-private:
+   private:
     std::vector<TrackedBlob> tracked_blobs;
     double bit_duration_ms;
     int payload_size;
@@ -555,7 +554,7 @@ private:
         return (payload_size + 6.0) * bitDurationSec();
     }
 
-    void acceptStaticId(TrackedBlob &tb) {
+    void acceptStaticId(TrackedBlob& tb) {
         tb.id_valid = true;
         tb.decoded_id = 0;
         tb.pending_decode_count = 0;
@@ -563,7 +562,7 @@ private:
         tb.last_decode_time = 0;
     }
 
-    void acceptDecodedId(TrackedBlob &tb, uint16_t observed_id, double current_time) {
+    void acceptDecodedId(TrackedBlob& tb, uint16_t observed_id, double current_time) {
         double confirm_window = 2.5 * packetDurationSec();
         if (tb.pending_decode_count == 0 ||
             tb.pending_id != observed_id ||
@@ -576,8 +575,8 @@ private:
         tb.last_decode_time = current_time;
 
         int required_decodes = (observed_id != 0 && tb.id_valid && tb.decoded_id == 0)
-            ? REQUIRED_STATIC_REPLACEMENT_DECODES
-            : REQUIRED_CONFIRMED_DECODES;
+                                   ? REQUIRED_STATIC_REPLACEMENT_DECODES
+                                   : REQUIRED_CONFIRMED_DECODES;
 
         if (tb.id_valid && tb.decoded_id == observed_id) {
             tb.pending_decode_count = required_decodes;
@@ -591,21 +590,19 @@ private:
         }
     }
 
-public:
-    MarkerTracker(double bit_duration, int payload, double tracking_thresh, double sync_thresh = 4.5) 
-        : bit_duration_ms(bit_duration), payload_size(payload), tracking_threshold(tracking_thresh),
-          sync_threshold(sync_thresh) {}
+   public:
+    MarkerTracker(double bit_duration, int payload, double tracking_thresh, double sync_thresh = 4.5)
+        : bit_duration_ms(bit_duration), payload_size(payload), tracking_threshold(tracking_thresh), sync_threshold(sync_thresh) {}
 
-    std::vector<PoseResult> processFrame(Mat &im, double current_time, 
-                                         const Mat &cameraMatrix, const Mat &distCoeffs, 
-                                         const vector<Point3f> &marker_points, double blob_area_threshold) 
-    {
+    std::vector<PoseResult> processFrame(Mat& im, double current_time,
+                                         const Mat& cameraMatrix, const Mat& distCoeffs,
+                                         const vector<Point3f>& marker_points, double blob_area_threshold) {
         Mat grey_proc;
         if (im.channels() == 1)
             grey_proc = im.clone();
         else
             cvtColor(im, grey_proc, COLOR_BGR2GRAY);
-            
+
         cvtColor(grey_proc, im, COLOR_GRAY2BGR);
 
         GaussianBlur(grey_proc, grey_proc, cv::Size(9, 9), 0);
@@ -614,9 +611,9 @@ public:
 
         vector<vector<cv::Point>> contours;
         findContours(grey, contours, RETR_TREE, CHAIN_APPROX_SIMPLE);
-        
+
         vector<Point2f> current_blobs;
-        for (const auto &contour : contours) {
+        for (const auto& contour : contours) {
             Moments moments = cv::moments(contour);
             if (moments.m00 > blob_area_threshold) {
                 int center_x = int(moments.m10 / moments.m00);
@@ -627,13 +624,15 @@ public:
         }
 
         std::vector<bool> blob_matched(current_blobs.size(), false);
-        for (auto &tb : tracked_blobs) {
-            if (!tb.active) continue;
-            
+        for (auto& tb : tracked_blobs) {
+            if (!tb.active)
+                continue;
+
             double min_dist = 1e9;
             int best_idx = -1;
             for (size_t i = 0; i < current_blobs.size(); ++i) {
-                if (blob_matched[i]) continue;
+                if (blob_matched[i])
+                    continue;
                 double dist = norm(tb.position - current_blobs[i]);
                 if (dist < min_dist) {
                     min_dist = dist;
@@ -663,8 +662,8 @@ public:
                             tb.sync_time = tb.low_run_start;
                             tb.bit_index = 0;
                             tb.current_id = 0;
-                            // std::cout << "[Decoder] Sync detected for blob at (" 
-                                    //   << tb.position.x << ", " << tb.position.y << ")" << std::endl;
+                            // std::cout << "[Decoder] Sync detected for blob at ("
+                            //   << tb.position.x << ", " << tb.position.y << ")" << std::endl;
                         }
 
                         tb.high_run_start = current_time;
@@ -680,7 +679,7 @@ public:
                         if (tb.high_run_start > 0 && current_time - tb.high_run_start > static_timeout) {
                             acceptStaticId(tb);
                             // std::cout << "[Decoder] Auto-detected static marker 0 for blob at ("
-                                    //   << tb.position.x << ", " << tb.position.y << ")" << std::endl;
+                            //   << tb.position.x << ", " << tb.position.y << ")" << std::endl;
                         }
                     }
                 } else {
@@ -703,8 +702,8 @@ public:
                     int bit = current_state ? 1 : 0;
                     tb.current_id = (tb.current_id << 1) | bit;
                     tb.bit_index++;
-                    // std::cout << "[Decoder] Blob at (" << tb.position.x << ", " << tb.position.y 
-                    //           << ") bit " << tb.bit_index << "/" << payload_size 
+                    // std::cout << "[Decoder] Blob at (" << tb.position.x << ", " << tb.position.y
+                    //           << ") bit " << tb.bit_index << "/" << payload_size
                     //           << " = " << bit << " (current ID: " << tb.current_id << ")" << std::endl;
                     if (tb.bit_index >= payload_size) {
                         acceptDecodedId(tb, tb.current_id, current_time);
@@ -712,7 +711,7 @@ public:
                         tb.high_run_start = current_state ? current_time : 0;
                         tb.low_run_start = current_state ? 0 : current_time;
                         tb.sync_candidate = false;
-                        // std::cout << "[Decoder] Successfully decoded ID: " << tb.decoded_id 
+                        // std::cout << "[Decoder] Successfully decoded ID: " << tb.decoded_id
                         //           << " for blob at (" << tb.position.x << ", " << tb.position.y << ")" << std::endl;
                     }
                 }
@@ -741,13 +740,14 @@ public:
             }
         }
 
-        tracked_blobs.erase(std::remove_if(tracked_blobs.begin(), tracked_blobs.end(), 
-            [](const TrackedBlob& tb) { return !tb.active; }), tracked_blobs.end());
+        tracked_blobs.erase(std::remove_if(tracked_blobs.begin(), tracked_blobs.end(),
+                                           [](const TrackedBlob& tb) { return !tb.active; }),
+                            tracked_blobs.end());
 
         std::map<uint16_t, std::vector<Point2f>> groups;
         // Hold the last known position during the entire transmission
         double group_seen_limit = (payload_size + 7.0) * (bit_duration_ms / 1000.0);
-        for (const auto &tb : tracked_blobs) {
+        for (const auto& tb : tracked_blobs) {
             if (tb.id_valid && (current_time - tb.last_seen_time < group_seen_limit)) {
                 groups[tb.decoded_id].push_back(tb.position);
             }
@@ -764,7 +764,7 @@ public:
                     putText(im, std::to_string(i), cv::Point(sorted_pts[i].x + 12, sorted_pts[i].y - 12),
                             FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 255, 0), 2, LINE_AA);
                 }
-                
+
                 Point2f center = findCentroid(sorted_pts);
                 putText(im, "ID: " + std::to_string(id), cv::Point(center.x - 20, center.y - 20),
                         FONT_HERSHEY_SIMPLEX, 1.0, Scalar(0, 255, 255), 2, LINE_AA);
@@ -774,8 +774,9 @@ public:
                 if (pnp_ok && !rvec.empty()) {
                     Mat rmat;
                     Rodrigues(rvec, rmat);
+                    rmat = rmat.t();
+                    tvec = -rmat * tvec;
                     Vec3d yaw_pitch_roll = yawPitchRollDecomposition(rmat);
-
                     results.push_back({id, tvec, rmat, yaw_pitch_roll});
                 }
             } else if (pts.size() < 4) {
@@ -787,7 +788,7 @@ public:
                     putText(im, std::to_string(i), cv::Point(sorted_pts[i].x + 12, sorted_pts[i].y - 12),
                             FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 165, 255), 2, LINE_AA);
                 }
-                
+
                 Point2f center = findCentroid(sorted_pts);
                 putText(im, "ID: " + std::to_string(id) + " (" + std::to_string(pts.size()) + "/4)", cv::Point(center.x - 20, center.y - 20),
                         FONT_HERSHEY_SIMPLEX, 1.0, Scalar(0, 165, 255), 2, LINE_AA);
@@ -798,14 +799,11 @@ public:
     }
 };
 
-bool readConfigFile(const string &filename, Mat &cameraMatrix, Mat &distCoeffs, vector<Point3f> &marker_points)
-{
-    try
-    {
+bool readConfigFile(const string& filename, Mat& cameraMatrix, Mat& distCoeffs, vector<Point3f>& marker_points) {
+    try {
         // Read JSON file
         std::ifstream file(filename);
-        if (!file.is_open())
-        {
+        if (!file.is_open()) {
             cerr << "Failed to open config file: " << filename << endl;
             return false;
         }
@@ -813,10 +811,8 @@ bool readConfigFile(const string &filename, Mat &cameraMatrix, Mat &distCoeffs, 
 
         // Read camera matrix
         cameraMatrix = Mat::zeros(3, 3, CV_64F);
-        for (int i = 0; i < 3; i++)
-        {
-            for (int j = 0; j < 3; j++)
-            {
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
                 cameraMatrix.at<double>(i, j) = config["/camera_matrix"_json_pointer][i][j];
             }
         }
@@ -828,16 +824,13 @@ bool readConfigFile(const string &filename, Mat &cameraMatrix, Mat &distCoeffs, 
         // Read marker points
         marker_points.clear();
         if (config.contains("marker_points")) {
-            for (const auto &point : config["marker_points"])
-            {
+            for (const auto& point : config["marker_points"]) {
                 marker_points.push_back(Point3f(point[0], point[1], point[2]));
             }
         }
 
         return true;
-    }
-    catch (const exception &e)
-    {
+    } catch (const exception& e) {
         cerr << "Error reading config file: " << e.what() << endl;
         return false;
     }
@@ -847,11 +840,10 @@ bool readConfigFile(const string &filename, Mat &cameraMatrix, Mat &distCoeffs, 
  * Read the "aruco_markers" section from the config and build the
  * data structures needed to construct an ArucoTracker.
  */
-bool readArucoConfig(const string &filename,
-                     string &aruco_dictionary,
-                     double &aruco_marker_size,
-                     std::map<int, ArucoTracker::MarkerWorldPose> &known_markers)
-{
+bool readArucoConfig(const string& filename,
+                     string& aruco_dictionary,
+                     double& aruco_marker_size,
+                     std::map<int, ArucoTracker::MarkerWorldPose>& known_markers) {
     try {
         std::ifstream file(filename);
         if (!file.is_open()) {
@@ -865,7 +857,7 @@ bool readArucoConfig(const string &filename,
             return false;
         }
 
-        const auto &ac = config["aruco_markers"];
+        const auto& ac = config["aruco_markers"];
         aruco_dictionary = ac.value("dictionary", "DICT_4X4_50");
         aruco_marker_size = ac.value("marker_size", 0.20);
 
@@ -873,7 +865,7 @@ bool readArucoConfig(const string &filename,
         if (ac.contains("markers")) {
             for (auto it = ac["markers"].begin(); it != ac["markers"].end(); ++it) {
                 int marker_id = std::stoi(it.key());
-                const auto &m = it.value();
+                const auto& m = it.value();
 
                 // Position (x, y, z) in world frame
                 double px = m["position"][0].get<double>();
@@ -881,9 +873,9 @@ bool readArucoConfig(const string &filename,
                 double pz = m["position"][2].get<double>();
 
                 // Rotation (roll, pitch, yaw) in degrees
-                double roll_deg  = m["rotation_deg"][0].get<double>();
+                double roll_deg = m["rotation_deg"][0].get<double>();
                 double pitch_deg = m["rotation_deg"][1].get<double>();
-                double yaw_deg   = m["rotation_deg"][2].get<double>();
+                double yaw_deg = m["rotation_deg"][2].get<double>();
 
                 double deg2rad = CV_PI / 180.0;
                 cv::Mat R = eulerToRotationMatrix(roll_deg * deg2rad,
@@ -906,23 +898,22 @@ bool readArucoConfig(const string &filename,
              << ", marker_size=" << aruco_marker_size << "m"
              << ", " << known_markers.size() << " known markers" << endl;
         return true;
-    } catch (const exception &e) {
+    } catch (const exception& e) {
         cerr << "Error reading ArUco config: " << e.what() << endl;
         return false;
     }
 }
 
-bool createDirectory(const string &dir) {
+bool createDirectory(const string& dir) {
     struct stat info;
     if (stat(dir.c_str(), &info) != 0) {
         // Directory does not exist, create it
         return mkdir(dir.c_str(), 0777) == 0;
     }
-    return S_ISDIR(info.st_mode); // Check if it's a directory
+    return S_ISDIR(info.st_mode);  // Check if it's a directory
 }
 
-int main(int argc, char **argv)
-{
+int main(int argc, char** argv) {
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
 
@@ -944,7 +935,7 @@ int main(int argc, char **argv)
     // Streaming parameters
     bool enable_streaming = false;
     int stream_port = 8080;
-    string stream_type = "http"; // "http" or "udp"
+    string stream_type = "http";  // "http" or "udp"
     double stream_rate = 10.0;
 
     double contrast = -2.0;
@@ -980,14 +971,14 @@ int main(int argc, char **argv)
                 if (distance <= 0) {
                     throw invalid_argument("Distance must be positive");
                 }
-            } catch (const invalid_argument &e) {
+            } catch (const invalid_argument& e) {
                 cerr << "Invalid value for distance. Must be a positive number." << endl;
                 return -1;
             }
         } else if ((arg == "--time" || arg == "-t") && i + 1 < argc) {
             try {
                 execution_time = stoi(argv[++i]);
-            } catch (const invalid_argument &e) {
+            } catch (const invalid_argument& e) {
                 cerr << "Invalid value for time. Must be a number." << endl;
                 return -1;
             }
@@ -1119,8 +1110,7 @@ int main(int argc, char **argv)
     int window_height = cam_height;
 
     if (preview) {
-        if (width > window_width)
-        {
+        if (width > window_width) {
             cv::namedWindow("libcamera-demo", cv::WINDOW_NORMAL);
             cv::resizeWindow("libcamera-demo", window_width, window_height);
         }
@@ -1154,8 +1144,7 @@ int main(int argc, char **argv)
     Mat cameraMatrix, distCoeffs;
     vector<Point3f> marker_points;
 
-    if (!readConfigFile(config_file, cameraMatrix, distCoeffs, marker_points))
-    {
+    if (!readConfigFile(config_file, cameraMatrix, distCoeffs, marker_points)) {
         cerr << "Failed to read camera configuration" << endl;
         return -1;
     }
@@ -1179,8 +1168,7 @@ int main(int argc, char **argv)
         cout << "ArUco detection mode ENABLED" << endl;
     }
 
-    if (!ret)
-    {
+    if (!ret) {
         bool flag;
         LibcameraOutData frameData;
         cam.startCamera();
@@ -1199,22 +1187,21 @@ int main(int argc, char **argv)
         auto frame_interval = std::chrono::microseconds(1000000 / frame_rate);
         auto next_frame_time = std::chrono::steady_clock::now();
 
-        while (keep_running)
-        {
+        while (keep_running) {
             flag = cam.readFrame(&frameData);
             if (!flag)
                 continue;
 
             // Create a properly aligned and continuous Mat from camera data
             Mat raw_frame(height, width, CV_16UC1, frameData.imageData, stride);
-            cv::Mat shifted = raw_frame / 64; // assumes raw_frame is CV_16UC1
+            cv::Mat shifted = raw_frame / 64;  // assumes raw_frame is CV_16UC1
             shifted.convertTo(raw_frame, CV_8U, 255.0 / 1023.0);
-//            cvtColor(raw_frame, raw_frame, cv::COLOR_GRAY2BGR);
+            //            cvtColor(raw_frame, raw_frame, cv::COLOR_GRAY2BGR);
             Mat im;
 
             // Ensure the frame is continuous and properly aligned
             if (raw_frame.isContinuous() && stride == width * 3) {
-                im = raw_frame.clone(); // Safe copy
+                im = raw_frame.clone();  // Safe copy
             } else {
                 // Create a properly aligned copy
                 raw_frame.copyTo(im);
@@ -1239,8 +1226,7 @@ int main(int argc, char **argv)
                     std::vector<double> tvec_vec = {
                         aruco_result.tvec_world.at<double>(0, 0),
                         aruco_result.tvec_world.at<double>(1, 0),
-                        aruco_result.tvec_world.at<double>(2, 0)
-                    };
+                        aruco_result.tvec_world.at<double>(2, 0)};
 
                     if (print_logs) {
                         cout << "[ArUco] Camera world pos: ["
@@ -1253,21 +1239,18 @@ int main(int argc, char **argv)
                     json pose_entry = {
                         {"camera_pose", true},
                         {"tvec", tvec_vec},
-                        {"yaw_pitch_roll", {aruco_result.yaw_pitch_roll[0],
-                                            aruco_result.yaw_pitch_roll[1],
-                                            aruco_result.yaw_pitch_roll[2]}},
+                        {"yaw_pitch_roll", {aruco_result.yaw_pitch_roll[0], aruco_result.yaw_pitch_roll[1], aruco_result.yaw_pitch_roll[2]}},
                         {"markers_used", aruco_result.markers_used},
                         {"detected_ids", aruco_result.detected_ids},
-                        {"reprojection_error", aruco_result.reprojection_error}
-                    };
+                        {"reprojection_error", aruco_result.reprojection_error}};
 
                     // Kalman-filtered position (uses marker_id 0 slot for camera pose)
                     std::vector<double> filtered_vec = tvec_vec;
                     if (enable_kalman_filter) {
-                        const uint16_t kf_id = 0xFFFF; // reserved KF slot for ArUco camera pose
+                        const uint16_t kf_id = 0xFFFF;  // reserved KF slot for ArUco camera pose
                         if (kalman_filters.find(kf_id) == kalman_filters.end()) {
                             kalman_filters.emplace(kf_id,
-                                PositionKalmanFilter(kf_process_noise, kf_measurement_noise));
+                                                   PositionKalmanFilter(kf_process_noise, kf_measurement_noise));
                         }
                         Eigen::Vector3d meas(tvec_vec[0], tvec_vec[1], tvec_vec[2]);
                         Eigen::Vector3d filt = kalman_filters.at(kf_id).update(meas, current_time_sec);
@@ -1288,9 +1271,9 @@ int main(int argc, char **argv)
                         pos->y = tvec_vec[1];
                         pos->z = tvec_vec[2];
                     }
-                    pos->roll  = aruco_result.yaw_pitch_roll[2];
+                    pos->roll = aruco_result.yaw_pitch_roll[2];
                     pos->pitch = aruco_result.yaw_pitch_roll[1];
-                    pos->yaw   = aruco_result.yaw_pitch_roll[0];
+                    pos->yaw = aruco_result.yaw_pitch_roll[0];
                     pos_updated = true;
                 }
             } else {
@@ -1303,20 +1286,19 @@ int main(int argc, char **argv)
                     }
 
                     std::vector<double> tvec_vec = {result.tvec.at<double>(0, 0),
-                                            result.tvec.at<double>(1, 0),
-                                            result.tvec.at<double>(2, 0)};
+                                                    result.tvec.at<double>(1, 0),
+                                                    result.tvec.at<double>(2, 0)};
 
                     json pose_entry = {
                         {"marker_id", result.marker_id},
                         {"tvec", tvec_vec},
-                        {"yaw_pitch_roll", {result.yaw_pitch_roll[0], result.yaw_pitch_roll[1], result.yaw_pitch_roll[2]}}
-                    };
+                        {"yaw_pitch_roll", {result.yaw_pitch_roll[0], result.yaw_pitch_roll[1], result.yaw_pitch_roll[2]}}};
 
                     std::vector<double> filtered_vec = tvec_vec;
                     if (enable_kalman_filter) {
                         if (kalman_filters.find(result.marker_id) == kalman_filters.end()) {
                             kalman_filters.emplace(result.marker_id,
-                                PositionKalmanFilter(kf_process_noise, kf_measurement_noise));
+                                                   PositionKalmanFilter(kf_process_noise, kf_measurement_noise));
                         }
                         Eigen::Vector3d meas(tvec_vec[0], tvec_vec[1], tvec_vec[2]);
                         Eigen::Vector3d filt = kalman_filters.at(result.marker_id).update(meas, current_time_sec);
@@ -1352,18 +1334,17 @@ int main(int argc, char **argv)
             auto duration = now_time.time_since_epoch();
             auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
 
-            frames.push_back({
-                {"time", milliseconds},
-                {"frame_id", frameCount},
-                {"poses", current_frame_poses}
-            });
+            frames.push_back({{"time", milliseconds},
+                              {"frame_id", frameCount},
+                              {"poses", current_frame_poses}});
 
             // Update streaming frame (only if streaming is enabled and frame is valid)
             if (enable_streaming && streamer && !im.empty() && current_time_sec >= stream_next_time) {
                 try {
                     streamer->updateFrame(im);
                     stream_next_time = (stream_next_time == 0) ? current_time_sec + stream_interval : stream_next_time + stream_interval;
-                    if (stream_next_time < current_time_sec) stream_next_time = current_time_sec + stream_interval;
+                    if (stream_next_time < current_time_sec)
+                        stream_next_time = current_time_sec + stream_interval;
                 } catch (const std::exception& e) {
                     cerr << "Streaming error: " << e.what() << endl;
                 }
@@ -1382,8 +1363,9 @@ int main(int argc, char **argv)
                 do_save_image = true;
                 // Only advance next_time by interval, or reset if it's falling way behind
                 image_next_time = (image_next_time == 0) ? current_time_sec + image_interval : image_next_time + image_interval;
-                if (image_next_time < current_time_sec) image_next_time = current_time_sec + image_interval;
-                
+                if (image_next_time < current_time_sec)
+                    image_next_time = current_time_sec + image_interval;
+
                 save_filename = log_dir + "/frame_" + to_string(frameCount) + ".png";
             }
 
@@ -1399,12 +1381,13 @@ int main(int argc, char **argv)
                         save_video = false;
                     }
                 }
-                
+
                 if (saver.isVideoOpened()) {
                     do_save_video = true;
                     // Only advance next_time by interval, or reset if it's falling way behind
                     video_next_time = (video_next_time == 0) ? current_time_sec + video_interval : video_next_time + video_interval;
-                    if (video_next_time < current_time_sec) video_next_time = current_time_sec + video_interval;
+                    if (video_next_time < current_time_sec)
+                        video_next_time = current_time_sec + video_interval;
                 }
             }
 
@@ -1419,17 +1402,14 @@ int main(int argc, char **argv)
             }
             if (key == 'q') {
                 break;
-            }
-            else if (key == 'f') {
+            } else if (key == 'f') {
                 ControlList controls;
                 controls.set(controls::AfMode, controls::AfModeAuto);
                 controls.set(controls::AfTrigger, 0);
                 cam.set(controls);
-            }
-            else if (key == 'a' || key == 'A') {
+            } else if (key == 'a' || key == 'A') {
                 lens_position += focus_step;
-            }
-            else if (key == 'd' || key == 'D') {
+            } else if (key == 'd' || key == 'D') {
                 lens_position -= focus_step;
             }
 
