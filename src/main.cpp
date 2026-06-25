@@ -539,6 +539,7 @@ class MarkerTracker {
     int payload_size;
     double tracking_threshold;
     double sync_threshold;  // minimum consecutive-high duration (in bit-durations) required before accepting sync
+    bool static_markers_mode;
 
     static constexpr double MIN_SYNC_LOW_BITS = 0.45;
     static constexpr double MAX_SYNC_LOW_BITS = 2.25;
@@ -590,9 +591,58 @@ class MarkerTracker {
         }
     }
 
+    std::vector<PoseResult> estimatePoses(Mat& im,
+                                          const std::map<uint16_t, std::vector<Point2f>>& groups,
+                                          const Mat& cameraMatrix, const Mat& distCoeffs,
+                                          const vector<Point3f>& marker_points) const {
+        std::vector<PoseResult> results;
+        for (auto const& [id, pts] : groups) {
+            if (pts.size() == 4 && marker_points.size() == 4) {
+                std::vector<Point2f> sorted_pts = pts;
+                sortClockwise(sorted_pts);
+
+                for (int i = 0; i < 4; i++) {
+                    circle(im, sorted_pts[i], 8, Scalar(0, 255, 0), -1);
+                    putText(im, std::to_string(i), cv::Point(sorted_pts[i].x + 12, sorted_pts[i].y - 12),
+                            FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 255, 0), 2, LINE_AA);
+                }
+
+                Point2f center = findCentroid(sorted_pts);
+                putText(im, "ID: " + std::to_string(id), cv::Point(center.x - 20, center.y - 20),
+                        FONT_HERSHEY_SIMPLEX, 1.0, Scalar(0, 255, 255), 2, LINE_AA);
+
+                Mat rvec, tvec;
+                bool pnp_ok = solvePnP(marker_points, sorted_pts, cameraMatrix, distCoeffs, rvec, tvec, false, SOLVEPNP_AP3P);
+                if (pnp_ok && !rvec.empty()) {
+                    Mat rmat;
+                    Rodrigues(rvec, rmat);
+                    rmat = rmat.t();
+                    tvec = -rmat * tvec;
+                    Vec3d yaw_pitch_roll = yawPitchRollDecomposition(rmat);
+                    results.push_back({id, tvec, rmat, yaw_pitch_roll});
+                }
+            } else if (pts.size() < 4) {
+                std::vector<Point2f> sorted_pts = pts;
+                sortClockwise(sorted_pts);
+
+                for (size_t i = 0; i < sorted_pts.size(); i++) {
+                    circle(im, sorted_pts[i], 8, Scalar(0, 165, 255), -1);
+                    putText(im, std::to_string(i), cv::Point(sorted_pts[i].x + 12, sorted_pts[i].y - 12),
+                            FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 165, 255), 2, LINE_AA);
+                }
+
+                Point2f center = findCentroid(sorted_pts);
+                putText(im, "ID: " + std::to_string(id) + " (" + std::to_string(pts.size()) + "/4)", cv::Point(center.x - 20, center.y - 20),
+                        FONT_HERSHEY_SIMPLEX, 1.0, Scalar(0, 165, 255), 2, LINE_AA);
+            }
+        }
+
+        return results;
+    }
+
    public:
-    MarkerTracker(double bit_duration, int payload, double tracking_thresh, double sync_thresh = 4.5)
-        : bit_duration_ms(bit_duration), payload_size(payload), tracking_threshold(tracking_thresh), sync_threshold(sync_thresh) {}
+    MarkerTracker(double bit_duration, int payload, double tracking_thresh, double sync_thresh = 4.5, bool static_markers = false)
+        : bit_duration_ms(bit_duration), payload_size(payload), tracking_threshold(tracking_thresh), sync_threshold(sync_thresh), static_markers_mode(static_markers) {}
 
     std::vector<PoseResult> processFrame(Mat& im, double current_time,
                                          const Mat& cameraMatrix, const Mat& distCoeffs,
@@ -621,6 +671,14 @@ class MarkerTracker {
                 circle(im, cv::Point(center_x, center_y), 10, Scalar(0, 0, 255), 1);
                 current_blobs.push_back(Point2f(center_x, center_y));
             }
+        }
+
+        if (static_markers_mode) {
+            std::map<uint16_t, std::vector<Point2f>> groups;
+            if (current_blobs.size() == 4) {
+                groups[0] = current_blobs;
+            }
+            return estimatePoses(im, groups, cameraMatrix, distCoeffs, marker_points);
         }
 
         std::vector<bool> blob_matched(current_blobs.size(), false);
@@ -753,49 +811,7 @@ class MarkerTracker {
             }
         }
 
-        std::vector<PoseResult> results;
-        for (auto const& [id, pts] : groups) {
-            if (pts.size() == 4 && marker_points.size() == 4) {
-                std::vector<Point2f> sorted_pts = pts;
-                sortClockwise(sorted_pts);
-
-                for (int i = 0; i < 4; i++) {
-                    circle(im, sorted_pts[i], 8, Scalar(0, 255, 0), -1);
-                    putText(im, std::to_string(i), cv::Point(sorted_pts[i].x + 12, sorted_pts[i].y - 12),
-                            FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 255, 0), 2, LINE_AA);
-                }
-
-                Point2f center = findCentroid(sorted_pts);
-                putText(im, "ID: " + std::to_string(id), cv::Point(center.x - 20, center.y - 20),
-                        FONT_HERSHEY_SIMPLEX, 1.0, Scalar(0, 255, 255), 2, LINE_AA);
-
-                Mat rvec, tvec;
-                bool pnp_ok = solvePnP(marker_points, sorted_pts, cameraMatrix, distCoeffs, rvec, tvec, false, SOLVEPNP_AP3P);
-                if (pnp_ok && !rvec.empty()) {
-                    Mat rmat;
-                    Rodrigues(rvec, rmat);
-                    rmat = rmat.t();
-                    tvec = -rmat * tvec;
-                    Vec3d yaw_pitch_roll = yawPitchRollDecomposition(rmat);
-                    results.push_back({id, tvec, rmat, yaw_pitch_roll});
-                }
-            } else if (pts.size() < 4) {
-                std::vector<Point2f> sorted_pts = pts;
-                sortClockwise(sorted_pts);
-
-                for (size_t i = 0; i < sorted_pts.size(); i++) {
-                    circle(im, sorted_pts[i], 8, Scalar(0, 165, 255), -1);
-                    putText(im, std::to_string(i), cv::Point(sorted_pts[i].x + 12, sorted_pts[i].y - 12),
-                            FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 165, 255), 2, LINE_AA);
-                }
-
-                Point2f center = findCentroid(sorted_pts);
-                putText(im, "ID: " + std::to_string(id) + " (" + std::to_string(pts.size()) + "/4)", cv::Point(center.x - 20, center.y - 20),
-                        FONT_HERSHEY_SIMPLEX, 1.0, Scalar(0, 165, 255), 2, LINE_AA);
-            }
-        }
-
-        return results;
+        return estimatePoses(im, groups, cameraMatrix, distCoeffs, marker_points);
     }
 };
 
@@ -951,6 +967,7 @@ int main(int argc, char** argv) {
     int target_id = -1;
     double tracking_threshold = 30.0;
     double sync_threshold = 4.5;  // minimum consecutive-high duration (in bit-durations) for sync
+    bool static_markers_mode = false;
 
     // Kalman filter parameters
     bool enable_kalman_filter = false;
@@ -1028,6 +1045,8 @@ int main(int argc, char** argv) {
             tracking_threshold = stod(argv[++i]);
         } else if ((arg == "--sync-threshold") && i + 1 < argc) {
             sync_threshold = stod(argv[++i]);
+        } else if (arg == "--static-markers" || arg == "--static-blobs") {
+            static_markers_mode = true;
         } else if (arg == "--aruco") {
             aruco_mode = true;
         } else if ((arg == "--width") && i + 1 < argc) {
@@ -1045,6 +1064,9 @@ int main(int argc, char** argv) {
 
     cout << "Running at " << frame_rate << " Hz" << endl;
     cout << "Decoding marker IDs at " << encoder_frame_rate << " Hz" << endl;
+    if (static_markers_mode) {
+        cout << "Static marker blob mode ENABLED" << endl;
+    }
     if (enable_kalman_filter) {
         cout << "Kalman filter ENABLED  (process_noise=" << kf_process_noise
              << ", measurement_noise=" << kf_measurement_noise << ")" << endl;
@@ -1100,7 +1122,7 @@ int main(int argc, char** argv) {
     int elapsed_seconds = 0;
     float lens_position = 100;
     float focus_step = 50;
-    MarkerTracker tracker(3000.0 / encoder_frame_rate, payload_size, tracking_threshold, sync_threshold);
+    MarkerTracker tracker(3000.0 / encoder_frame_rate, payload_size, tracking_threshold, sync_threshold, static_markers_mode);
     LibCamera cam;
     uint32_t width = cam_width;
     uint32_t height = cam_height;
