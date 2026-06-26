@@ -43,10 +43,10 @@ struct PoseResult {
     uint16_t marker_id;
     Mat tvec;
     Mat rmat;
-    Vec3d yaw_pitch_roll;
+    Vec3d roll_pitch_yaw;
     Mat marker_tvec;
     Mat marker_rmat;
-    Vec3d marker_yaw_pitch_roll;
+    Vec3d marker_roll_pitch_yaw;
 };
 
 struct Position {
@@ -453,12 +453,12 @@ std::string generateLogName() {
     return filename.str();
 }
 
-Vec3d yawPitchRollDecomposition(const Mat& rmat) {
+Vec3d rollPitchYawDecomposition(const Mat& rmat) {
     double yaw = atan2(rmat.at<double>(1, 0), rmat.at<double>(0, 0));
     double pitch = atan2(-rmat.at<double>(2, 0),
                          sqrt(pow(rmat.at<double>(2, 1), 2) + pow(rmat.at<double>(2, 2), 2)));
     double roll = atan2(rmat.at<double>(2, 1), rmat.at<double>(2, 2));
-    return Vec3d(yaw, pitch, roll);
+    return Vec3d(roll, pitch, yaw);
 }
 
 vector<double> matVec3ToVector(const Mat& v) {
@@ -628,13 +628,13 @@ class MarkerTracker {
                     Mat marker_rmat;
                     Rodrigues(rvec, marker_rmat);
                     Mat marker_tvec = tvec.clone();
-                    Vec3d marker_yaw_pitch_roll = yawPitchRollDecomposition(marker_rmat);
+                    Vec3d marker_roll_pitch_yaw = rollPitchYawDecomposition(marker_rmat);
 
                     Mat camera_rmat = marker_rmat.t();
                     Mat camera_tvec = -camera_rmat * marker_tvec;
-                    Vec3d camera_yaw_pitch_roll = yawPitchRollDecomposition(camera_rmat);
-                    results.push_back({id, camera_tvec, camera_rmat, camera_yaw_pitch_roll,
-                                       marker_tvec, marker_rmat, marker_yaw_pitch_roll});
+                    Vec3d camera_roll_pitch_yaw = rollPitchYawDecomposition(camera_rmat);
+                    results.push_back({id, camera_tvec, camera_rmat, camera_roll_pitch_yaw,
+                                       marker_tvec, marker_rmat, marker_roll_pitch_yaw});
                 }
             } else if (pts.size() < 4) {
                 std::vector<Point2f> sorted_pts = pts;
@@ -1260,9 +1260,9 @@ int main(int argc, char** argv) {
                 auto aruco_result = aruco_tracker->processFrame(im, cameraMatrix, distCoeffs);
 
                 if (aruco_result.valid) {
-                    std::vector<double> tvec_vec = matVec3ToVector(aruco_result.tvec_world);
-                    std::vector<double> camera_ypr_vec = vec3dToVector(aruco_result.yaw_pitch_roll);
-                    json marker_poses = json::array();
+                    std::vector<double> camera_position_vec = matVec3ToVector(aruco_result.tvec_world);
+                    std::vector<double> camera_orientation_vec = vec3dToVector(aruco_result.roll_pitch_yaw);
+                    std::vector<json> marker_pose_entries;
                     for (int marker_id : aruco_result.detected_ids) {
                         auto it = known_markers.find(marker_id);
                         if (it == known_markers.end()) {
@@ -1272,48 +1272,49 @@ int main(int argc, char** argv) {
                         const Mat& T_world_marker = it->second.T_world_marker;
                         Mat marker_rmat = T_world_marker(cv::Rect(0, 0, 3, 3));
                         Mat marker_tvec = T_world_marker(cv::Rect(3, 0, 1, 3));
-                        Vec3d marker_ypr = yawPitchRollDecomposition(marker_rmat);
-                        marker_poses.push_back({
+                        Vec3d marker_rpy = rollPitchYawDecomposition(marker_rmat);
+                        marker_pose_entries.push_back({
+                            {"marker_pose", true},
                             {"marker_id", marker_id},
                             {"marker_position", matVec3ToVector(marker_tvec)},
-                            {"marker_orientation", vec3dToVector(marker_ypr)},
+                            {"marker_orientation", vec3dToVector(marker_rpy)},
                         });
                     }
 
                     if (print_logs) {
                         cout << "[ArUco] Camera world pos: ["
-                             << tvec_vec[0] << ", " << tvec_vec[1] << ", " << tvec_vec[2]
-                             << "]  YPR: " << aruco_result.yaw_pitch_roll
+                             << camera_position_vec[0] << ", " << camera_position_vec[1] << ", " << camera_position_vec[2]
+                             << "]  RPY: ["
+                             << camera_orientation_vec[0] << ", " << camera_orientation_vec[1] << ", " << camera_orientation_vec[2] << "]"
                              << "  markers: " << aruco_result.markers_used
                              << "  reproj_err: " << aruco_result.reprojection_error << endl;
                     }
 
                     json pose_entry = {
                         {"camera_pose", true},
-                        {"tvec", tvec_vec},
-                        {"yaw_pitch_roll", camera_ypr_vec},
-                        {"camera_position", tvec_vec},
-                        {"camera_orientation", camera_ypr_vec},
-                        {"marker_poses", marker_poses},
+                        {"camera_position", camera_position_vec},
+                        {"camera_orientation", camera_orientation_vec},
                         {"markers_used", aruco_result.markers_used},
                         {"detected_ids", aruco_result.detected_ids},
                         {"reprojection_error", aruco_result.reprojection_error}};
 
                     // Kalman-filtered position (uses marker_id 0 slot for camera pose)
-                    std::vector<double> filtered_vec = tvec_vec;
+                    std::vector<double> filtered_vec = camera_position_vec;
                     if (enable_kalman_filter) {
                         const uint16_t kf_id = 0xFFFF;  // reserved KF slot for ArUco camera pose
                         if (kalman_filters.find(kf_id) == kalman_filters.end()) {
                             kalman_filters.emplace(kf_id,
                                                    PositionKalmanFilter(kf_process_noise, kf_measurement_noise));
                         }
-                        Eigen::Vector3d meas(tvec_vec[0], tvec_vec[1], tvec_vec[2]);
+                        Eigen::Vector3d meas(camera_position_vec[0], camera_position_vec[1], camera_position_vec[2]);
                         Eigen::Vector3d filt = kalman_filters.at(kf_id).update(meas, current_time_sec);
                         filtered_vec = {filt[0], filt[1], filt[2]};
-                        pose_entry["tvec_filtered"] = filtered_vec;
+                        pose_entry["camera_position_filtered"] = filtered_vec;
                     }
 
                     current_frame_poses.push_back(pose_entry);
+                    current_frame_poses.insert(current_frame_poses.end(),
+                                               marker_pose_entries.begin(), marker_pose_entries.end());
 
                     // Shared memory
                     pos->valid = true;
@@ -1322,13 +1323,13 @@ int main(int argc, char** argv) {
                         pos->y = filtered_vec[1];
                         pos->z = filtered_vec[2];
                     } else {
-                        pos->x = tvec_vec[0];
-                        pos->y = tvec_vec[1];
-                        pos->z = tvec_vec[2];
+                        pos->x = camera_position_vec[0];
+                        pos->y = camera_position_vec[1];
+                        pos->z = camera_position_vec[2];
                     }
-                    pos->roll = aruco_result.yaw_pitch_roll[2];
-                    pos->pitch = aruco_result.yaw_pitch_roll[1];
-                    pos->yaw = aruco_result.yaw_pitch_roll[0];
+                    pos->roll = aruco_result.roll_pitch_yaw[0];
+                    pos->pitch = aruco_result.roll_pitch_yaw[1];
+                    pos->yaw = aruco_result.roll_pitch_yaw[2];
                     pos_updated = true;
                 }
             } else {
@@ -1336,38 +1337,38 @@ int main(int argc, char** argv) {
                 std::vector<PoseResult> results = tracker.processFrame(im, current_time_sec, cameraMatrix, distCoeffs, marker_points, blob_area_threshold);
 
                 for (const auto& result : results) {
-                    std::vector<double> tvec_vec = matVec3ToVector(result.tvec);
-                    std::vector<double> camera_ypr_vec = vec3dToVector(result.yaw_pitch_roll);
-                    std::vector<double> marker_tvec_vec = matVec3ToVector(result.marker_tvec);
-                    std::vector<double> marker_ypr_vec = vec3dToVector(result.marker_yaw_pitch_roll);
+                    std::vector<double> camera_position_vec = matVec3ToVector(result.tvec);
+                    std::vector<double> camera_orientation_vec = vec3dToVector(result.roll_pitch_yaw);
+                    std::vector<double> marker_position_vec = matVec3ToVector(result.marker_tvec);
+                    std::vector<double> marker_orientation_vec = vec3dToVector(result.marker_roll_pitch_yaw);
 
                     if (print_logs) {
                         cout << "ID: " << result.marker_id
                              << " Camera Position: " << result.tvec.t()
-                             << " Camera YPR: " << result.yaw_pitch_roll
+                             << " Camera RPY: ["
+                             << camera_orientation_vec[0] << ", " << camera_orientation_vec[1] << ", " << camera_orientation_vec[2] << "]"
                              << " Marker Position: " << result.marker_tvec.t()
-                             << " Marker YPR: " << result.marker_yaw_pitch_roll << endl;
+                             << " Marker RPY: ["
+                             << marker_orientation_vec[0] << ", " << marker_orientation_vec[1] << ", " << marker_orientation_vec[2] << "]" << endl;
                     }
 
                     json pose_entry = {
                         {"marker_id", result.marker_id},
-                        {"tvec", tvec_vec},
-                        {"yaw_pitch_roll", camera_ypr_vec},
-                        {"camera_position", tvec_vec},
-                        {"camera_orientation", camera_ypr_vec},
-                        {"marker_position", marker_tvec_vec},
-                        {"marker_orientation", marker_ypr_vec}};
+                        {"camera_position", camera_position_vec},
+                        {"camera_orientation", camera_orientation_vec},
+                        {"marker_position", marker_position_vec},
+                        {"marker_orientation", marker_orientation_vec}};
 
-                    std::vector<double> filtered_vec = tvec_vec;
+                    std::vector<double> filtered_vec = camera_position_vec;
                     if (enable_kalman_filter) {
                         if (kalman_filters.find(result.marker_id) == kalman_filters.end()) {
                             kalman_filters.emplace(result.marker_id,
                                                    PositionKalmanFilter(kf_process_noise, kf_measurement_noise));
                         }
-                        Eigen::Vector3d meas(tvec_vec[0], tvec_vec[1], tvec_vec[2]);
+                        Eigen::Vector3d meas(camera_position_vec[0], camera_position_vec[1], camera_position_vec[2]);
                         Eigen::Vector3d filt = kalman_filters.at(result.marker_id).update(meas, current_time_sec);
                         filtered_vec = {filt[0], filt[1], filt[2]};
-                        pose_entry["tvec_filtered"] = filtered_vec;
+                        pose_entry["camera_position_filtered"] = filtered_vec;
                     }
 
                     current_frame_poses.push_back(pose_entry);
@@ -1379,13 +1380,13 @@ int main(int argc, char** argv) {
                             pos->y = filtered_vec[1];
                             pos->z = filtered_vec[2];
                         } else {
-                            pos->x = tvec_vec[0];
-                            pos->y = tvec_vec[1];
-                            pos->z = tvec_vec[2];
+                            pos->x = camera_position_vec[0];
+                            pos->y = camera_position_vec[1];
+                            pos->z = camera_position_vec[2];
                         }
-                        pos->roll = result.yaw_pitch_roll[2];
-                        pos->pitch = result.yaw_pitch_roll[1];
-                        pos->yaw = result.yaw_pitch_roll[0];
+                        pos->roll = result.roll_pitch_yaw[0];
+                        pos->pitch = result.roll_pitch_yaw[1];
+                        pos->yaw = result.roll_pitch_yaw[2];
                         pos_updated = true;
                     }
                 }
