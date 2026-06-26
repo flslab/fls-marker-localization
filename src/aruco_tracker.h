@@ -85,7 +85,7 @@ public:
         bool valid = false;
         cv::Mat tvec_world;       // 3×1 camera position in world
         cv::Mat rmat_world;       // 3×3 rotation of camera in world
-        cv::Vec3d yaw_pitch_roll; // Euler angles (rad)
+        cv::Vec3d roll_pitch_yaw; // Euler angles (rad)
         int markers_used = 0;
         double reprojection_error = 0.0;
         std::vector<int> detected_ids;
@@ -259,7 +259,7 @@ public:
         result.valid = true;
         result.tvec_world = avg_tvec;
         result.rmat_world = avg_rmat;
-        result.yaw_pitch_roll = yawPitchRollDecomposition(avg_rmat);
+        result.roll_pitch_yaw = rollPitchYawDecomposition(avg_rmat);
         result.markers_used = static_cast<int>(estimates.size());
         result.reprojection_error = avg_err;
 
@@ -278,14 +278,14 @@ private:
 #endif
 
     // Euler decomposition (same convention as the rest of the codebase)
-    static cv::Vec3d yawPitchRollDecomposition(const cv::Mat &rmat)
+    static cv::Vec3d rollPitchYawDecomposition(const cv::Mat &rmat)
     {
         double yaw = std::atan2(rmat.at<double>(1, 0), rmat.at<double>(0, 0));
         double pitch = std::atan2(-rmat.at<double>(2, 0),
                                   std::sqrt(std::pow(rmat.at<double>(2, 1), 2) +
                                             std::pow(rmat.at<double>(2, 2), 2)));
         double roll = std::atan2(rmat.at<double>(2, 1), rmat.at<double>(2, 2));
-        return cv::Vec3d(yaw, pitch, roll);
+        return cv::Vec3d(roll, pitch, yaw);
     }
 
     // Map string name → OpenCV dictionary ID (works as both enum and int)
