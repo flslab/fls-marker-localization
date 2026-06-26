@@ -44,6 +44,9 @@ struct PoseResult {
     Mat tvec;
     Mat rmat;
     Vec3d yaw_pitch_roll;
+    Mat marker_tvec;
+    Mat marker_rmat;
+    Vec3d marker_yaw_pitch_roll;
 };
 
 struct Position {
@@ -458,6 +461,14 @@ Vec3d yawPitchRollDecomposition(const Mat& rmat) {
     return Vec3d(yaw, pitch, roll);
 }
 
+vector<double> matVec3ToVector(const Mat& v) {
+    return {v.at<double>(0, 0), v.at<double>(1, 0), v.at<double>(2, 0)};
+}
+
+vector<double> vec3dToVector(const Vec3d& v) {
+    return {v[0], v[1], v[2]};
+}
+
 // Function to calculate the centroid
 Point2f findCentroid(const vector<Point2f>& points) {
     float cx = 0, cy = 0;
@@ -614,12 +625,16 @@ class MarkerTracker {
                 Mat rvec, tvec;
                 bool pnp_ok = solvePnP(marker_points, sorted_pts, cameraMatrix, distCoeffs, rvec, tvec, false, SOLVEPNP_AP3P);
                 if (pnp_ok && !rvec.empty()) {
-                    Mat rmat;
-                    Rodrigues(rvec, rmat);
-                    rmat = rmat.t();
-                    tvec = -rmat * tvec;
-                    Vec3d yaw_pitch_roll = yawPitchRollDecomposition(rmat);
-                    results.push_back({id, tvec, rmat, yaw_pitch_roll});
+                    Mat marker_rmat;
+                    Rodrigues(rvec, marker_rmat);
+                    Mat marker_tvec = tvec.clone();
+                    Vec3d marker_yaw_pitch_roll = yawPitchRollDecomposition(marker_rmat);
+
+                    Mat camera_rmat = marker_rmat.t();
+                    Mat camera_tvec = -camera_rmat * marker_tvec;
+                    Vec3d camera_yaw_pitch_roll = yawPitchRollDecomposition(camera_rmat);
+                    results.push_back({id, camera_tvec, camera_rmat, camera_yaw_pitch_roll,
+                                       marker_tvec, marker_rmat, marker_yaw_pitch_roll});
                 }
             } else if (pts.size() < 4) {
                 std::vector<Point2f> sorted_pts = pts;
@@ -1173,10 +1188,10 @@ int main(int argc, char** argv) {
 
     // ArUco tracker (only initialised when --aruco is active)
     ArucoTracker* aruco_tracker = nullptr;
+    std::map<int, ArucoTracker::MarkerWorldPose> known_markers;
     if (aruco_mode) {
         string aruco_dictionary;
         double aruco_marker_size;
-        std::map<int, ArucoTracker::MarkerWorldPose> known_markers;
 
         if (!readArucoConfig(config_file, aruco_dictionary, aruco_marker_size, known_markers)) {
             cerr << "Failed to read ArUco configuration" << endl;
@@ -1245,10 +1260,25 @@ int main(int argc, char** argv) {
                 auto aruco_result = aruco_tracker->processFrame(im, cameraMatrix, distCoeffs);
 
                 if (aruco_result.valid) {
-                    std::vector<double> tvec_vec = {
-                        aruco_result.tvec_world.at<double>(0, 0),
-                        aruco_result.tvec_world.at<double>(1, 0),
-                        aruco_result.tvec_world.at<double>(2, 0)};
+                    std::vector<double> tvec_vec = matVec3ToVector(aruco_result.tvec_world);
+                    std::vector<double> camera_ypr_vec = vec3dToVector(aruco_result.yaw_pitch_roll);
+                    json marker_poses = json::array();
+                    for (int marker_id : aruco_result.detected_ids) {
+                        auto it = known_markers.find(marker_id);
+                        if (it == known_markers.end()) {
+                            continue;
+                        }
+
+                        const Mat& T_world_marker = it->second.T_world_marker;
+                        Mat marker_rmat = T_world_marker(cv::Rect(0, 0, 3, 3));
+                        Mat marker_tvec = T_world_marker(cv::Rect(3, 0, 1, 3));
+                        Vec3d marker_ypr = yawPitchRollDecomposition(marker_rmat);
+                        marker_poses.push_back({
+                            {"marker_id", marker_id},
+                            {"marker_position", matVec3ToVector(marker_tvec)},
+                            {"marker_orientation", vec3dToVector(marker_ypr)},
+                        });
+                    }
 
                     if (print_logs) {
                         cout << "[ArUco] Camera world pos: ["
@@ -1261,7 +1291,10 @@ int main(int argc, char** argv) {
                     json pose_entry = {
                         {"camera_pose", true},
                         {"tvec", tvec_vec},
-                        {"yaw_pitch_roll", {aruco_result.yaw_pitch_roll[0], aruco_result.yaw_pitch_roll[1], aruco_result.yaw_pitch_roll[2]}},
+                        {"yaw_pitch_roll", camera_ypr_vec},
+                        {"camera_position", tvec_vec},
+                        {"camera_orientation", camera_ypr_vec},
+                        {"marker_poses", marker_poses},
                         {"markers_used", aruco_result.markers_used},
                         {"detected_ids", aruco_result.detected_ids},
                         {"reprojection_error", aruco_result.reprojection_error}};
@@ -1303,18 +1336,27 @@ int main(int argc, char** argv) {
                 std::vector<PoseResult> results = tracker.processFrame(im, current_time_sec, cameraMatrix, distCoeffs, marker_points, blob_area_threshold);
 
                 for (const auto& result : results) {
-                    if (print_logs) {
-                        cout << "ID: " << result.marker_id << " Translation Vector: " << result.tvec.t() << "Yaw, Pitch, Roll: " << result.yaw_pitch_roll << endl;
-                    }
+                    std::vector<double> tvec_vec = matVec3ToVector(result.tvec);
+                    std::vector<double> camera_ypr_vec = vec3dToVector(result.yaw_pitch_roll);
+                    std::vector<double> marker_tvec_vec = matVec3ToVector(result.marker_tvec);
+                    std::vector<double> marker_ypr_vec = vec3dToVector(result.marker_yaw_pitch_roll);
 
-                    std::vector<double> tvec_vec = {result.tvec.at<double>(0, 0),
-                                                    result.tvec.at<double>(1, 0),
-                                                    result.tvec.at<double>(2, 0)};
+                    if (print_logs) {
+                        cout << "ID: " << result.marker_id
+                             << " Camera Position: " << result.tvec.t()
+                             << " Camera YPR: " << result.yaw_pitch_roll
+                             << " Marker Position: " << result.marker_tvec.t()
+                             << " Marker YPR: " << result.marker_yaw_pitch_roll << endl;
+                    }
 
                     json pose_entry = {
                         {"marker_id", result.marker_id},
                         {"tvec", tvec_vec},
-                        {"yaw_pitch_roll", {result.yaw_pitch_roll[0], result.yaw_pitch_roll[1], result.yaw_pitch_roll[2]}}};
+                        {"yaw_pitch_roll", camera_ypr_vec},
+                        {"camera_position", tvec_vec},
+                        {"camera_orientation", camera_ypr_vec},
+                        {"marker_position", marker_tvec_vec},
+                        {"marker_orientation", marker_ypr_vec}};
 
                     std::vector<double> filtered_vec = tvec_vec;
                     if (enable_kalman_filter) {
