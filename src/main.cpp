@@ -1359,16 +1359,16 @@ int main(int argc, char** argv) {
                         {"marker_position", marker_position_vec},
                         {"marker_orientation", marker_orientation_vec}};
 
-                    std::vector<double> filtered_vec = camera_position_vec;
+                    std::vector<double> filtered_vec = marker_position_vec;
                     if (enable_kalman_filter) {
                         if (kalman_filters.find(result.marker_id) == kalman_filters.end()) {
                             kalman_filters.emplace(result.marker_id,
                                                    PositionKalmanFilter(kf_process_noise, kf_measurement_noise));
                         }
-                        Eigen::Vector3d meas(camera_position_vec[0], camera_position_vec[1], camera_position_vec[2]);
+                        Eigen::Vector3d meas(marker_position_vec[0], marker_position_vec[1], marker_position_vec[2]);
                         Eigen::Vector3d filt = kalman_filters.at(result.marker_id).update(meas, current_time_sec);
                         filtered_vec = {filt[0], filt[1], filt[2]};
-                        pose_entry["camera_position_filtered"] = filtered_vec;
+                        pose_entry["marker_position_filtered"] = filtered_vec;
                     }
 
                     current_frame_poses.push_back(pose_entry);
@@ -1380,13 +1380,13 @@ int main(int argc, char** argv) {
                             pos->y = filtered_vec[1];
                             pos->z = filtered_vec[2];
                         } else {
-                            pos->x = camera_position_vec[0];
-                            pos->y = camera_position_vec[1];
-                            pos->z = camera_position_vec[2];
+                            pos->x = marker_position_vec[0];
+                            pos->y = marker_position_vec[1];
+                            pos->z = marker_position_vec[2];
                         }
-                        pos->roll = result.roll_pitch_yaw[0];
-                        pos->pitch = result.roll_pitch_yaw[1];
-                        pos->yaw = result.roll_pitch_yaw[2];
+                        pos->roll = marker_orientation_vec[0];
+                        pos->pitch = marker_orientation_vec[1];
+                        pos->yaw = marker_orientation_vec[2];
                         pos_updated = true;
                     }
                 }
