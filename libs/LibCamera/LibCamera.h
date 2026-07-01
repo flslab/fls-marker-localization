@@ -33,6 +33,7 @@ typedef struct {
     uint8_t *imageData;
     uint32_t size;
     uint64_t request;
+    uint64_t timestamp;
 } LibcameraOutData;
 
 class LibCamera {

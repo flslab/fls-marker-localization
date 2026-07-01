@@ -53,6 +53,7 @@ struct Position {
     bool valid;
     float x, y, z;
     float roll, pitch, yaw;
+    double timestamp;
 };
 
 // Video streaming class
@@ -1244,8 +1245,15 @@ int main(int argc, char** argv) {
                 raw_frame.copyTo(im);
             }
 
-            auto now_time = std::chrono::system_clock::now();
-            double current_time_sec = std::chrono::duration<double>(now_time.time_since_epoch()).count();
+            struct timespec ts_mono, ts_real;
+            clock_gettime(CLOCK_MONOTONIC, &ts_mono);
+            clock_gettime(CLOCK_REALTIME, &ts_real);
+            uint64_t mono_now = (uint64_t)ts_mono.tv_sec * 1000000000ULL + ts_mono.tv_nsec;
+            uint64_t real_now = (uint64_t)ts_real.tv_sec * 1000000000ULL + ts_real.tv_nsec;
+            int64_t mono_to_real_offset = (int64_t)real_now - (int64_t)mono_now;
+
+            uint64_t camera_realtime_ns = frameData.timestamp + mono_to_real_offset;
+            double current_time_sec = (double)camera_realtime_ns / 1000000000.0;
 
             // Process the image
             std::vector<json> current_frame_poses;
@@ -1395,11 +1403,9 @@ int main(int argc, char** argv) {
             if (!pos_updated) {
                 pos->valid = false;
             }
+            pos->timestamp = current_time_sec;
 
-            auto duration = now_time.time_since_epoch();
-            auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
-
-            frames.push_back({{"time", milliseconds},
+            frames.push_back({{"time", current_time_sec},
                               {"frame_id", frameCount},
                               {"poses", current_frame_poses}});
 

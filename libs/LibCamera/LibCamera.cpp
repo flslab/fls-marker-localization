@@ -196,6 +196,7 @@ bool LibCamera::readFrame(LibcameraOutData *frameData){
         const Request::BufferMap &buffers = request->buffers();
         for (auto it = buffers.begin(); it != buffers.end(); ++it) {
             FrameBuffer *buffer = it->second;
+            frameData->timestamp = buffer->metadata().timestamp;
             for (unsigned int i = 0; i < buffer->planes().size(); ++i) {
                 const FrameBuffer::Plane &plane = buffer->planes()[i];
                 const FrameMetadata::Plane &meta = buffer->metadata().planes()[i];
