@@ -10,8 +10,6 @@
 // which is typically exposed as gpiochip4.
 const int GPIO_CHIP = 4; 
 
-// The single control pin connected to the MOSFET gate driving all 4 LEDs
-const int CONTROL_PIN = 17;
 
 // Global flag for clean exit on Ctrl+C
 volatile sig_atomic_t keep_running = 1;
@@ -47,6 +45,7 @@ int main(int argc, char* argv[]) {
     double fps = 50.0; // default
     int my_marker_id = 0;
     int payload_size = 4;
+    int control_pin = 27;
     
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -56,6 +55,8 @@ int main(int argc, char* argv[]) {
             my_marker_id = std::stoi(argv[++i]);
         } else if (arg == "--payload-size" && i + 1 < argc) {
             payload_size = std::stoi(argv[++i]);
+        } else if ((arg == "--control-pin" || arg == "--pin") && i + 1 < argc) {
+            control_pin = std::stoi(argv[++i]);
         }
     }
     // 1/fps * 3 seconds = 3000/fps milliseconds
@@ -73,24 +74,24 @@ int main(int argc, char* argv[]) {
     }
 
     // Claim the single control pin as output
-    if (lgGpioClaimOutput(handle, 0, CONTROL_PIN, 0) < 0) {
-        std::cerr << "Failed to claim GPIO " << CONTROL_PIN << "\n";
+    if (lgGpioClaimOutput(handle, 0, control_pin, 0) < 0) {
+        std::cerr << "Failed to claim GPIO " << control_pin << "\n";
         lgGpiochipClose(handle);
         return 1;
     }
 
     if (my_marker_id == 0) {
-        std::cout << "Marker ID is 0. LEDs will remain ON without blinking.\n";
+        std::cout << "Marker ID is 0. LEDs on GPIO " << control_pin << " will remain ON without blinking.\n";
         std::cout << "Press Ctrl+C to stop.\n";
         
-        lgGpioWrite(handle, CONTROL_PIN, 1);
+        lgGpioWrite(handle, control_pin, 1);
         while (keep_running) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     } else {
         std::vector<int> packet = build_packet(static_cast<uint16_t>(my_marker_id), payload_size);
 
-        std::cout << "Broadcasting Marker ID " << my_marker_id << " (Payload: " << payload_size << " bits) at " << fps << " Hz...\n";
+        std::cout << "Broadcasting Marker ID " << my_marker_id << " (Payload: " << payload_size << " bits) on GPIO " << control_pin << " at " << fps << " Hz...\n";
         std::cout << "Press Ctrl+C to stop.\n";
 
         // Setup absolute timing baseline
@@ -101,7 +102,7 @@ int main(int argc, char* argv[]) {
                 if (!keep_running) break;
 
                 // Write the current bit to the single control pin
-                lgGpioWrite(handle, CONTROL_PIN, bit);
+                lgGpioWrite(handle, control_pin, bit);
 
                 // Calculate the exact time the NEXT bit should occur
                 next_tick += bit_duration;
@@ -114,7 +115,7 @@ int main(int argc, char* argv[]) {
 
     // Clean up: turn off the pin and release it
     std::cout << "\nShutting down...\n";
-    lgGpioWrite(handle, CONTROL_PIN, 0);
+    lgGpioWrite(handle, control_pin, 0);
     lgGpiochipClose(handle);
 
     return 0;
