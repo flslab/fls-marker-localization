@@ -29,8 +29,21 @@ find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 # Include directories for OpenCV, ED_Lib, and Eigen ${EIGEN3_INCLUDE_DIR}, libs/ED_Lib
 include_directories(${OpenCV_INCLUDE_DIRS} libs/LibCamera ${LIBCAMERA_INCLUDE_DIRS} ${EIGEN3_INCLUDE_DIR})
 
+# Get git commit hash
+execute_process(
+    COMMAND git rev-parse HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_COMMIT_HASH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(NOT GIT_COMMIT_HASH)
+    set(GIT_COMMIT_HASH "unknown")
+endif()
+
 # Add your executable
 add_executable(eye src/main.cpp)
+target_compile_definitions(eye PRIVATE GIT_COMMIT_HASH=${GIT_COMMIT_HASH})
 
 # Link ED_Lib, OpenCV, and Eigen to your project Eigen3::Eigen, EDLib
 target_link_libraries(eye ${OpenCV_LIBS} LibCamera ${LIBCAMERA_LIBRARIES} nlohmann_json::nlohmann_json Eigen3::Eigen)

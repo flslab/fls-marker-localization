@@ -29,6 +29,7 @@
 #include "aruco_tracker.h"
 #include "position_kalman_filter.h"
 #include "marker_tracker.h"
+#include "video_streamer.h"
 
 using namespace cv;
 using namespace std;
@@ -48,288 +49,6 @@ struct Position {
     double timestamp;
 };
 
-// Video streaming class
-class VideoStreamer {
-   private:
-    int socket_fd;
-    struct sockaddr_in server_addr, client_addr;
-    socklen_t client_len;
-    bool is_running;
-    std::thread streaming_thread;
-    std::atomic<bool> new_frame_available;
-    Mat current_frame;
-    std::mutex frame_mutex;
-    int stream_port;
-    string stream_type;
-
-   public:
-    VideoStreamer(int port = 8080, const string& type = "udp")
-        : stream_port(port), stream_type(type), is_running(false), new_frame_available(false) {
-        client_len = sizeof(client_addr);
-    }
-
-    ~VideoStreamer() {
-        stop();
-    }
-
-    bool start() {
-        if (stream_type == "udp") {
-            return startUDPStreaming();
-        } else if (stream_type == "http") {
-            return startHTTPStreaming();
-        }
-        return false;
-    }
-
-    bool startUDPStreaming() {
-        socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
-        if (socket_fd < 0) {
-            cerr << "Error creating UDP socket" << endl;
-            return false;
-        }
-
-        server_addr.sin_family = AF_INET;
-        server_addr.sin_addr.s_addr = INADDR_ANY;
-        server_addr.sin_port = htons(stream_port);
-
-        if (bind(socket_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-            cerr << "Error binding UDP socket to port " << stream_port << endl;
-            close(socket_fd);
-            return false;
-        }
-
-        is_running = true;
-        streaming_thread = std::thread(&VideoStreamer::udpStreamingLoop, this);
-        cout << "UDP streaming started on port " << stream_port << endl;
-        return true;
-    }
-
-    bool startHTTPStreaming() {
-        socket_fd = socket(AF_INET, SOCK_STREAM, 0);
-        if (socket_fd < 0) {
-            cerr << "Error creating HTTP socket" << endl;
-            return false;
-        }
-
-        int opt = 1;
-        setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-
-        server_addr.sin_family = AF_INET;
-        server_addr.sin_addr.s_addr = INADDR_ANY;
-        server_addr.sin_port = htons(stream_port);
-
-        if (bind(socket_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-            cerr << "Error binding HTTP socket to port " << stream_port << endl;
-            close(socket_fd);
-            return false;
-        }
-
-        if (listen(socket_fd, 5) < 0) {
-            cerr << "Error listening on HTTP socket" << endl;
-            close(socket_fd);
-            return false;
-        }
-
-        is_running = true;
-        streaming_thread = std::thread(&VideoStreamer::httpStreamingLoop, this);
-        cout << "HTTP streaming started on port " << stream_port << endl;
-        cout << "Open http://localhost:" << stream_port << "/stream in your browser" << endl;
-        return true;
-    }
-
-    void updateFrame(const Mat& frame) {
-        if (frame.empty())
-            return;
-
-        std::lock_guard<std::mutex> lock(frame_mutex);
-
-        // Ensure proper memory alignment and continuous memory layout
-        if (frame.isContinuous()) {
-            current_frame = frame.clone();
-        } else {
-            // Create a continuous copy if the frame is not continuous
-            Mat temp_frame;
-            frame.copyTo(temp_frame);
-            current_frame = temp_frame;
-        }
-
-        new_frame_available = true;
-    }
-
-    void stop() {
-        is_running = false;
-        if (streaming_thread.joinable()) {
-            streaming_thread.join();
-        }
-        if (socket_fd >= 0) {
-            close(socket_fd);
-        }
-    }
-
-   private:
-    void udpStreamingLoop() {
-        vector<uchar> buffer;
-        vector<int> encode_params = {IMWRITE_JPEG_QUALITY, 60};  // Lower quality for stability
-
-        // Wait for initial client connection with timeout
-        char dummy_buffer[1];
-        struct timeval timeout;
-        timeout.tv_sec = 1;
-        timeout.tv_usec = 0;
-        setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-
-        cout << "Waiting for UDP client connection..." << endl;
-        if (recvfrom(socket_fd, dummy_buffer, 1, 0, (struct sockaddr*)&client_addr, &client_len) < 0) {
-            cout << "No UDP client connected, continuing without streaming..." << endl;
-            return;
-        }
-        cout << "UDP client connected from " << inet_ntoa(client_addr.sin_addr) << endl;
-
-        while (is_running) {
-            if (new_frame_available.load()) {
-                Mat frame_to_send;
-                {
-                    std::lock_guard<std::mutex> lock(frame_mutex);
-                    if (!current_frame.empty() && current_frame.isContinuous()) {
-                        frame_to_send = current_frame.clone();
-                    }
-                    new_frame_available = false;
-                }
-
-                if (!frame_to_send.empty()) {
-                    // Resize frame for network efficiency
-                    Mat resized_frame;
-                    if (frame_to_send.cols > 320) {
-                        resize(frame_to_send, resized_frame, cv::Size(320, 200));
-                    } else {
-                        resized_frame = frame_to_send;
-                    }
-
-                    // Encode frame as JPEG with error checking
-                    buffer.clear();
-                    try {
-                        if (imencode(".jpg", resized_frame, buffer, encode_params) && !buffer.empty()) {
-                            // Limit max frame size
-                            if (buffer.size() < 65536) {  // 64KB limit
-                                // Send frame size first
-                                uint32_t frame_size = htonl(buffer.size());
-                                if (sendto(socket_fd, &frame_size, sizeof(frame_size), 0,
-                                           (struct sockaddr*)&client_addr, client_len) < 0) {
-                                    break;  // Client disconnected
-                                }
-
-                                // Send frame data in smaller chunks
-                                const size_t chunk_size = 512;  // Smaller chunks for stability
-                                size_t bytes_sent = 0;
-                                while (bytes_sent < buffer.size() && is_running) {
-                                    size_t remaining = buffer.size() - bytes_sent;
-                                    size_t to_send = min(chunk_size, remaining);
-
-                                    if (sendto(socket_fd, buffer.data() + bytes_sent, to_send, 0,
-                                               (struct sockaddr*)&client_addr, client_len) < 0) {
-                                        goto udp_loop_end;  // Break out of nested loops
-                                    }
-                                    bytes_sent += to_send;
-                                }
-                            }
-                        }
-                    } catch (const cv::Exception& e) {
-                        cerr << "OpenCV encoding error: " << e.what() << endl;
-                    }
-                }
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));  // ~20 FPS for stability
-        }
-
-    udp_loop_end:
-        cout << "UDP streaming ended" << endl;
-    }
-
-    void httpStreamingLoop() {
-        while (is_running) {
-            struct timeval timeout;
-            timeout.tv_sec = 1;
-            timeout.tv_usec = 0;
-            setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-
-            int client_socket = accept(socket_fd, (struct sockaddr*)&client_addr, &client_len);
-            if (client_socket < 0) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    continue;  // Timeout, try again
-                }
-                break;  // Real error
-            }
-
-            cout << "HTTP client connected from " << inet_ntoa(client_addr.sin_addr) << endl;
-
-            // Send HTTP headers for MJPEG stream
-            string headers =
-                "HTTP/1.1 200 OK\r\n"
-                "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n"
-                "Connection: keep-alive\r\n"
-                "Cache-Control: no-cache\r\n"
-                "Access-Control-Allow-Origin: *\r\n\r\n";
-
-            if (send(client_socket, headers.c_str(), headers.length(), MSG_NOSIGNAL) < 0) {
-                close(client_socket);
-                continue;
-            }
-
-            vector<uchar> buffer;
-            vector<int> encode_params = {IMWRITE_JPEG_QUALITY, 60};  // Lower quality for stability
-
-            while (is_running) {
-                if (new_frame_available.load()) {
-                    Mat frame_to_send;
-                    {
-                        std::lock_guard<std::mutex> lock(frame_mutex);
-                        if (!current_frame.empty() && current_frame.isContinuous()) {
-                            frame_to_send = current_frame.clone();
-                        }
-                        new_frame_available = false;
-                    }
-
-                    if (!frame_to_send.empty()) {
-                        // Resize frame for network efficiency
-                        Mat resized_frame;
-                        if (frame_to_send.cols > 320) {
-                            resize(frame_to_send, resized_frame, cv::Size(320, 200));
-                        } else {
-                            resized_frame = frame_to_send;
-                        }
-
-                        buffer.clear();
-                        try {
-                            if (imencode(".jpg", resized_frame, buffer, encode_params) && !buffer.empty()) {
-                                // Limit max frame size
-                                if (buffer.size() < 65536) {  // 64KB limit
-                                    string frame_header =
-                                        "--frame\r\n"
-                                        "Content-Type: image/jpeg\r\n"
-                                        "Content-Length: " +
-                                        to_string(buffer.size()) + "\r\n\r\n";
-
-                                    if (send(client_socket, frame_header.c_str(), frame_header.length(), MSG_NOSIGNAL) < 0 ||
-                                        send(client_socket, buffer.data(), buffer.size(), MSG_NOSIGNAL) < 0 ||
-                                        send(client_socket, "\r\n", 2, MSG_NOSIGNAL) < 0) {
-                                        break;  // Client disconnected
-                                    }
-                                }
-                            }
-                        } catch (const cv::Exception& e) {
-                            cerr << "OpenCV encoding error: " << e.what() << endl;
-                            break;
-                        }
-                    }
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));  // ~20 FPS for stability
-            }
-
-            close(client_socket);
-            cout << "HTTP client disconnected" << endl;
-        }
-    }
-};
 
 // Background saver class
 class BackgroundSaver {
@@ -444,6 +163,17 @@ std::string generateLogName() {
              << std::put_time(localTime, "%H_%M_%S_%m_%d_%Y");
 
     return filename.str();
+}
+
+#ifndef GIT_COMMIT_HASH
+#define GIT_COMMIT_HASH unknown
+#endif
+
+#define XSTR(x) STR(x)
+#define STR(x) #x
+
+std::string getGitCommitHash() {
+    return XSTR(GIT_COMMIT_HASH);
 }
 
 
@@ -571,11 +301,16 @@ int main(int argc, char** argv) {
     int execution_time = 0;
     double save_rate = 1.0;
     bool save_frames = false;
+    string save_frames_path = "";
     bool save_video = false;
     int video_fps = 30;
     string video_path = "";
     string config_file = "camera_config.json";
     string json_path = "";
+    bool raw_preview = false;
+    bool raw_stream = false;
+    bool raw_save_frame = false;
+    bool raw_save_video = false;
 
     // ArUco mode
     bool aruco_mode = false;
@@ -633,6 +368,16 @@ int main(int argc, char** argv) {
             }
         } else if ((arg == "--save-frames")) {
             save_frames = true;
+        } else if ((arg == "--save-frames-path") && i + 1 < argc) {
+            save_frames_path = argv[++i];
+        } else if ((arg == "--raw-preview")) {
+            raw_preview = true;
+        } else if ((arg == "--raw-stream")) {
+            raw_stream = true;
+        } else if ((arg == "--raw-save-frame")) {
+            raw_save_frame = true;
+        } else if ((arg == "--raw-save-video")) {
+            raw_save_video = true;
         } else if ((arg == "--save-video" || arg == "-s")) {
             save_video = true;
         } else if ((arg == "--video-fps") && i + 1 < argc) {
@@ -708,6 +453,13 @@ int main(int argc, char** argv) {
     if (!createDirectory(log_dir)) {
         cerr << "Error: Unable to create directory " << log_dir << endl;
         return -1;
+    }
+
+    if (!save_frames_path.empty()) {
+        if (!createDirectory(save_frames_path)) {
+            cerr << "Error: Unable to create directory " << save_frames_path << endl;
+            return -1;
+        }
     }
 
     // Initialize video streamer
@@ -859,6 +611,11 @@ int main(int argc, char** argv) {
             } else {
                 // Create a properly aligned copy
                 raw_frame.copyTo(im);
+            }
+
+            Mat raw_im;
+            if (raw_preview || raw_stream || raw_save_frame || raw_save_video) {
+                raw_im = im.clone();
             }
 
             struct timespec ts_mono, ts_real;
@@ -1040,10 +797,12 @@ int main(int argc, char** argv) {
             }
             frames.push_back(frame_data);
 
+            Mat stream_im = raw_stream ? raw_im : im;
+
             // Update streaming frame (only if streaming is enabled and frame is valid)
-            if (enable_streaming && streamer && !im.empty() && current_time_sec >= stream_next_time) {
+            if (enable_streaming && streamer && !stream_im.empty() && current_time_sec >= stream_next_time) {
                 try {
-                    streamer->updateFrame(im);
+                    streamer->updateFrame(stream_im);
                     stream_next_time = (stream_next_time == 0) ? current_time_sec + stream_interval : stream_next_time + stream_interval;
                     if (stream_next_time < current_time_sec)
                         stream_next_time = current_time_sec + stream_interval;
@@ -1052,8 +811,9 @@ int main(int argc, char** argv) {
                 }
             }
 
+            Mat preview_im = raw_preview ? raw_im : im;
             if (preview) {
-                imshow("libcamera-demo", im);
+                imshow("libcamera-demo", preview_im);
             }
 
             // Handle background saving for images and video
@@ -1068,13 +828,15 @@ int main(int argc, char** argv) {
                 if (image_next_time < current_time_sec)
                     image_next_time = current_time_sec + image_interval;
 
-                save_filename = log_dir + "/frame_" + to_string(frameCount) + ".png";
+                string save_dir = save_frames_path.empty() ? log_dir : save_frames_path;
+                save_filename = save_dir + "/frame_" + to_string(frameCount) + ".jpg";
             }
 
+            Mat save_video_im = raw_save_video ? raw_im : im;
             if (save_video && current_time_sec >= video_next_time) {
-                if (!saver.isVideoOpened() && !im.empty()) {
+                if (!saver.isVideoOpened() && !save_video_im.empty()) {
                     int codec = cv::VideoWriter::fourcc('a', 'v', 'c', '1');
-                    if (saver.startVideo(video_filename, codec, video_fps, im.size(), im.channels() == 3)) {
+                    if (saver.startVideo(video_filename, codec, video_fps, save_video_im.size(), save_video_im.channels() == 3)) {
                         video_start_time = current_time_sec;
                         // Initialize next time to now + interval
                         video_next_time = current_time_sec + video_interval;
@@ -1093,8 +855,23 @@ int main(int argc, char** argv) {
                 }
             }
 
-            if ((do_save_image || do_save_video) && !im.empty()) {
-                saver.push(im, save_filename, do_save_video);
+            Mat save_frame_im = raw_save_frame ? raw_im : im;
+            if (do_save_image && do_save_video) {
+                if (raw_save_frame == raw_save_video) {
+                    if (!save_frame_im.empty())
+                        saver.push(save_frame_im, save_filename, true);
+                } else {
+                    if (!save_frame_im.empty())
+                        saver.push(save_frame_im, save_filename, false);
+                    if (!save_video_im.empty())
+                        saver.push(save_video_im, "", true);
+                }
+            } else if (do_save_image) {
+                if (!save_frame_im.empty())
+                    saver.push(save_frame_im, save_filename, false);
+            } else if (do_save_video) {
+                if (!save_video_im.empty())
+                    saver.push(save_video_im, "", true);
             }
 
             if (preview) {
@@ -1144,12 +921,67 @@ int main(int argc, char** argv) {
         }
 
         saver.stop();
+
+        if (save_frames) {
+            string save_dir = save_frames_path.empty() ? log_dir : save_frames_path;
+            string zip_filename = save_dir + "/frames.zip";
+            string zip_command = "zip -q -j -m " + zip_filename + " " + save_dir + "/*.jpg 2>/dev/null";
+            cout << "Zipping frames to " << zip_filename << "..." << endl;
+            int ret = system(zip_command.c_str());
+            if (ret == 0) {
+                cout << "Successfully zipped frames and removed originals." << endl;
+                cout << "Zip file path: " << zip_filename << endl;
+            } else {
+                cerr << "Failed to zip frames or no frames found." << endl;
+            }
+        }
+
         destroyAllWindows();
         cam.stopCamera();
 
         string log_filename = json_path.empty() ? (log_dir + "/log.json") : json_path;
         json log;
+        log["args"] = {
+            {"print_logs", print_logs},
+            {"preview", preview},
+            {"distance", distance},
+            {"execution_time", execution_time},
+            {"save_rate", save_rate},
+            {"save_frames", save_frames},
+            {"save_frames_path", save_frames_path},
+            {"save_video", save_video},
+            {"video_fps", video_fps},
+            {"video_path", video_path},
+            {"config_file", config_file},
+            {"json_path", json_path},
+            {"raw_preview", raw_preview},
+            {"raw_stream", raw_stream},
+            {"raw_save_frame", raw_save_frame},
+            {"raw_save_video", raw_save_video},
+            {"aruco_mode", aruco_mode},
+            {"enable_streaming", enable_streaming},
+            {"stream_port", stream_port},
+            {"stream_type", stream_type},
+            {"stream_rate", stream_rate},
+            {"contrast", contrast},
+            {"brightness", brightness},
+            {"exposure_time", exposure_time},
+            {"frame_rate", frame_rate},
+            {"encoder_frame_rate", encoder_frame_rate},
+            {"cam_width", cam_width},
+            {"cam_height", cam_height},
+            {"blob_area_threshold", blob_area_threshold},
+            {"payload_size", payload_size},
+            {"target_id", target_id},
+            {"tracking_threshold", tracking_threshold},
+            {"sync_threshold", sync_threshold},
+            {"static_markers_mode", static_markers_mode},
+            {"enable_kalman_filter", enable_kalman_filter},
+            {"kf_process_noise", kf_process_noise},
+            {"kf_measurement_noise", kf_measurement_noise}
+        };
         log["config"] = {{"distance", distance}};
+        log["config"]["git_version"] = getGitCommitHash();
         log["config"]["aruco_mode"] = aruco_mode;
         if (video_start_time > 0) {
             log["config"]["video_start_time"] = video_start_time;
