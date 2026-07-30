@@ -476,14 +476,17 @@ int main(int argc, char** argv) {
 
     double image_save_fps = save_rate > 0 ? save_rate : 0;
     if (save_frames) {
+        string save_dir = save_frames_path.empty() ? log_dir : save_frames_path;
+        string zip_filename = save_dir + "/frames.zip";
+        remove(zip_filename.c_str());
         cout << "Saving frames at " << image_save_fps << " fps" << endl;
     }
 
+    string video_filename = video_path.empty() ? (log_dir + "/video.mp4") : video_path;
     if (save_video) {
+        remove(video_filename.c_str());
         cout << "Saving video at " << video_fps << " fps" << endl;
     }
-
-    string video_filename = video_path.empty() ? (log_dir + "/video.mp4") : video_path;
     double video_start_time = -1.0;
 
     double video_interval = save_video && video_fps > 0 ? (1.0 / video_fps) : 0;
