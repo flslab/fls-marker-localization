@@ -1,0 +1,8 @@
+{
+  "rows": 2,
+  "cols": 3,
+  "num_ids": 4,
+  "min_k": 2,
+  "cell_spacing": 0.1,
+  "grid": [[0, 1, 2], [3, 0]]
+}
