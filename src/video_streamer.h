@@ -17,7 +17,7 @@
 // Video streaming class
 class VideoStreamer {
    private:
-    int socket_fd;
+    int socket_fd = -1;
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_len;
     bool is_running;
@@ -58,9 +58,10 @@ class VideoStreamer {
         server_addr.sin_addr.s_addr = INADDR_ANY;
         server_addr.sin_port = htons(stream_port);
 
-        if (bind(socket_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        if (::bind(socket_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
             std::cerr << "Error binding UDP socket to port " << stream_port << std::endl;
             close(socket_fd);
+            socket_fd = -1;
             return false;
         }
 
@@ -84,15 +85,17 @@ class VideoStreamer {
         server_addr.sin_addr.s_addr = INADDR_ANY;
         server_addr.sin_port = htons(stream_port);
 
-        if (bind(socket_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        if (::bind(socket_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
             std::cerr << "Error binding HTTP socket to port " << stream_port << std::endl;
             close(socket_fd);
+            socket_fd = -1;
             return false;
         }
 
         if (listen(socket_fd, 5) < 0) {
             std::cerr << "Error listening on HTTP socket" << std::endl;
             close(socket_fd);
+            socket_fd = -1;
             return false;
         }
 
@@ -129,6 +132,7 @@ class VideoStreamer {
         }
         if (socket_fd >= 0) {
             close(socket_fd);
+            socket_fd = -1;
         }
     }
 

@@ -17,6 +17,9 @@
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core/version.hpp>
 
+#include "pose_estimator.h"
+#include "pose_math.h"
+
 // ─── ArUco API version detection ────────────────────────────────────────
 #if CV_VERSION_MAJOR > 4 || (CV_VERSION_MAJOR == 4 && CV_VERSION_MINOR >= 7)
 #define ARUCO_NEW_API 1
@@ -26,47 +29,11 @@
 #include <opencv2/aruco.hpp>
 #endif
 
+#include <algorithm>
 #include <map>
 #include <vector>
 #include <string>
 #include <iostream>
-#include <cmath>
-
-// ─── helper: euler (ZYX intrinsic) → 3×3 rotation matrix ───────────────
-static cv::Mat eulerToRotationMatrix(double roll_rad, double pitch_rad, double yaw_rad)
-{
-    double cr = std::cos(roll_rad), sr = std::sin(roll_rad);
-    double cp = std::cos(pitch_rad), sp = std::sin(pitch_rad);
-    double cy = std::cos(yaw_rad), sy = std::sin(yaw_rad);
-
-    cv::Mat R = (cv::Mat_<double>(3, 3) << cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr,
-                 sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr,
-                 -sp, cp * sr, cp * cr);
-    return R;
-}
-
-// ─── helper: build a 4×4 homogeneous transform ─────────────────────────
-static cv::Mat makeTransform(const cv::Mat &R, const cv::Mat &t)
-{
-    cv::Mat T = cv::Mat::eye(4, 4, CV_64F);
-    R.copyTo(T(cv::Rect(0, 0, 3, 3)));
-    t.reshape(1, 3).copyTo(T(cv::Rect(3, 0, 1, 3)));
-    return T;
-}
-
-// ─── helper: invert a rigid 4×4 transform ──────────────────────────────
-static cv::Mat invertTransform(const cv::Mat &T)
-{
-    cv::Mat R = T(cv::Rect(0, 0, 3, 3));
-    cv::Mat t = T(cv::Rect(3, 0, 1, 3));
-    cv::Mat R_inv = R.t();
-    cv::Mat t_inv = -R_inv * t;
-
-    cv::Mat T_inv = cv::Mat::eye(4, 4, CV_64F);
-    R_inv.copyTo(T_inv(cv::Rect(0, 0, 3, 3)));
-    t_inv.copyTo(T_inv(cv::Rect(3, 0, 1, 3)));
-    return T_inv;
-}
 
 // ════════════════════════════════════════════════════════════════════════
 class ArucoTracker
@@ -189,38 +156,30 @@ public:
 
             // Solve PnP with RANSAC: marker-local frame → camera frame.
             // AP3P is stable for the four ArUco corners in solvePnPRansac.
-            cv::Mat rvec, tvec, inliers;
-            bool ok = cv::solvePnPRansac(obj_pts_local, corners[i],
-                                         cameraMatrix, distCoeffs,
-                                         rvec, tvec, false,
-                                         100, 4.0f, 0.99, inliers,
-                                         cv::SOLVEPNP_AP3P);
-            if (!ok || inliers.total() < 4)
+            const pose_estimation::PnpEstimate pose =
+                pose_estimation::solveAp3pRansac(
+                    obj_pts_local, corners[i], cameraMatrix, distCoeffs);
+            if (!pose.valid || pose.inlier_count < 4)
                 continue;
 
-            // Compute reprojection error
-            std::vector<cv::Point2f> projected;
-            cv::projectPoints(obj_pts_local, rvec, tvec, cameraMatrix, distCoeffs, projected);
-            double err = 0.0;
-            for (int j = 0; j < 4; ++j)
-            {
-                err += cv::norm(corners[i][j] - projected[j]);
-            }
-            err /= 4.0;
+            const double err = pose.mean_reprojection_error;
 
             // Build T_camera_marker from solvePnP output
-            cv::Mat R_cm;
-            cv::Rodrigues(rvec, R_cm);
-            cv::Mat T_camera_marker = makeTransform(R_cm, tvec);
+            const cv::Mat T_camera_marker = pose_math::makeTransform(
+                pose.object_to_camera_rotation,
+                pose.object_to_camera_translation);
 
             // T_world_camera = T_world_marker * inv(T_camera_marker)
-            cv::Mat T_world_camera = T_world_marker * invertTransform(T_camera_marker);
+            const cv::Mat T_world_camera =
+                T_world_marker * pose_math::invertTransform(T_camera_marker);
 
             double w = (err > 1e-6) ? (1.0 / err) : 1e6;
             estimates.push_back({T_world_camera, w});
 
             // Draw axis on the frame for this marker
-            cv::drawFrameAxes(frame, cameraMatrix, distCoeffs, rvec, tvec,
+            cv::drawFrameAxes(frame, cameraMatrix, distCoeffs,
+                              pose.object_to_camera_rvec,
+                              pose.object_to_camera_translation,
                               static_cast<float>(marker_size_ * 0.5));
         }
 
@@ -259,7 +218,7 @@ public:
         result.valid = true;
         result.tvec_world = avg_tvec;
         result.rmat_world = avg_rmat;
-        result.roll_pitch_yaw = rollPitchYawDecomposition(avg_rmat);
+        result.roll_pitch_yaw = pose_math::rpyFromRotation(avg_rmat);
         result.markers_used = static_cast<int>(estimates.size());
         result.reprojection_error = avg_err;
 
@@ -276,17 +235,6 @@ private:
     cv::Ptr<cv::aruco::Dictionary> dictionary_;
     cv::Ptr<cv::aruco::DetectorParameters> det_params_;
 #endif
-
-    // Euler decomposition (same convention as the rest of the codebase)
-    static cv::Vec3d rollPitchYawDecomposition(const cv::Mat &rmat)
-    {
-        double yaw = std::atan2(rmat.at<double>(1, 0), rmat.at<double>(0, 0));
-        double pitch = std::atan2(-rmat.at<double>(2, 0),
-                                  std::sqrt(std::pow(rmat.at<double>(2, 1), 2) +
-                                            std::pow(rmat.at<double>(2, 2), 2)));
-        double roll = std::atan2(rmat.at<double>(2, 1), rmat.at<double>(2, 2));
-        return cv::Vec3d(roll, pitch, yaw);
-    }
 
     // Map string name → OpenCV dictionary ID (works as both enum and int)
     static int parseDictionary(const std::string &name)
