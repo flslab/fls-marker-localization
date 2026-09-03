@@ -69,13 +69,22 @@ add_executable(eye
 )
 target_compile_definitions(eye PRIVATE GIT_COMMIT_HASH=${GIT_COMMIT_HASH})
 
+add_executable(marker_state_evaluator
+    src/marker_state_evaluator.cpp
+    src/frame_pacer.cpp
+    src/frame_source.cpp
+)
+
 if(VIDEO_INPUT_MODE)
     target_compile_definitions(eye PRIVATE VIDEO_INPUT_MODE)
+    target_compile_definitions(marker_state_evaluator PRIVATE VIDEO_INPUT_MODE)
     # Link ED_Lib, OpenCV, and Eigen to your project Eigen3::Eigen, EDLib
     target_link_libraries(eye ${OpenCV_LIBS} nlohmann_json::nlohmann_json Eigen3::Eigen)
+    target_link_libraries(marker_state_evaluator ${OpenCV_LIBS})
 else()
     # Link ED_Lib, OpenCV, and Eigen to your project Eigen3::Eigen, EDLib
     target_link_libraries(eye ${OpenCV_LIBS} LibCamera ${LIBCAMERA_LIBRARIES} nlohmann_json::nlohmann_json Eigen3::Eigen)
+    target_link_libraries(marker_state_evaluator ${OpenCV_LIBS} LibCamera ${LIBCAMERA_LIBRARIES})
 endif()
 
 include(CTest)
@@ -109,6 +118,8 @@ if(BUILD_TESTING)
     )
     target_link_libraries(marker_tracker_tests PRIVATE ${OpenCV_LIBS})
     add_test(NAME marker_tracker_tests COMMAND marker_tracker_tests)
+    add_test(NAME marker_state_evaluator_self_test
+        COMMAND marker_state_evaluator --self-test)
 
     add_executable(pose_publisher_tests
         tests/pose_publisher_test.cpp

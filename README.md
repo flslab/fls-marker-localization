@@ -334,6 +334,25 @@ Or use the convenience script:
 - The program exits when the video ends (or when `--time` expires, whichever comes first).
 - All other features work identically: ArUco/blob detection, Kalman filtering, JSON logging, frame/video saving, and streaming.
 
+## Marker On/Off Evaluation
+
+`marker_state_evaluator` is a standalone live preview for tuning marker state
+visibility without running the localization application. It finds blobs at or
+above the OFF threshold and labels each one ON when its center intensity is at
+or above the ON threshold; both normalized thresholds and their 8-bit values
+are shown in the top-left corner.
+
+```sh
+./build/marker_state_evaluator --off-threshold 0.1 --on-threshold 0.8
+```
+
+Use `[`/`]` to lower/raise the ON threshold, `-`/`=` to lower/raise the OFF
+threshold, `S` to save the annotated frame, and `Q` or Escape to quit. Saved
+PNGs go to the current directory unless `--save-dir PATH` is supplied. Camera
+options include `--width`, `--height`, `--fps`, `--exposure`, `--contrast`, and
+`--brightness`; use `--help` for the complete list. A video-only build can run
+the same preview with `--video-input PATH`.
+
 ## Visualize Logs and Swarm Flights
 
 The repository includes **FLS Pose Scope**, a local-first web viewer for the
