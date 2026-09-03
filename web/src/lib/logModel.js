@@ -59,6 +59,8 @@ export function classifyPose(record) {
       orientation: orientationFrom(record, 'camera-world'),
       markerId: null,
       source: record.source === 'blob_grid' ? 'blob-grid' : ('tvec' in record ? 'historical-aruco' : 'aruco'),
+      gridType: record.grid_type || null,
+      tile: isObject(record.tile) ? record.tile : null,
       raw: record,
     };
   }
@@ -122,6 +124,15 @@ export function classifyPose(record) {
   };
 }
 
+export function gridMarkerKey(marker, grid = null) {
+  const gridType = marker?.grid_type || grid?.grid_type || 'main';
+  const tileI = marker?.tile_i ?? grid?.tile?.i ?? '-';
+  const tileJ = marker?.tile_j ?? grid?.tile?.j ?? '-';
+  const row = marker?.local_i ?? marker?.map_row ?? '?';
+  const col = marker?.local_j ?? marker?.map_col ?? '?';
+  return `grid:${gridType}:${tileI}:${tileJ}:${row}:${col}:${marker?.id ?? '?'}`;
+}
+
 function inferMode(raw, frames) {
   if (raw?.config?.aruco_mode === true || raw?.args?.aruco_mode === true) return 'ArUco';
   if (raw?.config?.blob_grid_localization_enabled === true || frames.some((frame) => isObject(frame?.blob_grid_localization))) return 'Blob grid';
@@ -141,20 +152,52 @@ function frameStatus(frame, primary) {
   return 'no_pose';
 }
 
-function collectWorldMarkers(rawFrames) {
+function collectWorldMarkers(rawFrames, rawConfig) {
   const markers = new Map();
+  const shortRange = rawConfig?.marker_grid?.short_range;
+  for (const tile of Array.isArray(shortRange?.tiles) ? shortRange.tiles : []) {
+    for (const marker of Array.isArray(tile?.markers) ? tile.markers : []) {
+      const position = asVector([marker?.global_x, marker?.global_y, marker?.global_z]);
+      if (!position) continue;
+      const normalized = {
+        ...marker,
+        grid_type: 'short_range',
+        tile_i: tile.i,
+        tile_j: tile.j,
+        map_row: marker.local_i,
+        map_col: marker.local_j,
+      };
+      const key = gridMarkerKey(normalized);
+      markers.set(key, {
+        key,
+        kind: 'short-range',
+        gridType: 'short_range',
+        id: marker.id,
+        row: marker.local_i,
+        col: marker.local_j,
+        tileI: tile.i,
+        tileJ: tile.j,
+        position,
+        orientation: null,
+      });
+    }
+  }
   for (const frame of rawFrames) {
     const grid = isObject(frame?.blob_grid_localization) ? frame.blob_grid_localization : null;
     for (const marker of Array.isArray(grid?.matched_markers) ? grid.matched_markers : []) {
       const position = asVector(marker?.global_position);
       if (!position) continue;
-      const key = `grid:${marker.map_row ?? '?'}:${marker.map_col ?? '?'}:${marker.id ?? '?'}`;
+      const gridType = marker.grid_type || grid?.grid_type || 'main';
+      const key = gridMarkerKey(marker, grid);
       markers.set(key, {
         key,
-        kind: 'grid',
+        kind: gridType === 'short_range' ? 'short-range' : 'grid',
+        gridType,
         id: marker.id,
-        row: marker.map_row,
-        col: marker.map_col,
+        row: marker.local_i ?? marker.map_row,
+        col: marker.local_j ?? marker.map_col,
+        tileI: marker.tile_i ?? grid?.tile?.i ?? null,
+        tileJ: marker.tile_j ?? grid?.tile?.j ?? null,
         position,
         orientation: null,
       });
@@ -251,6 +294,8 @@ export function createLogModel(raw, fileName = 'log.json') {
       primary,
       blobs: Array.isArray(safeFrame.blobs) ? safeFrame.blobs : [],
       grid,
+      gridType: grid?.grid_type || primary?.gridType || null,
+      tile: isObject(grid?.tile) ? grid.tile : (primary?.tile || null),
       status,
       poseValid: grid ? grid.pose_valid === true : Boolean(primary?.position),
       reprojectionError,
@@ -309,7 +354,7 @@ export function createLogModel(raw, fileName = 'log.json') {
     validPoseCount,
     poseRate: frames.length ? validPoseCount / frames.length : 0,
     markerIds: collectMarkerIds(rawFrames),
-    worldMarkers: collectWorldMarkers(rawFrames),
+    worldMarkers: collectWorldMarkers(rawFrames, raw.config),
     worldCameraPath,
     poseMarkerIds,
     hasFiltered,

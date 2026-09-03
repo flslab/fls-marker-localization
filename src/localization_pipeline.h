@@ -3,7 +3,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <opencv2/core.hpp>
+#include <optional>
+#include <set>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -27,6 +30,22 @@ struct MarkerDetection {
 // limits permit recently seen coordinates for stationary-camera deployments.
 bool isMarkerObservationEligible(bool visible, double last_seen_age,
                                  double max_marker_age);
+
+struct WorkingRange {
+  double min_distance = 0.0;
+  double max_distance = 0.0;
+};
+
+struct GridSelectionDecision {
+  std::string grid_type;
+  std::string reason;
+};
+
+std::set<std::uint64_t> decoderIgnoredTracksForGridSelection(
+    bool short_range_selected, bool selected_grid_locked,
+    const std::set<std::uint64_t> &seen_tracks,
+    const std::set<std::uint64_t> &known_main_tracks,
+    const std::set<std::uint64_t> &known_short_tracks);
 
 struct RelativeMarker {
   std::size_t detection_index = 0;
@@ -54,6 +73,11 @@ struct GlobalMarker {
   float global_x = 0.0F;
   float global_y = 0.0F;
   float global_z = 0.0F;
+  std::string grid_type = "main";
+  int tile_i = -1;
+  int tile_j = -1;
+  int local_i = -1;
+  int local_j = -1;
 };
 
 enum class GridLookupStatus {
@@ -103,6 +127,11 @@ public:
   // World coordinate of grid cell (0, 0), not the geometric grid centre.
   const cv::Point3f &gridOrigin() const { return grid_origin_; }
   const std::vector<std::vector<int>> &cells() const { return grid_; }
+  const std::set<int> &markerIds() const { return marker_ids_; }
+  const std::optional<WorkingRange> &workingRange() const {
+    return working_range_;
+  }
+  bool containsWindowSignature(const std::vector<int> &signature) const;
 
 private:
   int rows_ = 0;
@@ -116,9 +145,53 @@ private:
   float cell_spacing_ = 0.0F;
   cv::Point3f grid_origin_{0.0F, 0.0F, 0.0F};
   std::vector<std::vector<int>> grid_;
+  std::set<int> marker_ids_;
+  std::optional<WorkingRange> working_range_;
   std::map<std::vector<int>, std::vector<std::pair<int, int>>> window_index_;
 
   void buildWindowIndex();
+};
+
+struct ShortRangeMarker {
+  int local_i = -1;
+  int local_j = -1;
+  int id = -1;
+  cv::Point3f global_position{0.0F, 0.0F, 0.0F};
+};
+
+struct ShortRangeTile {
+  int i = -1;
+  int j = -1;
+  std::vector<int> signature;
+  std::vector<ShortRangeMarker> markers;
+};
+
+class ShortRangeMarkerGrid {
+public:
+  static ShortRangeMarkerGrid fromJson(const std::string &filename,
+                                       const MarkerGrid &main_grid);
+
+  GridLookupResult
+  lookup(const std::vector<RelativeMarker> &observations) const;
+
+  bool enabled() const { return !tiles_.empty(); }
+  int windowSize() const { return window_size_; }
+  float cellSpacing() const { return cell_spacing_; }
+  float markerSize() const { return marker_size_; }
+  const std::set<int> &markerIds() const { return marker_ids_; }
+  const std::vector<ShortRangeTile> &tiles() const { return tiles_; }
+  const std::optional<WorkingRange> &workingRange() const {
+    return working_range_;
+  }
+
+private:
+  int window_size_ = 0;
+  float cell_spacing_ = 0.0F;
+  float marker_size_ = 0.0F;
+  std::set<int> marker_ids_;
+  std::optional<WorkingRange> working_range_;
+  std::vector<ShortRangeTile> tiles_;
+  std::map<std::vector<int>, std::size_t> signature_index_;
 };
 
 struct CameraPlaneGeometry {
@@ -172,6 +245,9 @@ public:
 
   void forgetTracks(const std::vector<std::uint64_t> &track_ids);
   bool mapLocked() const { return !track_cells_.empty(); }
+  bool hasTrack(std::uint64_t track_id) const {
+    return track_cells_.count(track_id) != 0;
+  }
 
 private:
   struct Cell {
@@ -183,6 +259,51 @@ private:
   CameraPlaneGeometry geometry_;
   CameraMapper camera_mapper_;
   std::map<std::uint64_t, Cell> track_cells_;
+};
+
+// Bridges the two physical grids during a handoff. A unique lookup supplies
+// absolute marker identities; visible cached tracks then align newly appearing
+// markers from the other grid without decoding their (possibly repeated) IDs.
+class CrossGridIdAssigner {
+public:
+  CrossGridIdAssigner(const MarkerGrid &main_grid,
+                      const ShortRangeMarkerGrid &short_range_grid,
+                      CameraPlaneGeometry geometry);
+
+  bool rememberUnique(const GridLookupResult &lookup,
+                      const std::vector<MarkerDetection> &detections);
+
+  GridIdAssignmentResult assign(
+      bool target_short_range,
+      const std::vector<MarkerDetection> &current_blobs,
+      const cv::Mat &camera_matrix, const cv::Mat &dist_coeffs,
+      const cv::Matx33d &grid_to_camera_rotation,
+      double camera_to_plane_distance);
+
+  void forgetTracks(const std::vector<std::uint64_t> &track_ids);
+  bool hasGridTracks(bool short_range) const;
+  bool hasTrack(std::uint64_t track_id, bool short_range) const;
+
+private:
+  struct Identity {
+    bool short_range = false;
+    int id = -1;
+    cv::Point3f global_position{0.0F, 0.0F, 0.0F};
+    int map_row = -1;
+    int map_col = -1;
+    int tile_i = -1;
+    int tile_j = -1;
+    int local_i = -1;
+    int local_j = -1;
+  };
+
+  const MarkerGrid &main_grid_;
+  const ShortRangeMarkerGrid &short_range_grid_;
+  CameraPlaneGeometry geometry_;
+  CameraMapper main_camera_mapper_;
+  std::unique_ptr<CameraMapper> short_range_camera_mapper_;
+  std::vector<Identity> catalog_;
+  std::map<std::uint64_t, std::size_t> track_identities_;
 };
 
 enum class LocalizationStatus {
@@ -204,6 +325,9 @@ struct LocalizationResult {
   std::vector<RelativeMarker> relative_markers;
   GridLookupResult lookup;
   std::vector<GlobalMarker> pose_markers;
+  std::string grid_type = "main";
+  int tile_i = -1;
+  int tile_j = -1;
   std::string pnp_solver;
 
   bool pose_valid = false;
@@ -231,12 +355,30 @@ public:
       const cv::Matx33d &grid_to_camera_rotation, double distance,
       cv::Size frame_size = {}) const;
 
+  LocalizationResult localizeShortRange(
+      const std::vector<MarkerDetection> &detections,
+      const cv::Mat &camera_matrix, const cv::Mat &dist_coeffs,
+      const cv::Matx33d &grid_to_camera_rotation, double distance,
+      cv::Size frame_size = {}) const;
+
   const MarkerGrid &grid() const { return grid_; }
+  const ShortRangeMarkerGrid &shortRangeGrid() const {
+    return short_range_grid_;
+  }
   const CameraPlaneGeometry &geometry() const { return geometry_; }
 
 private:
   MarkerGrid grid_;
+  ShortRangeMarkerGrid short_range_grid_;
   CameraPlaneGeometry geometry_;
   CameraMapper camera_mapper_;
+  std::unique_ptr<CameraMapper> short_range_camera_mapper_;
   bool center_window_ap3p_ = false;
+
+  LocalizationResult solveMatchedPose(
+      LocalizationResult result, const cv::Mat &camera_matrix,
+      const cv::Mat &dist_coeffs,
+      const cv::Matx33d &grid_to_camera_rotation, double distance,
+      cv::Size frame_size, bool select_center_window,
+      bool use_ap3p) const;
 };

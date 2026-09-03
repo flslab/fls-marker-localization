@@ -71,7 +71,11 @@ export default function ImagePlane({ model, frameIndex }) {
         {layers.matched && data.matched.map((marker, index) => (
           <g key={`m-${index}`} className="point-matched">
             <circle cx={marker.image_x} cy={marker.image_y} r="10" />
-            <text x={marker.image_x + 12} y={marker.image_y + 13}>[{marker.map_row},{marker.map_col}]</text>
+            <text x={marker.image_x + 12} y={marker.image_y + 13}>
+              {marker.grid_type === 'short_range'
+                ? `tile ${marker.tile_i},${marker.tile_j} · local ${marker.local_i},${marker.local_j}`
+                : `[${marker.map_row},${marker.map_col}]`}
+            </text>
           </g>
         ))}
         {hasLoggedResolution && <>

@@ -192,6 +192,22 @@ MarkerDetection mapCellDetection(
       distance, grid_to_camera_rotation, intrinsics);
 }
 
+MarkerDetection worldPointDetection(
+    const cv::Point3f &point, int id, std::uint64_t track_id,
+    const cv::Point2d &camera_foot, double distance,
+    const cv::Matx33d &grid_to_camera_rotation, const cv::Mat &intrinsics,
+    bool decoded) {
+  const cv::Point2f image = projectPlanePoint(
+      point.x - camera_foot.x, point.y - camera_foot.y, distance,
+      grid_to_camera_rotation, intrinsics);
+  MarkerDetection detection;
+  detection.x = image.x;
+  detection.y = image.y;
+  detection.id = decoded ? id : -1;
+  detection.track_id = track_id;
+  return detection;
+}
+
 const MarkerDetection *findTrack(const std::vector<MarkerDetection> &detections,
                                  std::uint64_t track_id) {
   const auto found = std::find_if(
@@ -296,6 +312,349 @@ void testMapParsingAndValidation() {
   CHECK_THROWS_CONTAINING(
       MarkerGrid::fromJson(fixturePath("does_not_exist.json"), 2),
       "failed to open");
+}
+
+void testShortRangeMapParsingAndValidation() {
+  const std::string path = fixturePath("short_range_grid.json");
+  const MarkerGrid main = MarkerGrid::fromJson(path, 2);
+  const ShortRangeMarkerGrid short_range =
+      ShortRangeMarkerGrid::fromJson(path, main);
+  CHECK(main.workingRange().has_value());
+  CHECK_NEAR(main.workingRange()->min_distance, 0.3, 1e-12);
+  CHECK_NEAR(main.workingRange()->max_distance, 2.0, 1e-12);
+  CHECK(short_range.enabled());
+  CHECK(short_range.windowSize() == 2);
+  CHECK_NEAR(short_range.cellSpacing(), 0.02, 1e-7);
+  CHECK_NEAR(short_range.markerSize(), 0.006, 1e-7);
+  CHECK(short_range.workingRange().has_value());
+  CHECK_NEAR(short_range.workingRange()->min_distance, 0.05, 1e-12);
+  CHECK_NEAR(short_range.workingRange()->max_distance, 0.5, 1e-12);
+  CHECK(short_range.tiles().size() == 2);
+  CHECK(short_range.markerIds() == std::set<int>({16, 17}));
+  CHECK(short_range.tiles()[0].i == 0);
+  CHECK(short_range.tiles()[0].j == 0);
+  CHECK(short_range.tiles()[0].signature ==
+        std::vector<int>({16, 16, 16, 16}));
+  CHECK_NEAR(short_range.tiles()[0].markers[3].global_position.x, 0.09,
+             1e-7);
+  CHECK_NEAR(short_range.tiles()[0].markers[3].global_position.y, 0.09,
+             1e-7);
+
+  CHECK(main.containsWindowSignature({0, 1, 4, 5}));
+  CHECK(!main.containsWindowSignature({16, 16, 16, 16}));
+  CHECK_THROWS_CONTAINING(MarkerGrid::fromJson(path, 3), "--window-size");
+
+  // Old maps without declared ranges or a root window size remain valid, and
+  // signature lookup still uses the signature's side length.
+  const MarkerGrid legacy_main = MarkerGrid::fromJson(
+      fixturePath("short_range_overlap_grid.json"), 3);
+  CHECK(!legacy_main.workingRange().has_value());
+  CHECK(legacy_main.containsWindowSignature({0, 1, 3, 4}));
+  const MarkerGrid old_main =
+      MarkerGrid::fromJson(fixturePath("unique_grid.json"), 2);
+  CHECK(!ShortRangeMarkerGrid::fromJson(fixturePath("unique_grid.json"),
+                                        old_main)
+             .enabled());
+  CHECK_THROWS_CONTAINING(
+      ShortRangeMarkerGrid::fromJson(
+          fixturePath("short_range_overlap_grid.json"),
+          MarkerGrid::fromJson(fixturePath("short_range_overlap_grid.json"),
+                               2)),
+      "disjoint");
+  CHECK_THROWS_CONTAINING(
+      MarkerGrid::fromJson(fixturePath("invalid_working_range_grid.json"), 2),
+      "0 <= min_distance <= max_distance");
+}
+
+void testDecoderGate() {
+  const std::set<std::uint64_t> seen = {1, 2, 3, 4};
+  const std::set<std::uint64_t> known_main = {1, 2};
+  const std::set<std::uint64_t> known_short = {4, 8};
+  CHECK(decoderIgnoredTracksForGridSelection(
+            false, false, seen, known_main, known_short) == known_short);
+  CHECK(decoderIgnoredTracksForGridSelection(
+            false, true, seen, known_main, known_short) ==
+        std::set<std::uint64_t>({3, 4, 8}));
+  CHECK(decoderIgnoredTracksForGridSelection(
+            true, false, seen, known_main, known_short) == known_main);
+  CHECK(decoderIgnoredTracksForGridSelection(
+            true, true, seen, known_main, known_short) ==
+        std::set<std::uint64_t>({1, 2, 3}));
+}
+
+void testShortRangeLookupAndPose() {
+  const std::string path = fixturePath("short_range_grid.json");
+  const MarkerGrid main = MarkerGrid::fromJson(path, 2);
+  const ShortRangeMarkerGrid short_range =
+      ShortRangeMarkerGrid::fromJson(path, main);
+  std::vector<RelativeMarker> observations = {
+      observation(3, 16, 6, 10), observation(0, 16, 5, 9),
+      observation(2, 16, 6, 9), observation(1, 16, 5, 10)};
+  const GridLookupResult lookup = short_range.lookup(observations);
+  CHECK(lookup.status == GridLookupStatus::UNIQUE);
+  CHECK(lookup.map_window_row == 0);
+  CHECK(lookup.map_window_col == 0);
+  CHECK(lookup.window_signature == std::vector<int>({16, 16, 16, 16}));
+  CHECK(lookup.markers.size() == 4);
+  CHECK(std::all_of(lookup.markers.begin(), lookup.markers.end(),
+                    [](const GlobalMarker &marker) {
+                      return marker.grid_type == "short_range" &&
+                             marker.tile_i == 0 && marker.tile_j == 0 &&
+                             marker.local_i >= 0 && marker.local_j >= 0;
+                    }));
+
+  const cv::Mat intrinsics = cameraMatrix();
+  const cv::Mat distortion = cv::Mat::zeros(5, 1, CV_64F);
+  const cv::Matx33d world_to_camera = cv::Matx33d::eye();
+  constexpr double distance = 1.0;
+  const cv::Vec3d expected_camera_position(0.1, 0.1, -distance);
+  const cv::Vec3d translation = -(world_to_camera * expected_camera_position);
+  cv::Mat rvec;
+  cv::Rodrigues(cv::Mat(world_to_camera), rvec);
+  const cv::Mat tvec =
+      (cv::Mat_<double>(3, 1) << translation[0], translation[1], translation[2]);
+
+  std::vector<cv::Point3f> object_points;
+  for (const ShortRangeMarker &marker : short_range.tiles()[0].markers) {
+    object_points.push_back(marker.global_position);
+  }
+  std::vector<cv::Point2f> image_points;
+  cv::projectPoints(object_points, rvec, tvec, intrinsics, distortion,
+                    image_points);
+  std::vector<MarkerDetection> detections;
+  for (std::size_t index : {std::size_t{2}, std::size_t{0}, std::size_t{3},
+                            std::size_t{1}}) {
+    detections.push_back({image_points[index].x, image_points[index].y,
+                          short_range.tiles()[0].markers[index].id,
+                          index + 1});
+  }
+
+  CameraPlaneGeometry geometry;
+  geometry.rounding_tolerance = 0.15;
+  const LocalizationPipeline pipeline(path, 2, geometry);
+  const LocalizationResult result = pipeline.localizeShortRange(
+      detections, intrinsics, distortion, world_to_camera, distance);
+  CHECK(result.status == LocalizationStatus::SUCCESS);
+  CHECK(result.pose_valid);
+  CHECK(result.grid_type == "short_range");
+  CHECK(result.tile_i == 0);
+  CHECK(result.tile_j == 0);
+  CHECK(result.lookup.status == GridLookupStatus::UNIQUE);
+  CHECK(result.pose_markers.size() == 4);
+  CHECK(result.pnp_solver == "ippe_iterative");
+  const cv::Vec3d recovered_camera_position(
+      result.camera_position_world.at<double>(0, 0),
+      result.camera_position_world.at<double>(1, 0),
+      result.camera_position_world.at<double>(2, 0));
+  CHECK_NEAR(cv::norm(recovered_camera_position - expected_camera_position),
+             0.0, 2e-3);
+
+  const LocalizationPipeline ap3p_pipeline(path, 2, geometry, true);
+  const LocalizationResult ap3p_result = ap3p_pipeline.localizeShortRange(
+      detections, intrinsics, distortion, world_to_camera, distance);
+  CHECK(ap3p_result.status == LocalizationStatus::SUCCESS);
+  CHECK(ap3p_result.pnp_solver == "ap3p");
+  CHECK(ap3p_result.pose_markers.size() == 4);
+
+  std::vector<MarkerDetection> mixed = detections;
+  for (int row = 0; row < 2; ++row) {
+    for (int col = 0; col < 2; ++col) {
+      const cv::Point3f point = main.cellToGlobal(row, col);
+      std::vector<cv::Point2f> projected;
+      cv::projectPoints(std::vector<cv::Point3f>{point}, rvec, tvec,
+                        intrinsics, distortion, projected);
+      mixed.push_back({projected[0].x, projected[0].y,
+                       main.cells()[row][col]});
+    }
+  }
+  std::vector<MarkerDetection> short_only;
+  for (const MarkerDetection &detection : mixed) {
+    if (short_range.markerIds().count(detection.id) != 0) {
+      short_only.push_back(detection);
+    }
+  }
+  CHECK(pipeline
+            .localizeShortRange(short_only, intrinsics, distortion,
+                                world_to_camera, distance)
+            .lookup.status == GridLookupStatus::UNIQUE);
+}
+
+void testCrossGridIdAssignmentIsBidirectional() {
+  const std::string path = fixturePath("short_range_grid.json");
+  const MarkerGrid main = MarkerGrid::fromJson(path, 2);
+  const ShortRangeMarkerGrid short_range =
+      ShortRangeMarkerGrid::fromJson(path, main);
+  const cv::Mat intrinsics = cameraMatrix(900.0, 880.0, 640.0, 360.0);
+  const cv::Mat distortion = cv::Mat::zeros(5, 1, CV_64F);
+  const cv::Matx33d rotation = rpyRotation({3.0, -4.0, 12.0});
+  constexpr double distance = 0.42;
+  const cv::Point2d camera_foot(-0.08, -0.09);
+  CameraPlaneGeometry geometry;
+  geometry.rounding_tolerance = 0.15;
+  CrossGridIdAssigner assigner(main, short_range, geometry);
+
+  std::vector<MarkerDetection> decoded_main;
+  std::uint64_t track_id = 1;
+  for (int row = 2; row <= 3; ++row) {
+    for (int col = 2; col <= 3; ++col) {
+      decoded_main.push_back(worldPointDetection(
+          main.cellToGlobal(row, col), main.cells()[row][col], track_id++,
+          camera_foot, distance, rotation, intrinsics, true));
+    }
+  }
+  const CameraMapper main_mapper(main.cellSpacing(), geometry);
+  const GridMappingResult main_mapping = main_mapper.detectionsToGrid(
+      decoded_main, intrinsics, distortion, rotation, distance);
+  CHECK(main_mapping.valid);
+  const GridLookupResult main_lookup = main.lookup(main_mapping.markers);
+  CHECK(main_lookup.status == GridLookupStatus::UNIQUE);
+  CHECK(assigner.rememberUnique(main_lookup, decoded_main));
+
+  const ShortRangeTile &tile = short_range.tiles()[1];
+  std::vector<MarkerDetection> short_blobs;
+  for (const ShortRangeMarker &marker : tile.markers) {
+    short_blobs.push_back(worldPointDetection(
+        marker.global_position, marker.id, track_id++, camera_foot, distance,
+        rotation, intrinsics, false));
+  }
+  std::vector<MarkerDetection> overlap = decoded_main;
+  overlap.insert(overlap.end(), short_blobs.begin(), short_blobs.end());
+  const GridIdAssignmentResult inferred_short = assigner.assign(
+      true, overlap, intrinsics, distortion, rotation, distance);
+  CHECK(inferred_short.alignment_valid);
+  CHECK(inferred_short.inferred_marker_count == 4);
+  CHECK(inferred_short.detections.size() == 4);
+  for (std::size_t index = 0; index < tile.markers.size(); ++index) {
+    const MarkerDetection *detection =
+        findTrack(inferred_short.detections, 5 + index);
+    CHECK(detection != nullptr);
+    CHECK(detection->id == tile.markers[index].id);
+    CHECK(detection->inferred);
+  }
+  CHECK(findTrack(inferred_short.detections, 8)->id == 17);
+
+  const CameraMapper short_mapper(short_range.cellSpacing(), geometry);
+  const GridMappingResult short_mapping = short_mapper.detectionsToGrid(
+      inferred_short.detections, intrinsics, distortion, rotation, distance);
+  CHECK(short_mapping.valid);
+  const GridLookupResult short_lookup =
+      short_range.lookup(short_mapping.markers);
+  CHECK(short_lookup.status == GridLookupStatus::UNIQUE);
+  CHECK(assigner.rememberUnique(short_lookup, inferred_short.detections));
+  assigner.forgetTracks({1, 2, 3, 4});
+
+  const cv::Point2d moved_foot(-0.07, -0.075);
+  std::vector<MarkerDetection> moved_overlap;
+  for (std::size_t index = 0; index < tile.markers.size(); ++index) {
+    moved_overlap.push_back(worldPointDetection(
+        tile.markers[index].global_position, tile.markers[index].id,
+        5 + index, moved_foot, distance, rotation, intrinsics, false));
+  }
+  std::uint64_t main_track = 20;
+  for (int row = 2; row <= 3; ++row) {
+    for (int col = 2; col <= 3; ++col) {
+      moved_overlap.push_back(worldPointDetection(
+          main.cellToGlobal(row, col), main.cells()[row][col], main_track++,
+          moved_foot, distance, rotation, intrinsics, false));
+    }
+  }
+  const GridIdAssignmentResult inferred_main = assigner.assign(
+      false, moved_overlap, intrinsics, distortion, rotation, distance);
+  CHECK(inferred_main.alignment_valid);
+  CHECK(inferred_main.inferred_marker_count == 4);
+  CHECK(inferred_main.detections.size() == 4);
+  for (std::uint64_t id = 20; id < 24; ++id) {
+    const MarkerDetection *detection = findTrack(inferred_main.detections, id);
+    CHECK(detection != nullptr);
+    const int cell = static_cast<int>(id - 20);
+    CHECK(detection->map_row == 2 + cell / 2);
+    CHECK(detection->map_col == 2 + cell % 2);
+    CHECK(detection->id ==
+          main.cells()[detection->map_row][detection->map_col]);
+  }
+}
+
+void testCrossGridIdAssignmentRejectsIncompleteAndConflictingEvidence() {
+  const std::string path = fixturePath("short_range_grid.json");
+  const MarkerGrid main = MarkerGrid::fromJson(path, 2);
+  const ShortRangeMarkerGrid short_range =
+      ShortRangeMarkerGrid::fromJson(path, main);
+  const cv::Mat intrinsics = cameraMatrix(900.0, 880.0, 640.0, 360.0);
+  const cv::Mat distortion = cv::Mat::zeros(5, 1, CV_64F);
+  const cv::Matx33d rotation = cv::Matx33d::eye();
+  constexpr double distance = 0.4;
+  const cv::Point2d camera_foot(0.1, 0.1);
+  CameraPlaneGeometry geometry;
+  geometry.rounding_tolerance = 0.15;
+
+  std::vector<MarkerDetection> decoded_main;
+  std::uint64_t track_id = 1;
+  for (int row = 0; row <= 1; ++row) {
+    for (int col = 0; col <= 1; ++col) {
+      decoded_main.push_back(worldPointDetection(
+          main.cellToGlobal(row, col), main.cells()[row][col], track_id++,
+          camera_foot, distance, rotation, intrinsics, true));
+    }
+  }
+  const CameraMapper main_mapper(main.cellSpacing(), geometry);
+  const GridMappingResult mapping = main_mapper.detectionsToGrid(
+      decoded_main, intrinsics, distortion, rotation, distance);
+  CHECK(mapping.valid);
+  const GridLookupResult lookup = main.lookup(mapping.markers);
+  CHECK(lookup.status == GridLookupStatus::UNIQUE);
+
+  CrossGridIdAssigner incomplete_assigner(main, short_range, geometry);
+  CHECK(incomplete_assigner.rememberUnique(lookup, decoded_main));
+  const ShortRangeTile &tile = short_range.tiles()[0];
+  std::vector<MarkerDetection> conflicted = decoded_main;
+  conflicted.push_back(worldPointDetection(
+      tile.markers[0].global_position, tile.markers[0].id, 10, camera_foot,
+      distance, rotation, intrinsics, false));
+  conflicted.push_back(worldPointDetection(
+      tile.markers[0].global_position, tile.markers[0].id, 11, camera_foot,
+      distance, rotation, intrinsics, false));
+  conflicted.push_back(worldPointDetection(
+      tile.markers[1].global_position, tile.markers[1].id, 12, camera_foot,
+      distance, rotation, intrinsics, false));
+  conflicted.push_back(worldPointDetection(
+      tile.markers[2].global_position, tile.markers[2].id, 13, camera_foot,
+      distance, rotation, intrinsics, false));
+  conflicted.push_back(worldPointDetection(
+      tile.markers[3].global_position, tile.markers[3].id + 1, 14,
+      camera_foot, distance, rotation, intrinsics, true));
+  const GridIdAssignmentResult incomplete = incomplete_assigner.assign(
+      true, conflicted, intrinsics, distortion, rotation, distance);
+  CHECK(incomplete.alignment_valid);
+  CHECK(incomplete.detections.empty());
+  CHECK(incomplete.inferred_marker_count == 0);
+  CHECK(!incomplete_assigner.hasGridTracks(true));
+
+  CrossGridIdAssigner split_assigner(main, short_range, geometry);
+  CHECK(split_assigner.rememberUnique(lookup, decoded_main));
+  std::vector<MarkerDetection> split_anchors = {
+      decoded_main[0],
+      worldPointDetection(main.cellToGlobal(0, 1), main.cells()[0][1], 2,
+                          {camera_foot.x + 0.02, camera_foot.y}, distance,
+                          rotation, intrinsics, true)};
+  for (std::size_t index = 0; index < tile.markers.size(); ++index) {
+    split_anchors.push_back(worldPointDetection(
+        tile.markers[index].global_position, tile.markers[index].id,
+        30 + index, camera_foot, distance, rotation, intrinsics, false));
+  }
+  const GridIdAssignmentResult split = split_assigner.assign(
+      true, split_anchors, intrinsics, distortion, rotation, distance);
+  CHECK(!split.alignment_valid);
+  CHECK(split.detections.empty());
+  CHECK(split.message.find("disagree") != std::string::npos);
+
+  GridLookupResult ambiguous = lookup;
+  ambiguous.status = GridLookupStatus::AMBIGUOUS;
+  CrossGridIdAssigner unseeded(main, short_range, geometry);
+  CHECK(!unseeded.rememberUnique(ambiguous, decoded_main));
+  CHECK(unseeded
+            .assign(true, split_anchors, intrinsics, distortion, rotation,
+                    distance)
+            .detections.empty());
 }
 
 void testCenteredRectangularGridCoordinates() {
@@ -1353,6 +1712,14 @@ int main() {
   const std::vector<std::pair<std::string, std::function<void()>>> tests = {
       {"quaternion frame math", testQuaternionFrameMath},
       {"map parsing and validation", testMapParsingAndValidation},
+      {"short-range map parsing and validation",
+       testShortRangeMapParsingAndValidation},
+      {"decoder gate", testDecoderGate},
+      {"short-range lookup and pose", testShortRangeLookupAndPose},
+      {"bidirectional cross-grid ID assignment",
+       testCrossGridIdAssignmentIsBidirectional},
+      {"cross-grid ID conflict rejection",
+       testCrossGridIdAssignmentRejectsIncompleteAndConflictingEvidence},
       {"centered rectangular grid coordinates",
        testCenteredRectangularGridCoordinates},
       {"marker observation freshness", testMarkerObservationFreshness},

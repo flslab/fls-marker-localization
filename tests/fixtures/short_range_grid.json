@@ -1,0 +1,47 @@
+{
+  "rows": 4,
+  "cols": 4,
+  "num_ids": 16,
+  "min_k": 3,
+  "window_size": 2,
+  "cell_spacing": 0.1,
+  "working_range": {"min_distance": 0.3, "max_distance": 2.0},
+  "range_model": {"source": "test fixture metadata"},
+  "grid_origin": [0.15, 0.15, 0.0],
+  "grid": [
+    [0, 1, 2, 3],
+    [4, 5, 6, 7],
+    [8, 9, 10, 11],
+    [12, 13, 14, 15]
+  ],
+  "short_range": {
+    "window_size": 2,
+    "cell_spacing": 0.02,
+    "marker_size": 0.006,
+    "working_range": {"min_distance": 0.05, "max_distance": 0.5},
+    "tiles": [
+      {
+        "i": 0,
+        "j": 0,
+        "signature": [16, 16, 16, 16],
+        "markers": [
+          {"local_i": 0, "local_j": 0, "id": 16, "global_x": 0.11, "global_y": 0.11, "global_z": 0.0},
+          {"local_i": 0, "local_j": 1, "id": 16, "global_x": 0.11, "global_y": 0.09, "global_z": 0.0},
+          {"local_i": 1, "local_j": 0, "id": 16, "global_x": 0.09, "global_y": 0.11, "global_z": 0.0},
+          {"local_i": 1, "local_j": 1, "id": 16, "global_x": 0.09, "global_y": 0.09, "global_z": 0.0}
+        ]
+      },
+      {
+        "i": 2,
+        "j": 2,
+        "signature": [16, 16, 16, 17],
+        "markers": [
+          {"local_i": 0, "local_j": 0, "id": 16, "global_x": -0.09, "global_y": -0.09, "global_z": 0.0},
+          {"local_i": 0, "local_j": 1, "id": 16, "global_x": -0.09, "global_y": -0.11, "global_z": 0.0},
+          {"local_i": 1, "local_j": 0, "id": 16, "global_x": -0.11, "global_y": -0.09, "global_z": 0.0},
+          {"local_i": 1, "local_j": 1, "id": 17, "global_x": -0.11, "global_y": -0.11, "global_z": 0.0}
+        ]
+      }
+    ]
+  }
+}

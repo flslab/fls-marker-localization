@@ -7,9 +7,10 @@
     "dev": "vite --configLoader runner",
     "build": "vite build --configLoader runner && node scripts/prepare-dist.mjs",
     "preview": "vite preview",
-    "test": "node --test src/lib/logModel.test.js"
+    "test": "node --test src/lib/*.test.js"
   },
   "dependencies": {
+    "js-yaml": "^4.1.0",
     "lucide-react": "^0.511.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

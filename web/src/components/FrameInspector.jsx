@@ -66,7 +66,7 @@ export default function FrameInspector({ model, frameIndex }) {
 
         {grid && <Detail title="Localization diagnostics" open>
           <div className="diagnostic-status"><span className={`status-dot status-${grid.status}`} /> <div><strong>{grid.status || 'unknown'}</strong><p>{grid.message || 'No diagnostic message.'}</p></div></div>
-          <div className="lookup-row"><span>lookup</span><b>{grid.lookup_status || 'unknown'}</b><span>attempted</span><b>{valueToText(grid.lookup_attempted)}</b></div>
+          <div className="lookup-row"><span>grid</span><b>{frame.gridType || 'unknown'}{frame.tile ? ` · tile ${frame.tile.i},${frame.tile.j}` : ''}</b><span>lookup</span><b>{grid.lookup_status || 'unknown'}</b></div>
           <div className="counter-grid">{gridCounters.map(([label, value]) => <div key={label}><span>{label}</span><b>{valueToText(value)}</b></div>)}</div>
           {grid.window_match && <><h4>Window match</h4><KeyValueView data={grid.window_match} /></>}
           {grid.reprojection_error !== undefined && <div className="diagnostic-foot"><span>Grid RMS reprojection error</span><b>{valueToText(grid.reprojection_error)} px</b></div>}

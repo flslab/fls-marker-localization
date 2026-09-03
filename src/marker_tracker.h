@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <opencv2/core.hpp>
+#include <set>
 #include <vector>
 
 class MarkerTracker {
@@ -37,7 +38,8 @@ public:
   MarkerTracker &operator=(const MarkerTracker &) = delete;
 
   Result processFrame(cv::Mat &image, double current_time,
-                      double blob_area_threshold);
+                      double blob_area_threshold,
+                      const std::set<std::uint64_t> &decode_ignored_track_ids = {});
 
 private:
   struct TrackedBlob;

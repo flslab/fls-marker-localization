@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyPose, createLogModel, flattenObject, formatRawTime, timeToSeconds } from './logModel.js';
+import { classifyPose, createLogModel, flattenObject, formatRawTime, gridMarkerKey, timeToSeconds } from './logModel.js';
 import { AXIS_COLORS, gridCellPosition, rawRotationQuaternion, rawToScene } from './sceneMath.js';
 
 test('maps the defined right-handed frames into a Z-up RGB scene', () => {
@@ -34,6 +34,52 @@ test('models current blob-grid camera records without losing diagnostics', () =>
   assert.deepEqual(model.frames[0].primary.position, [1, 2, -3]);
   assert.equal(model.frames[0].status, 'success');
   assert.equal(model.frames[0].counts.accepted, 4);
+});
+
+test('keeps short-range tiles distinct from main-grid markers and exposes the active phase', () => {
+  const shortMarker = {
+    local_i: 0, local_j: 0, id: 16,
+    global_x: 0.05, global_y: 0.05, global_z: 0,
+  };
+  const raw = {
+    args: {},
+    config: {
+      blob_grid_localization_enabled: true,
+      marker_grid: {
+        rows: 2, cols: 2,
+        short_range: {
+          window_size: 2, cell_spacing: 0.02, marker_size: 0.006,
+          tiles: [{ i: 0, j: 0, signature: [16, 17, 18, 19], markers: [shortMarker] }],
+        },
+      },
+    },
+    frames: [{
+      frame_id: 9,
+      poses: [{
+        camera_pose: true, source: 'blob_grid', grid_type: 'short_range',
+        tile: { i: 0, j: 0 }, camera_position: [0, 0, 0.2],
+      }],
+      blob_grid_localization: {
+        status: 'success', pose_valid: true, grid_type: 'short_range', tile: { i: 0, j: 0 },
+        matched_markers: [{
+          ...shortMarker,
+          grid_type: 'short_range', tile_i: 0, tile_j: 0,
+          map_row: 0, map_col: 0, global_position: [0.05, 0.05, 0],
+        }],
+      },
+    }],
+  };
+  const model = createLogModel(raw);
+  assert.equal(model.frames[0].gridType, 'short_range');
+  assert.deepEqual(model.frames[0].tile, { i: 0, j: 0 });
+  assert.equal(model.frames[0].primary.gridType, 'short_range');
+  assert.equal(model.worldMarkers.length, 1);
+  assert.equal(model.worldMarkers[0].kind, 'short-range');
+  assert.equal(model.worldMarkers[0].key, 'grid:short_range:0:0:0:0:16');
+  assert.notEqual(
+    gridMarkerKey({ id: 16, map_row: 0, map_col: 0, grid_type: 'main' }),
+    gridMarkerKey({ id: 16, local_i: 0, local_j: 0, grid_type: 'short_range', tile_i: 0, tile_j: 0 }),
+  );
 });
 
 test('recognizes ArUco marker and camera pose variants', () => {

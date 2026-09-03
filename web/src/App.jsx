@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, AlertTriangle, Braces, Box, ChevronLeft, ChevronRight, FileJson,
   FolderOpen, Gauge, Image as ImageIcon, Info, Layers3, ListFilter, LoaderCircle,
-  Pause, Play, RotateCcw, Search, ShieldCheck, SkipBack, SkipForward, SlidersHorizontal,
+  Pause, PlaneTakeoff, Play, RotateCcw, Search, ShieldCheck, SkipBack, SkipForward, SlidersHorizontal,
   Table2, Upload,
 } from 'lucide-react';
+import laBaseYaml from './data/la_base.yaml?raw';
 import { createLogModel, flattenObject, formatNumber, formatRawTime } from './lib/logModel.js';
 import { makeDemoLog } from './lib/demoLog.js';
+import FlightPlanner from './components/FlightPlanner.jsx';
 import WorldScene from './components/WorldScene.jsx';
 import ImagePlane from './components/ImagePlane.jsx';
 import LineChart, { StatusLane } from './components/LineChart.jsx';
@@ -15,6 +17,7 @@ import { KeyValueView, RawJsonView } from './components/DataViews.jsx';
 
 const tabs = [
   { id: 'explore', label: 'Explore', icon: Activity },
+  { id: 'flight', label: 'Flight coverage', icon: PlaneTakeoff },
   { id: 'frames', label: 'Frames', icon: Table2 },
   { id: 'run', label: 'Run data', icon: SlidersHorizontal },
   { id: 'raw', label: 'Raw JSON', icon: Braces },
@@ -158,7 +161,7 @@ function FramesView({ model, selectedIndex, setSelectedIndex, setActiveTab }) {
   const filtered = useMemo(() => model.frames.filter((frame) => {
     if (poseOnly && !frame.poseValid) return false;
     const needle = query.trim().toLowerCase();
-    return !needle || `${frame.frameId} ${frame.status} ${frame.grid?.lookup_status || ''}`.toLowerCase().includes(needle);
+    return !needle || `${frame.frameId} ${frame.status} ${frame.gridType || ''} ${frame.tile?.i ?? ''} ${frame.tile?.j ?? ''} ${frame.grid?.lookup_status || ''}`.toLowerCase().includes(needle);
   }), [model, query, poseOnly]);
   const maxPage = Math.max(0, Math.ceil(filtered.length / pageSize) - 1);
   const currentPage = Math.min(page, maxPage);
@@ -175,10 +178,10 @@ function FramesView({ model, selectedIndex, setSelectedIndex, setActiveTab }) {
       </div>
       <div className="frame-table-wrap">
         <table className="frame-table">
-          <thead><tr><th>Index</th><th>Frame ID</th><th>Elapsed</th><th>Raw time</th><th>Status</th><th>Poses</th><th>Blobs</th><th>Eligible</th><th>Accepted</th><th>Reproj. error</th></tr></thead>
+          <thead><tr><th>Index</th><th>Frame ID</th><th>Elapsed</th><th>Raw time</th><th>Grid</th><th>Status</th><th>Poses</th><th>Blobs</th><th>Eligible</th><th>Accepted</th><th>Reproj. error</th></tr></thead>
           <tbody>{visible.map((frame) => (
             <tr key={frame.index} className={frame.index === selectedIndex ? 'selected' : ''} onClick={() => select(frame.index)} tabIndex="0" onKeyDown={(event) => event.key === 'Enter' && select(frame.index)}>
-              <td>{frame.index}</td><td><b>{frame.frameId}</b></td><td>{formatNumber(frame.t, 6)} s</td><td>{formatRawTime(frame.rawTime)}</td>
+              <td>{frame.index}</td><td><b>{frame.frameId}</b></td><td>{formatNumber(frame.t, 6)} s</td><td>{formatRawTime(frame.rawTime)}</td><td>{frame.gridType || '—'}{frame.tile ? ` (${frame.tile.i},${frame.tile.j})` : ''}</td>
               <td><span className={`table-status status-${frame.status}`}>{frame.status}</span></td><td>{formatNumber(frame.counts.poses, 0)}</td><td>{formatNumber(frame.counts.blobs, 0)}</td><td>{formatNumber(frame.counts.decoded, 0)}</td><td>{formatNumber(frame.counts.accepted, 0)}</td><td>{formatNumber(frame.reprojectionError, 5)}</td>
             </tr>
           ))}</tbody>
@@ -218,6 +221,7 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [flightSource, setFlightSource] = useState({ name: 'la_base.yaml', text: laBaseYaml, builtIn: true });
   const fileInputRef = useRef(null);
 
   const loadFile = async (file) => {
@@ -225,6 +229,11 @@ export default function App() {
     setLoading(true); setError(''); setPlaying(false);
     try {
       const text = await file.text();
+      if (/\.ya?ml$/i.test(file.name)) {
+        setFlightSource({ name: file.name, text, builtIn: false });
+        setActiveTab('flight');
+        return;
+      }
       let raw;
       try { raw = JSON.parse(text); } catch (parseError) { throw new Error(`Could not parse JSON: ${parseError.message}`); }
       const nextModel = createLogModel(raw, file.name);
@@ -268,7 +277,7 @@ export default function App() {
 
   useEffect(() => {
     const keydown = (event) => {
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement) return;
+      if (activeTab === 'flight' || event.defaultPrevented || event.target.closest?.('button, input, select, textarea, summary, a, [contenteditable="true"]')) return;
       if (!model.frames.length) return;
       if (event.code === 'Space' && model.frames.length > 1) { event.preventDefault(); setPlaying((value) => !value); }
       if (event.key === 'ArrowLeft') { event.preventDefault(); setSelectedIndex((value) => Math.max(0, value - 1)); }
@@ -278,10 +287,12 @@ export default function App() {
     };
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
-  }, [model.frames.length]);
+  }, [model.frames.length, activeTab]);
 
   const tabContent = activeTab === 'explore'
     ? <ExploreView {...{ model, selectedIndex, setSelectedIndex, playing, setPlaying, speed, setSpeed }} />
+    : activeTab === 'flight'
+      ? <FlightPlanner source={flightSource} onOpenSfl={() => fileInputRef.current?.click()} />
     : activeTab === 'frames'
       ? <FramesView {...{ model, selectedIndex, setSelectedIndex, setActiveTab }} />
       : activeTab === 'run'
@@ -298,23 +309,23 @@ export default function App() {
     >
       <header className="topbar">
         <div className="brand"><span className="brand-mark"><span /></span><div><b>FLS</b><span>POSE SCOPE</span></div></div>
-        <nav aria-label="Viewer sections">{tabs.map(({ id, label, icon: Icon }) => <button key={id} className={activeTab === id ? 'nav-active' : ''} onClick={() => setActiveTab(id)}><Icon size={13} />{label}</button>)}</nav>
-        <button className="open-button" onClick={() => fileInputRef.current?.click()}><FolderOpen size={16} /> Open log</button>
-        <input ref={fileInputRef} className="visually-hidden" type="file" accept="application/json,.json" onChange={(event) => { loadFile(event.target.files?.[0]); event.target.value = ''; }} />
+        <nav aria-label="Viewer sections">{tabs.map(({ id, label, icon: Icon }) => <button key={id} aria-current={activeTab === id ? 'page' : undefined} className={activeTab === id ? 'nav-active' : ''} onClick={() => { setPlaying(false); setActiveTab(id); }}><Icon size={13} />{label}</button>)}</nav>
+        <button className="open-button" onClick={() => fileInputRef.current?.click()}><FolderOpen size={16} /> {activeTab === 'flight' ? 'Open SFL' : 'Open log'}</button>
+        <input ref={fileInputRef} hidden type="file" accept={activeTab === 'flight' ? 'application/yaml,text/yaml,.yaml,.yml' : 'application/json,.json'} onChange={(event) => { loadFile(event.target.files?.[0]); event.target.value = ''; }} />
       </header>
 
-      <section className="runbar">
+      {activeTab !== 'flight' && <section className="runbar">
         <div className="file-title"><FileJson size={18} /><div><strong title={model.fileName}>{model.fileName}</strong><span>{isDemo ? 'DEMO DATA' : 'LOCAL LOG'} · {model.mode.toUpperCase()}</span></div></div>
         <RunStats model={model} />
         <div className="run-actions"><span className="local-pill"><ShieldCheck size={13} />stays on device</span><button className="plain-button" onClick={resetDemo}><RotateCcw size={15} /> Demo</button></div>
-      </section>
+      </section>}
 
-      {model.warnings.length > 0 && <button className="warning-banner" onClick={() => setActiveTab('raw')}><AlertTriangle size={15} /><span>{model.warnings.length} schema warning{model.warnings.length === 1 ? '' : 's'} · {model.warnings[0]}</span><b>Inspect raw JSON</b></button>}
+      {activeTab !== 'flight' && model.warnings.length > 0 && <button className="warning-banner" onClick={() => setActiveTab('raw')}><AlertTriangle size={15} /><span>{model.warnings.length} schema warning{model.warnings.length === 1 ? '' : 's'} · {model.warnings[0]}</span><b>Inspect raw JSON</b></button>}
       {error && <div className="error-banner" role="alert"><AlertTriangle size={16} /><div><strong>Log not loaded</strong><span>{error}</span></div><button onClick={() => setError('')}>Dismiss</button></div>}
       {tabContent}
 
-      {dragging && <div className="drop-overlay"><div><Upload size={28} /><strong>Drop output log</strong><span>JSON is parsed locally in this browser</span></div></div>}
-      {loading && <div className="loading-overlay" role="status"><LoaderCircle size={26} className="spin" /><strong>Parsing log…</strong><span>Large diagnostic runs can take a moment.</span></div>}
+      {dragging && <div className="drop-overlay"><div><Upload size={28} /><strong>Drop log or SFL</strong><span>JSON and YAML stay in this browser</span></div></div>}
+      {loading && <div className="loading-overlay" role="status"><LoaderCircle size={26} className="spin" /><strong>Reading file…</strong><span>Large inputs can take a moment.</span></div>}
     </main>
   );
 }

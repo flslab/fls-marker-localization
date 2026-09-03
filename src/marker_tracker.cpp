@@ -100,7 +100,9 @@ void MarkerTracker::acceptDecodedId(TrackedBlob &blob, uint16_t observed_id,
 
 MarkerTracker::Result MarkerTracker::processFrame(cv::Mat &image,
                                                   double current_time,
-                                                  double blob_area_threshold) {
+                                                  double blob_area_threshold,
+                                                  const std::set<std::uint64_t>
+                                                      &decode_ignored_track_ids) {
   cv::Mat grayscale;
   if (image.channels() == 1) {
     grayscale = image.clone();
@@ -196,6 +198,23 @@ MarkerTracker::Result MarkerTracker::processFrame(cv::Mat &image,
       // Grid mode can therefore safely reacquire this cell under a new track.
       blob.active = false;
       result.retired_track_ids.push_back(blob.track_id);
+      continue;
+    }
+
+    if (decode_ignored_track_ids.count(blob.track_id) != 0) {
+      // Keep association and any confirmed ID, but discard partial packet
+      // state so decoding restarts at a real sync edge when re-enabled.
+      blob.state = DecoderState::WAIT_FOR_SYNC;
+      blob.sync_time = 0.0;
+      blob.bit_index = 0;
+      blob.current_id = 0;
+      blob.sync_candidate = false;
+      blob.pending_id = 0;
+      blob.pending_decode_count = 0;
+      blob.last_decode_time = 0.0;
+      blob.high_run_start = current_state ? current_time : -1.0;
+      blob.low_run_start = current_state ? -1.0 : current_time;
+      blob.last_state = current_state;
       continue;
     }
 

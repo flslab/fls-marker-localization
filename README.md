@@ -102,6 +102,84 @@ The configured map must have a unique row-major signature for every window at
 the chosen size. Repeated marker IDs are supported; identity is preserved by
 relative cell and image coordinate rather than by ID alone.
 
+### Short-range landing/takeoff tiles
+
+An optional `short_range` map section defines independently spaced marker
+tiles for close-range landing and takeoff. The coordinator places each default
+tile at the centre of the main-grid 2 x 2 window beginning at its even `(i,j)`
+coordinate. The localization map stores explicit world coordinates, so custom
+spacing and placement use the same runtime schema:
+
+```json
+{
+  "rows": 4,
+  "cols": 4,
+  "num_ids": 16,
+  "min_k": 3,
+  "window_size": 2,
+  "cell_spacing": 0.1,
+  "working_range": {"min_distance": 0.3, "max_distance": 2.0},
+  "grid_origin": [0.15, 0.15, 0.0],
+  "grid": [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15]],
+  "short_range": {
+    "window_size": 2,
+    "cell_spacing": 0.02,
+    "marker_size": 0.006,
+    "working_range": {"min_distance": 0.05, "max_distance": 0.5},
+    "tiles": [{
+      "i": 0,
+      "j": 0,
+      "signature": [16, 17, 18, 19],
+      "markers": [
+        {"local_i": 0, "local_j": 0, "id": 16, "global_x": 0.11, "global_y": 0.11, "global_z": 0.0},
+        {"local_i": 0, "local_j": 1, "id": 17, "global_x": 0.11, "global_y": 0.09, "global_z": 0.0},
+        {"local_i": 1, "local_j": 0, "id": 18, "global_x": 0.09, "global_y": 0.11, "global_z": 0.0},
+        {"local_i": 1, "local_j": 1, "id": 19, "global_x": 0.09, "global_y": 0.09, "global_z": 0.0}
+      ]
+    }]
+  }
+}
+```
+
+`num_ids` remains the main-grid ID count for backward compatibility. Actual
+main and short-range ID sets must be disjoint, every short-range signature must
+be unique and absent from the main grid at the short-range window size, and
+`--payload-size` must encode the largest ID in either set. If present, the root
+`window_size` must match `--window-size`, preventing a range calculated for one
+window geometry from silently driving another.
+
+The controller selects the active grid through the checksum-protected
+`use_short_range` flag in `/pos_shared_mem`; false selects the main grid and
+true selects short range. The exported `working_range` values remain available
+for controller policy and diagnostics but no longer switch grids inside the
+detector. Once the main map is locked, its spatial ID assigner handles new main
+tracks while packet decoding is gated for tracks not already known to be main.
+
+Frame diagnostics, successful poses, matched markers, and used map cells log a
+`grid_type` of `main` or `short_range`. The per-frame `grid_selection` record
+includes the shared flag, selected grid, current distance, configured ranges,
+and decoder-gate state. Short-range records include their tile `(i,j)` and
+marker-local `(local_i,local_j)` coordinates. Both bundled log viewers display
+these phases and render short-range world markers separately.
+
+For a Blender video whose visibility schedule exercises takeoff, cruise, and
+landing, run the integration harness in lifecycle mode:
+
+```sh
+./run_video_grid_test.py \
+  --video /path/to/scheduled.mp4 \
+  --grid /path/to/marker_grid.json \
+  --expect-lifecycle \
+  --short-range-off-time 2 \
+  --short-range-on-time 8 \
+  --expected-tile 0 0
+```
+
+The harness writes the same shared-memory flag and requires a real successful
+`short_range -> main -> short_range` sequence. The lifecycle switch times
+default to 2 and 8 seconds. Outside lifecycle mode, `--grid-mode` selects
+`main` (the default) or `short_range`.
+
 Add `--grid-center-ap3p` to use legacy-style pose solving. This mode selects
 the complete visible 2 x 2 window whose four-point image centroid is closest
 to the frame centre, then passes exactly those four image/world correspondence
@@ -110,10 +188,10 @@ matched grid markers and performs iterative refinement.
 
 The camera matrix and distortion coefficients in `--config` are used for ray
 rectification and must match the processed frame resolution. Grid localization
-always reads the Crazyflie attitude from `/pos_shared_mem`; there is no static
-RPY or pixel-scale fallback. The Python controller writes the quaternion in
-SciPy order `[qx, qy, qz, qw]`. If `R_w_d(q)` maps drone vectors to world vectors
-and
+always reads the Crazyflie attitude and active-grid flag from
+`/pos_shared_mem`; there is no static RPY or pixel-scale fallback. The Python
+controller writes the quaternion in SciPy order `[qx, qy, qz, qw]`. If
+`R_w_d(q)` maps drone vectors to world vectors and
 
 ```
 R_d_c = [ 0 -1  0
@@ -256,12 +334,17 @@ Or use the convenience script:
 - The program exits when the video ends (or when `--time` expires, whichever comes first).
 - All other features work identically: ArUco/blob detection, Kalman filtering, JSON logging, frame/video saving, and streaming.
 
-## Visualize Logs
+## Visualize Logs and Swarm Flights
 
 The repository includes **FLS Pose Scope**, a local-first web viewer for the
 generated `log.json` files. It shows synchronized plots, image-space detections,
 the camera and marker geometry in 3D, every frame diagnostic, and the complete
-raw log.
+raw log. Its **Flight** workspace also reads SFL YAML, animates every drone from
+a computed launch/landing home through its target and waypoints and back home,
+retains the continuous down-facing camera coverage trace, and computes the
+minimum set of unique main-grid marker windows needed for the certified route
+while reserving one distinct home window per drone. The `la_base.yaml` mission
+and 20 x 20 high-altitude grid are included as defaults.
 
 ```sh
 cd web
@@ -269,8 +352,10 @@ npm install
 npm run dev
 ```
 
-Open the printed URL and drag a log into the viewer (or use **Open log**). The
-file is parsed entirely in the browser and is not uploaded.
+Open the printed URL and drag in a log or SFL YAML. In **Flight**, use **Grid
+JSON** to select another complete localization grid. Files are parsed entirely
+in the browser and are not uploaded. See `web/README.md` for the flight-model
+assumptions and controls.
 
 ## Blink Marker
 

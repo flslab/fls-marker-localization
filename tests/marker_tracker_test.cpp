@@ -5,6 +5,7 @@
 #include <functional>
 #include <iostream>
 #include <opencv2/imgproc.hpp>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -139,6 +140,48 @@ std::uint64_t establishStaticDecodedTrack(MarkerTracker &tracker,
   return result.current_blobs.front().track_id;
 }
 
+void testDecodeSuppressionPreservesTrackAndRestartsDecoder() {
+  MarkerTracker tracker(1.0, 1, 30.0);
+  cv::Mat frame = blobFrame({40, 40}, 255);
+  MarkerTracker::Result result = tracker.processFrame(frame, 0.0, 3.0);
+  CHECK(result.current_blobs.size() == 1);
+  const std::uint64_t track_id = result.current_blobs.front().track_id;
+  const std::set<std::uint64_t> ignored = {track_id};
+
+  for (int millisecond = 1; millisecond <= 20; ++millisecond) {
+    frame = blobFrame({40, 40}, 255);
+    result = tracker.processFrame(frame, millisecond / 1000.0, 3.0,
+                                  ignored);
+    CHECK(result.current_blobs.front().track_id == track_id);
+    CHECK(result.current_blobs.front().id == -1);
+    CHECK(result.decoded_markers.empty());
+  }
+
+  // Suppression reset the old high interval; decoding needs a fresh full
+  // static-marker interval after it is lifted.
+  for (int millisecond = 21; millisecond <= 30; ++millisecond) {
+    frame = blobFrame({40, 40}, 255);
+    result = tracker.processFrame(frame, millisecond / 1000.0, 3.0);
+    CHECK(result.current_blobs.front().track_id == track_id);
+    CHECK(result.current_blobs.front().id == -1);
+  }
+  for (int millisecond = 31; millisecond <= 32; ++millisecond) {
+    frame = blobFrame({40, 40}, 255);
+    result = tracker.processFrame(frame, millisecond / 1000.0, 3.0);
+  }
+  CHECK(result.current_blobs.front().track_id == track_id);
+  CHECK(result.current_blobs.front().id == 0);
+
+  // A confirmed identity remains available while transient decoding is gated.
+  frame = blobFrame({40, 40}, 255);
+  result = tracker.processFrame(frame, 0.033, 3.0, ignored);
+  CHECK(result.current_blobs.front().track_id == track_id);
+  CHECK(result.current_blobs.front().id == 0);
+  CHECK(result.decoded_markers.size() == 1);
+  CHECK(result.decoded_markers.front().track_id == track_id);
+  CHECK(result.decoded_markers.front().id == 0);
+}
+
 void testExpiredDecodedTrackIsNotReused() {
   MarkerTracker tracker(1.0, 1, 30.0);
   const std::uint64_t old_track_id =
@@ -235,6 +278,8 @@ int main() {
       {"static marker IDs do not impose pose cardinality",
        testStaticModeDoesNotImposePoseCardinality},
       {"stable unique track identity", testTrackIdentityIsStableAndUnique},
+      {"decode suppression preserves and restarts track state",
+       testDecodeSuppressionPreservesTrackAndRestartsDecoder},
       {"expired decoded tracks are not reused",
        testExpiredDecodedTrackIsNotReused},
       {"grid edge exits do not mix track state",

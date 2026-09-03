@@ -94,6 +94,23 @@ std::string coordinateKey(int row, int col) {
   return std::to_string(row) + "," + std::to_string(col);
 }
 
+std::optional<WorkingRange> parseWorkingRange(const json &parent,
+                                              const char *field_name) {
+  if (!parent.contains("working_range")) {
+    return std::nullopt;
+  }
+  const json &value = parent.at("working_range");
+  WorkingRange range;
+  range.min_distance = value.at("min_distance").get<double>();
+  range.max_distance = value.at("max_distance").get<double>();
+  if (!isFinite(range.min_distance) || !isFinite(range.max_distance) ||
+      range.min_distance < 0.0 || range.max_distance < range.min_distance) {
+    throw std::runtime_error(std::string(field_name) +
+                             " must contain finite distances with 0 <= min_distance <= max_distance");
+  }
+  return range;
+}
+
 } // namespace
 
 bool isMarkerObservationEligible(bool visible, double last_seen_age,
@@ -104,6 +121,25 @@ bool isMarkerObservationEligible(bool visible, double last_seen_age,
   }
   return max_marker_age == 0.0 ? visible
                                : last_seen_age <= max_marker_age + 1e-9;
+}
+
+std::set<std::uint64_t> decoderIgnoredTracksForGridSelection(
+    bool short_range_selected, bool selected_grid_locked,
+    const std::set<std::uint64_t> &seen_tracks,
+    const std::set<std::uint64_t> &known_main_tracks,
+    const std::set<std::uint64_t> &known_short_tracks) {
+  const std::set<std::uint64_t> &selected_tracks =
+      short_range_selected ? known_short_tracks : known_main_tracks;
+  std::set<std::uint64_t> ignored =
+      short_range_selected ? known_main_tracks : known_short_tracks;
+  if (selected_grid_locked) {
+    for (const std::uint64_t track_id : seen_tracks) {
+      if (selected_tracks.count(track_id) == 0) {
+        ignored.insert(track_id);
+      }
+    }
+  }
+  return ignored;
 }
 
 const char *gridLookupStatusName(GridLookupStatus status) {
@@ -153,6 +189,12 @@ MarkerGrid MarkerGrid::fromJson(const std::string &filename, int window_size) {
     result.min_k_ = data.at("min_k").get<int>();
     result.cell_spacing_ = data.at("cell_spacing").get<float>();
     result.grid_ = data.at("grid").get<std::vector<std::vector<int>>>();
+    if (data.contains("window_size") &&
+        data.at("window_size").get<int>() != window_size) {
+      throw std::runtime_error(
+          "marker map window_size does not match requested --window-size");
+    }
+    result.working_range_ = parseWorkingRange(data, "working_range");
     const auto origin =
         data.value("grid_origin", std::vector<float>{0.0F, 0.0F, 0.0F});
     if (origin.size() != 3) {
@@ -183,6 +225,7 @@ MarkerGrid MarkerGrid::fromJson(const std::string &filename, int window_size) {
         throw std::runtime_error(
             "grid contains marker ID outside [0, num_ids)");
       }
+      result.marker_ids_.insert(id);
     }
   }
   if (window_size < 2 || window_size > result.rows_ ||
@@ -194,6 +237,32 @@ MarkerGrid MarkerGrid::fromJson(const std::string &filename, int window_size) {
   result.window_size_ = window_size;
   result.buildWindowIndex();
   return result;
+}
+
+bool MarkerGrid::containsWindowSignature(
+    const std::vector<int> &signature) const {
+  const int side = static_cast<int>(std::sqrt(signature.size()));
+  if (side < 2 || side * side != static_cast<int>(signature.size()) ||
+      side > rows_ || side > cols_) {
+    return false;
+  }
+  for (int row = 0; row <= rows_ - side; ++row) {
+    for (int col = 0; col <= cols_ - side; ++col) {
+      bool matches = true;
+      for (int di = 0; di < side && matches; ++di) {
+        for (int dj = 0; dj < side; ++dj) {
+          if (grid_[row + di][col + dj] != signature[di * side + dj]) {
+            matches = false;
+            break;
+          }
+        }
+      }
+      if (matches) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 void MarkerGrid::buildWindowIndex() {
@@ -402,6 +471,293 @@ MarkerGrid::lookup(const std::vector<RelativeMarker> &observations) const {
 
   result.status = GridLookupStatus::UNIQUE;
   result.message = "unique map translation found";
+  return result;
+}
+
+ShortRangeMarkerGrid
+ShortRangeMarkerGrid::fromJson(const std::string &filename,
+                               const MarkerGrid &main_grid) {
+  std::ifstream file(filename);
+  if (!file.is_open()) {
+    throw std::runtime_error("failed to open marker grid: " + filename);
+  }
+
+  json data;
+  try {
+    file >> data;
+  } catch (const json::exception &error) {
+    throw std::runtime_error("failed to parse marker grid '" + filename +
+                             "': " + error.what());
+  }
+
+  ShortRangeMarkerGrid result;
+  if (!data.contains("short_range")) {
+    return result;
+  }
+
+  try {
+    const json &short_range = data.at("short_range");
+    result.window_size_ = short_range.at("window_size").get<int>();
+    result.cell_spacing_ = short_range.at("cell_spacing").get<float>();
+    result.marker_size_ = short_range.at("marker_size").get<float>();
+    result.working_range_ =
+        parseWorkingRange(short_range, "short_range.working_range");
+    const json &tiles = short_range.at("tiles");
+    if (!tiles.is_array() || tiles.empty()) {
+      throw std::runtime_error("short_range.tiles must be a non-empty array");
+    }
+    if (result.window_size_ < 2) {
+      throw std::runtime_error("short_range.window_size must be at least 2");
+    }
+    if (!isFinite(result.cell_spacing_) || result.cell_spacing_ <= 0.0F) {
+      throw std::runtime_error(
+          "short_range.cell_spacing must be a positive finite number");
+    }
+    if (!isFinite(result.marker_size_) || result.marker_size_ <= 0.0F) {
+      throw std::runtime_error(
+          "short_range.marker_size must be a positive finite number");
+    }
+
+    const int marker_count = result.window_size_ * result.window_size_;
+    std::set<std::pair<int, int>> tile_coordinates;
+    for (const json &tile_json : tiles) {
+      ShortRangeTile tile;
+      tile.i = tile_json.at("i").get<int>();
+      tile.j = tile_json.at("j").get<int>();
+      tile.signature = tile_json.at("signature").get<std::vector<int>>();
+      if (tile.i < 0 || tile.j < 0 || tile.i + 1 >= main_grid.rows() ||
+          tile.j + 1 >= main_grid.cols()) {
+        throw std::runtime_error(
+            "short-range tile coordinate is outside a main-grid window");
+      }
+      if (!tile_coordinates.emplace(tile.i, tile.j).second) {
+        throw std::runtime_error("duplicate short-range tile coordinate");
+      }
+      if (static_cast<int>(tile.signature.size()) != marker_count) {
+        throw std::runtime_error(
+            "short-range tile signature must contain window_size squared IDs");
+      }
+      if (main_grid.containsWindowSignature(tile.signature)) {
+        throw std::runtime_error(
+            "short-range tile signature also occurs in the main grid");
+      }
+      if (result.signature_index_.count(tile.signature) != 0) {
+        throw std::runtime_error(
+            "short-range tile signatures must be globally unique");
+      }
+
+      const json &markers = tile_json.at("markers");
+      if (!markers.is_array() || static_cast<int>(markers.size()) != marker_count) {
+        throw std::runtime_error(
+            "short-range tile markers must contain window_size squared entries");
+      }
+      tile.markers.resize(static_cast<std::size_t>(marker_count));
+      std::vector<bool> occupied(static_cast<std::size_t>(marker_count), false);
+      for (const json &marker_json : markers) {
+        ShortRangeMarker marker;
+        marker.local_i = marker_json.at("local_i").get<int>();
+        marker.local_j = marker_json.at("local_j").get<int>();
+        marker.id = marker_json.at("id").get<int>();
+        marker.global_position = {
+            marker_json.at("global_x").get<float>(),
+            marker_json.at("global_y").get<float>(),
+            marker_json.at("global_z").get<float>()};
+        if (marker.local_i < 0 || marker.local_i >= result.window_size_ ||
+            marker.local_j < 0 || marker.local_j >= result.window_size_) {
+          throw std::runtime_error(
+              "short-range marker local coordinate is out of bounds");
+        }
+        const std::size_t index = static_cast<std::size_t>(
+            marker.local_i * result.window_size_ + marker.local_j);
+        if (occupied[index]) {
+          throw std::runtime_error(
+              "duplicate short-range marker local coordinate");
+        }
+        if (marker.id < 0 || tile.signature[index] != marker.id) {
+          throw std::runtime_error(
+              "short-range marker IDs must match the row-major signature");
+        }
+        if (main_grid.markerIds().count(marker.id) != 0) {
+          throw std::runtime_error(
+              "main and short-range marker ID sets must be disjoint");
+        }
+        if (!isFinite(marker.global_position.x) ||
+            !isFinite(marker.global_position.y) ||
+            !isFinite(marker.global_position.z)) {
+          throw std::runtime_error(
+              "short-range marker coordinates must be finite");
+        }
+        if (std::abs(marker.global_position.z - main_grid.gridOrigin().z) >
+            1e-5F) {
+          throw std::runtime_error(
+              "short-range markers must lie on the main marker plane");
+        }
+        occupied[index] = true;
+        result.marker_ids_.insert(marker.id);
+        tile.markers[index] = marker;
+      }
+
+      const cv::Point3f tile_origin = tile.markers.front().global_position;
+      const double coordinate_tolerance =
+          std::max(1e-6, static_cast<double>(result.cell_spacing_) * 1e-4);
+      for (const ShortRangeMarker &marker : tile.markers) {
+        const double expected_x =
+            tile_origin.x - marker.local_i * result.cell_spacing_;
+        const double expected_y =
+            tile_origin.y - marker.local_j * result.cell_spacing_;
+        if (std::abs(marker.global_position.x - expected_x) >
+                coordinate_tolerance ||
+            std::abs(marker.global_position.y - expected_y) >
+                coordinate_tolerance ||
+            std::abs(marker.global_position.z - tile_origin.z) >
+                coordinate_tolerance) {
+          throw std::runtime_error(
+              "short-range marker coordinates do not match cell_spacing");
+        }
+      }
+
+      const std::size_t tile_index = result.tiles_.size();
+      result.signature_index_.emplace(tile.signature, tile_index);
+      result.tiles_.push_back(std::move(tile));
+    }
+  } catch (const json::exception &error) {
+    throw std::runtime_error("invalid short-range marker grid schema: " +
+                             std::string(error.what()));
+  }
+  return result;
+}
+
+GridLookupResult ShortRangeMarkerGrid::lookup(
+    const std::vector<RelativeMarker> &observations) const {
+  GridLookupResult result;
+  result.required_marker_count = window_size_ * window_size_;
+  if (!enabled()) {
+    result.message = "short-range marker grid is not configured";
+    return result;
+  }
+
+  std::map<std::pair<int, int>, const RelativeMarker *> by_cell;
+  for (const auto &observation : observations) {
+    if (!observation.accepted || marker_ids_.count(observation.id) == 0) {
+      continue;
+    }
+    if (!by_cell.emplace(std::make_pair(observation.row, observation.col),
+                         &observation)
+             .second) {
+      result.accepted_marker_count = static_cast<int>(by_cell.size());
+      result.status = GridLookupStatus::NO_MATCH;
+      result.message = "multiple short-range detections normalized to cell " +
+                       coordinateKey(observation.row, observation.col);
+      return result;
+    }
+  }
+  result.accepted_marker_count = static_cast<int>(by_cell.size());
+  if (result.accepted_marker_count < result.required_marker_count) {
+    result.status = GridLookupStatus::INSUFFICIENT_MARKERS;
+    result.message = "need at least " +
+                     std::to_string(result.required_marker_count) +
+                     " accepted short-range markers";
+    return result;
+  }
+
+  struct Candidate {
+    int relative_row = -1;
+    int relative_col = -1;
+    std::size_t tile_index = 0;
+    std::vector<int> signature;
+  };
+  std::vector<Candidate> candidates;
+  std::set<std::pair<int, int>> possible_origins;
+  for (const auto &[cell, marker] : by_cell) {
+    (void)marker;
+    for (int di = 0; di < window_size_; ++di) {
+      for (int dj = 0; dj < window_size_; ++dj) {
+        possible_origins.emplace(cell.first - di, cell.second - dj);
+      }
+    }
+  }
+  for (const auto &origin : possible_origins) {
+    std::vector<int> signature;
+    signature.reserve(static_cast<std::size_t>(result.required_marker_count));
+    bool complete = true;
+    for (int di = 0; di < window_size_ && complete; ++di) {
+      for (int dj = 0; dj < window_size_; ++dj) {
+        const auto marker =
+            by_cell.find({origin.first + di, origin.second + dj});
+        if (marker == by_cell.end()) {
+          complete = false;
+          break;
+        }
+        signature.push_back(marker->second->id);
+      }
+    }
+    if (!complete) {
+      continue;
+    }
+    ++result.complete_window_count;
+    const auto tile = signature_index_.find(signature);
+    if (tile != signature_index_.end()) {
+      candidates.push_back(
+          {origin.first, origin.second, tile->second, std::move(signature)});
+    }
+  }
+
+  result.candidate_count = static_cast<int>(candidates.size());
+  if (result.complete_window_count == 0) {
+    result.status = GridLookupStatus::NO_COMPLETE_WINDOW;
+    result.message = "accepted short-range markers do not contain a complete " +
+                     std::to_string(window_size_) + "x" +
+                     std::to_string(window_size_) + " window";
+    return result;
+  }
+  if (candidates.empty()) {
+    result.status = GridLookupStatus::NO_MATCH;
+    result.message = "no complete observed window matches a short-range tile";
+    return result;
+  }
+  if (candidates.size() != 1) {
+    result.status = GridLookupStatus::AMBIGUOUS;
+    result.message = std::to_string(candidates.size()) +
+                     " short-range tile windows are visible";
+    return result;
+  }
+
+  const Candidate &candidate = candidates.front();
+  const ShortRangeTile &tile = tiles_[candidate.tile_index];
+  result.best_match_count = result.required_marker_count;
+  result.relative_window_row = candidate.relative_row;
+  result.relative_window_col = candidate.relative_col;
+  result.map_window_row = tile.i;
+  result.map_window_col = tile.j;
+  result.window_signature = candidate.signature;
+  for (const ShortRangeMarker &marker : tile.markers) {
+    const auto observation = by_cell.find(
+        {candidate.relative_row + marker.local_i,
+         candidate.relative_col + marker.local_j});
+    if (observation == by_cell.end() || observation->second->id != marker.id) {
+      continue;
+    }
+    const RelativeMarker &relative = *observation->second;
+    GlobalMarker global{relative.detection_index,
+                        relative.row,
+                        relative.col,
+                        marker.local_i,
+                        marker.local_j,
+                        marker.id,
+                        relative.image_x,
+                        relative.image_y,
+                        marker.global_position.x,
+                        marker.global_position.y,
+                        marker.global_position.z};
+    global.grid_type = "short_range";
+    global.tile_i = tile.i;
+    global.tile_j = tile.j;
+    global.local_i = marker.local_i;
+    global.local_j = marker.local_j;
+    result.markers.push_back(std::move(global));
+  }
+  result.status = GridLookupStatus::UNIQUE;
+  result.message = "unique short-range tile signature found";
   return result;
 }
 
@@ -692,6 +1048,7 @@ GridIdAssignmentResult GridIdAssigner::assign(
         {current_mapping.markers[index].row_coordinate - cell.row,
          current_mapping.markers[index].col_coordinate - cell.col});
   }
+
   if (offsets.empty()) {
     decoder_fallback();
     return result;
@@ -924,6 +1281,431 @@ GridIdAssignmentResult GridIdAssigner::assign(
   return result;
 }
 
+CrossGridIdAssigner::CrossGridIdAssigner(
+    const MarkerGrid &main_grid,
+    const ShortRangeMarkerGrid &short_range_grid,
+    CameraPlaneGeometry geometry)
+    : main_grid_(main_grid), short_range_grid_(short_range_grid),
+      geometry_(std::move(geometry)),
+      main_camera_mapper_(main_grid.cellSpacing(), geometry_) {
+  if (!short_range_grid_.enabled()) {
+    return;
+  }
+  catalog_.reserve(static_cast<std::size_t>(main_grid_.rows() *
+                                            main_grid_.cols()));
+  for (int row = 0; row < main_grid_.rows(); ++row) {
+    for (int col = 0; col < main_grid_.cols(); ++col) {
+      Identity identity;
+      identity.id = main_grid_.cells()[row][col];
+      identity.global_position = main_grid_.cellToGlobal(row, col);
+      identity.map_row = row;
+      identity.map_col = col;
+      catalog_.push_back(identity);
+    }
+  }
+  short_range_camera_mapper_ = std::make_unique<CameraMapper>(
+      short_range_grid_.cellSpacing(), geometry_);
+  for (const ShortRangeTile &tile : short_range_grid_.tiles()) {
+    for (const ShortRangeMarker &marker : tile.markers) {
+      Identity identity;
+      identity.short_range = true;
+      identity.id = marker.id;
+      identity.global_position = marker.global_position;
+      identity.tile_i = tile.i;
+      identity.tile_j = tile.j;
+      identity.local_i = marker.local_i;
+      identity.local_j = marker.local_j;
+      catalog_.push_back(identity);
+    }
+  }
+}
+
+bool CrossGridIdAssigner::rememberUnique(
+    const GridLookupResult &lookup,
+    const std::vector<MarkerDetection> &detections) {
+  if (!short_range_grid_.enabled() ||
+      lookup.status != GridLookupStatus::UNIQUE || lookup.markers.empty()) {
+    return false;
+  }
+
+  std::map<std::uint64_t, std::size_t> proposed;
+  std::set<std::size_t> proposed_identities;
+  std::optional<bool> short_range;
+  const double coordinate_tolerance =
+      std::max(1e-5, static_cast<double>(main_grid_.cellSpacing()) * 1e-4);
+  for (const GlobalMarker &marker : lookup.markers) {
+    if (marker.detection_index >= detections.size() ||
+        detections[marker.detection_index].track_id == 0 ||
+        detections[marker.detection_index].id != marker.id ||
+        (marker.grid_type != "main" && marker.grid_type != "short_range")) {
+      return false;
+    }
+    const bool marker_is_short = marker.grid_type == "short_range";
+    if (short_range && *short_range != marker_is_short) {
+      return false;
+    }
+    short_range = marker_is_short;
+
+    const auto identity = std::find_if(
+        catalog_.begin(), catalog_.end(), [&](const Identity &candidate) {
+          if (candidate.short_range != marker_is_short ||
+              candidate.id != marker.id) {
+            return false;
+          }
+          if (marker_is_short) {
+            return candidate.tile_i == marker.tile_i &&
+                   candidate.tile_j == marker.tile_j &&
+                   candidate.local_i == marker.local_i &&
+                   candidate.local_j == marker.local_j;
+          }
+          return candidate.map_row == marker.map_row &&
+                 candidate.map_col == marker.map_col;
+        });
+    if (identity == catalog_.end() ||
+        std::abs(identity->global_position.x - marker.global_x) >
+            coordinate_tolerance ||
+        std::abs(identity->global_position.y - marker.global_y) >
+            coordinate_tolerance ||
+        std::abs(identity->global_position.z - marker.global_z) >
+            coordinate_tolerance) {
+      return false;
+    }
+    const std::size_t identity_index =
+        static_cast<std::size_t>(identity - catalog_.begin());
+    const std::uint64_t track_id =
+        detections[marker.detection_index].track_id;
+    if (!proposed.emplace(track_id, identity_index).second ||
+        !proposed_identities.insert(identity_index).second) {
+      return false;
+    }
+  }
+
+  for (const auto &proposal : proposed) {
+    const std::uint64_t track_id = proposal.first;
+    const std::size_t identity_index = proposal.second;
+    const auto existing = track_identities_.find(track_id);
+    if (existing != track_identities_.end() &&
+        existing->second != identity_index) {
+      return false;
+    }
+    const bool already_owned = std::any_of(
+        track_identities_.begin(), track_identities_.end(),
+        [&](const auto &known) {
+          return known.first != track_id && known.second == identity_index;
+        });
+    if (already_owned) {
+      return false;
+    }
+  }
+  track_identities_.insert(proposed.begin(), proposed.end());
+  return true;
+}
+
+void CrossGridIdAssigner::forgetTracks(
+    const std::vector<std::uint64_t> &track_ids) {
+  for (const std::uint64_t track_id : track_ids) {
+    track_identities_.erase(track_id);
+  }
+}
+
+bool CrossGridIdAssigner::hasGridTracks(bool short_range) const {
+  return std::any_of(track_identities_.begin(), track_identities_.end(),
+                     [&](const auto &known) {
+                       return catalog_[known.second].short_range == short_range;
+                     });
+}
+
+bool CrossGridIdAssigner::hasTrack(std::uint64_t track_id,
+                                   bool short_range) const {
+  const auto known = track_identities_.find(track_id);
+  return known != track_identities_.end() &&
+         catalog_[known->second].short_range == short_range;
+}
+
+GridIdAssignmentResult CrossGridIdAssigner::assign(
+    bool target_short_range,
+    const std::vector<MarkerDetection> &current_blobs,
+    const cv::Mat &camera_matrix, const cv::Mat &dist_coeffs,
+    const cv::Matx33d &grid_to_camera_rotation,
+    double camera_to_plane_distance) {
+  GridIdAssignmentResult result;
+  result.map_locked = hasGridTracks(target_short_range);
+  if (!short_range_grid_.enabled() || current_blobs.empty() ||
+      (target_short_range && !short_range_camera_mapper_)) {
+    result.message = "no cross-grid candidates";
+    return result;
+  }
+
+  const CameraMapper &mapper = target_short_range
+                                   ? *short_range_camera_mapper_
+                                   : main_camera_mapper_;
+  const double spacing = target_short_range
+                             ? short_range_grid_.cellSpacing()
+                             : main_grid_.cellSpacing();
+  const GridMappingResult mapping = mapper.detectionsToGrid(
+      current_blobs, camera_matrix, dist_coeffs, grid_to_camera_rotation,
+      camera_to_plane_distance);
+  if (!mapping.valid) {
+    result.message = mapping.message;
+    return result;
+  }
+
+  struct AnchorOffset {
+    std::size_t identity_index = 0;
+    double row = 0.0;
+    double col = 0.0;
+  };
+  std::vector<AnchorOffset> offsets;
+  const cv::Point3f origin = main_grid_.gridOrigin();
+  for (std::size_t index = 0; index < current_blobs.size(); ++index) {
+    const auto known = track_identities_.find(current_blobs[index].track_id);
+    if (known == track_identities_.end()) {
+      continue;
+    }
+    const Identity &identity = catalog_[known->second];
+    if (current_blobs[index].id >= 0 &&
+        current_blobs[index].id != identity.id) {
+      continue;
+    }
+    const double expected_row =
+        (origin.x - identity.global_position.x) / spacing;
+    const double expected_col =
+        (origin.y - identity.global_position.y) / spacing;
+    offsets.push_back(
+        {known->second,
+         mapping.markers[index].row_coordinate - expected_row,
+         mapping.markers[index].col_coordinate - expected_col});
+  }
+  if (offsets.empty()) {
+    result.message = "waiting for a visible cross-grid anchor";
+    return result;
+  }
+
+  std::vector<std::size_t> best_consensus;
+  bool ambiguous_consensus = false;
+  double best_error = std::numeric_limits<double>::infinity();
+  const double consensus_tolerance = 2.0 * geometry_.rounding_tolerance;
+  for (const AnchorOffset &hypothesis : offsets) {
+    std::vector<std::size_t> consensus;
+    double error = 0.0;
+    for (std::size_t index = 0; index < offsets.size(); ++index) {
+      const double row_error = std::abs(offsets[index].row - hypothesis.row);
+      const double col_error = std::abs(offsets[index].col - hypothesis.col);
+      if (row_error <= consensus_tolerance &&
+          col_error <= consensus_tolerance) {
+        consensus.push_back(index);
+        error += row_error + col_error;
+      }
+    }
+    if (consensus.size() > best_consensus.size()) {
+      best_consensus = std::move(consensus);
+      best_error = error;
+      ambiguous_consensus = false;
+    } else if (consensus.size() == best_consensus.size()) {
+      const bool disjoint = std::none_of(
+          consensus.begin(), consensus.end(), [&](std::size_t index) {
+            return std::find(best_consensus.begin(), best_consensus.end(),
+                             index) != best_consensus.end();
+          });
+      ambiguous_consensus = ambiguous_consensus || disjoint;
+      if (error < best_error) {
+        best_consensus = std::move(consensus);
+        best_error = error;
+      }
+    }
+  }
+  if (ambiguous_consensus ||
+      (offsets.size() > 1 && best_consensus.size() == 1)) {
+    result.message = "visible cross-grid anchors disagree on alignment";
+    return result;
+  }
+
+  std::vector<double> row_offsets;
+  std::vector<double> col_offsets;
+  std::vector<std::size_t> anchor_identities;
+  for (const std::size_t index : best_consensus) {
+    row_offsets.push_back(offsets[index].row);
+    col_offsets.push_back(offsets[index].col);
+    anchor_identities.push_back(offsets[index].identity_index);
+  }
+  const double row_offset = median(std::move(row_offsets));
+  const double col_offset = median(std::move(col_offsets));
+  result.alignment_valid = true;
+
+  const auto catalog_allowed = [&](const Identity &candidate) {
+    for (const std::size_t anchor_index : anchor_identities) {
+      const Identity &anchor = catalog_[anchor_index];
+      if (!target_short_range) {
+        if (anchor.short_range &&
+            candidate.map_row >= anchor.tile_i &&
+            candidate.map_row <= anchor.tile_i + 1 &&
+            candidate.map_col >= anchor.tile_j &&
+            candidate.map_col <= anchor.tile_j + 1) {
+          return true;
+        }
+        if (!anchor.short_range &&
+            std::max(std::abs(candidate.map_row - anchor.map_row),
+                     std::abs(candidate.map_col - anchor.map_col)) <= 1) {
+          return true;
+        }
+      } else {
+        if (anchor.short_range && candidate.tile_i == anchor.tile_i &&
+            candidate.tile_j == anchor.tile_j) {
+          return true;
+        }
+        if (!anchor.short_range &&
+            anchor.map_row >= candidate.tile_i &&
+            anchor.map_row <= candidate.tile_i + 1 &&
+            anchor.map_col >= candidate.tile_j &&
+            anchor.map_col <= candidate.tile_j + 1) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  std::vector<std::size_t> allowed_catalog;
+  for (std::size_t identity_index = 0; identity_index < catalog_.size();
+       ++identity_index) {
+    if (catalog_[identity_index].short_range == target_short_range &&
+        catalog_allowed(catalog_[identity_index])) {
+      allowed_catalog.push_back(identity_index);
+    }
+  }
+
+  std::vector<std::optional<std::size_t>> candidates(current_blobs.size());
+  std::vector<bool> considered(current_blobs.size(), false);
+  const std::set<int> &target_ids = target_short_range
+                                        ? short_range_grid_.markerIds()
+                                        : main_grid_.markerIds();
+  const double tolerance = geometry_.rounding_tolerance + 1e-9;
+  for (std::size_t index = 0; index < current_blobs.size(); ++index) {
+    const auto known = track_identities_.find(current_blobs[index].track_id);
+    if (known != track_identities_.end() &&
+        catalog_[known->second].short_range != target_short_range) {
+      continue;
+    }
+    if (current_blobs[index].id >= 0 &&
+        target_ids.count(current_blobs[index].id) == 0) {
+      continue;
+    }
+    considered[index] = true;
+    if (current_blobs[index].track_id == 0) {
+      continue;
+    }
+
+    const double row_value =
+        mapping.markers[index].row_coordinate - row_offset;
+    const double col_value =
+        mapping.markers[index].col_coordinate - col_offset;
+    double best_distance = std::numeric_limits<double>::infinity();
+    for (const std::size_t identity_index : allowed_catalog) {
+      const Identity &identity = catalog_[identity_index];
+      const double expected_row =
+          (origin.x - identity.global_position.x) / spacing;
+      const double expected_col =
+          (origin.y - identity.global_position.y) / spacing;
+      const double distance =
+          std::max(std::abs(row_value - expected_row),
+                   std::abs(col_value - expected_col));
+      if (distance <= tolerance && distance < best_distance) {
+        candidates[index] = identity_index;
+        best_distance = distance;
+      }
+    }
+    if (!candidates[index]) {
+      continue;
+    }
+    const Identity &identity = catalog_[*candidates[index]];
+    if ((known != track_identities_.end() &&
+         known->second != *candidates[index]) ||
+        (current_blobs[index].id >= 0 &&
+         current_blobs[index].id != identity.id)) {
+      candidates[index].reset();
+      continue;
+    }
+    const bool already_owned = std::any_of(
+        track_identities_.begin(), track_identities_.end(),
+        [&](const auto &owner) {
+          return owner.first != current_blobs[index].track_id &&
+                 owner.second == *candidates[index];
+        });
+    if (already_owned) {
+      candidates[index].reset();
+    }
+  }
+
+  std::map<std::size_t, std::vector<std::size_t>> claims;
+  for (std::size_t index = 0; index < candidates.size(); ++index) {
+    if (candidates[index]) {
+      claims[*candidates[index]].push_back(index);
+    }
+  }
+  for (auto iterator = claims.begin(); iterator != claims.end();) {
+    if (iterator->second.size() != 1) {
+      iterator = claims.erase(iterator);
+    } else {
+      ++iterator;
+    }
+  }
+
+  std::optional<std::pair<int, int>> complete_short_tile;
+  bool multiple_complete_short_tiles = false;
+  if (target_short_range) {
+    std::map<std::pair<int, int>, int> tile_claim_counts;
+    for (const auto &[identity_index, claim] : claims) {
+      (void)claim;
+      const Identity &identity = catalog_[identity_index];
+      ++tile_claim_counts[{identity.tile_i, identity.tile_j}];
+    }
+    const int complete_marker_count = short_range_grid_.windowSize() *
+                                      short_range_grid_.windowSize();
+    for (const auto &[tile, count] : tile_claim_counts) {
+      if (count != complete_marker_count) {
+        continue;
+      }
+      if (complete_short_tile) {
+        multiple_complete_short_tiles = true;
+        break;
+      }
+      complete_short_tile = tile;
+    }
+    if (multiple_complete_short_tiles) {
+      complete_short_tile.reset();
+    }
+  }
+
+  for (const auto &[identity_index, claim] : claims) {
+    const Identity &identity = catalog_[identity_index];
+    if (target_short_range &&
+        (!complete_short_tile ||
+         identity.tile_i != complete_short_tile->first ||
+         identity.tile_j != complete_short_tile->second)) {
+      continue;
+    }
+    const std::size_t index = claim.front();
+    MarkerDetection detection = current_blobs[index];
+    detection.inferred = detection.id < 0;
+    detection.id = identity.id;
+    if (!target_short_range) {
+      detection.map_row = identity.map_row;
+      detection.map_col = identity.map_col;
+    }
+    result.inferred_marker_count += detection.inferred ? 1 : 0;
+    result.detections.push_back(detection);
+    track_identities_[detection.track_id] = identity_index;
+  }
+
+  result.map_locked = hasGridTracks(target_short_range);
+  result.rejected_blob_count = static_cast<int>(std::count(
+      considered.begin(), considered.end(), true)) -
+                               static_cast<int>(result.detections.size());
+  result.message = target_short_range && !complete_short_tile
+                       ? "waiting for one complete short-range tile"
+                       : "cross-grid IDs assigned from visible anchors";
+  return result;
+}
+
 const char *localizationStatusName(LocalizationStatus status) {
   switch (status) {
   case LocalizationStatus::NO_DETECTIONS:
@@ -951,11 +1733,16 @@ LocalizationPipeline::LocalizationPipeline(const std::string &map_file,
                                            CameraPlaneGeometry geometry,
                                            bool center_window_ap3p)
     : grid_(MarkerGrid::fromJson(map_file, window_size)),
+      short_range_grid_(ShortRangeMarkerGrid::fromJson(map_file, grid_)),
       geometry_(std::move(geometry)),
       camera_mapper_(grid_.cellSpacing(), geometry_),
       center_window_ap3p_(center_window_ap3p) {
   if (center_window_ap3p_ && window_size != 2) {
     throw std::invalid_argument("center-window AP3P requires window_size 2");
+  }
+  if (short_range_grid_.enabled()) {
+    short_range_camera_mapper_ = std::make_unique<CameraMapper>(
+        short_range_grid_.cellSpacing(), geometry_);
   }
 }
 
@@ -1088,13 +1875,87 @@ LocalizationResult LocalizationPipeline::localize(
     }
   }
 
+  return solveMatchedPose(std::move(result), camera_matrix, dist_coeffs,
+                          grid_to_camera_rotation, distance, frame_size,
+                          center_window_ap3p_, center_window_ap3p_);
+}
+
+LocalizationResult LocalizationPipeline::localizeShortRange(
+    const std::vector<MarkerDetection> &detections,
+    const cv::Mat &camera_matrix, const cv::Mat &dist_coeffs,
+    const cv::Matx33d &grid_to_camera_rotation, double distance,
+    cv::Size frame_size) const {
+  LocalizationResult result;
+  result.grid_type = "short_range";
+  result.distance_used = distance;
+  const bool use_ap3p =
+      center_window_ap3p_ && short_range_grid_.windowSize() == 2;
+  result.pnp_solver = use_ap3p ? "ap3p" : "ippe_iterative";
+  result.lookup.required_marker_count =
+      short_range_grid_.windowSize() * short_range_grid_.windowSize();
+  if (!short_range_grid_.enabled() || !short_range_camera_mapper_) {
+    result.status = LocalizationStatus::NO_DETECTIONS;
+    result.message = "short-range marker grid is not configured";
+    return result;
+  }
+  if (detections.empty()) {
+    result.status = LocalizationStatus::NO_DETECTIONS;
+    result.message = "no short-range marker detections";
+    return result;
+  }
+
+  const GridMappingResult mapping =
+      short_range_camera_mapper_->detectionsToGrid(
+          detections, camera_matrix, dist_coeffs, grid_to_camera_rotation,
+          distance);
+  result.relative_markers = mapping.markers;
+  if (!mapping.valid) {
+    result.status = LocalizationStatus::NORMALIZATION_FAILED;
+    result.message = mapping.message;
+    return result;
+  }
+
+  result.lookup = short_range_grid_.lookup(mapping.markers);
+  switch (result.lookup.status) {
+  case GridLookupStatus::INSUFFICIENT_MARKERS:
+    result.status = LocalizationStatus::INSUFFICIENT_MARKERS;
+    result.message = result.lookup.message;
+    return result;
+  case GridLookupStatus::NO_COMPLETE_WINDOW:
+    result.status = LocalizationStatus::NO_COMPLETE_WINDOW;
+    result.message = result.lookup.message;
+    return result;
+  case GridLookupStatus::NO_MATCH:
+    result.status = LocalizationStatus::NO_MAP_MATCH;
+    result.message = result.lookup.message;
+    return result;
+  case GridLookupStatus::AMBIGUOUS:
+    result.status = LocalizationStatus::AMBIGUOUS_MAP_MATCH;
+    result.message = result.lookup.message;
+    return result;
+  case GridLookupStatus::UNIQUE:
+    break;
+  }
+  result.tile_i = result.lookup.map_window_row;
+  result.tile_j = result.lookup.map_window_col;
+  return solveMatchedPose(std::move(result), camera_matrix, dist_coeffs,
+                          grid_to_camera_rotation, distance, frame_size, false,
+                          use_ap3p);
+}
+
+LocalizationResult LocalizationPipeline::solveMatchedPose(
+    LocalizationResult result, const cv::Mat &camera_matrix,
+    const cv::Mat &dist_coeffs,
+    const cv::Matx33d &grid_to_camera_rotation, double distance,
+    cv::Size frame_size, bool select_center_window, bool use_ap3p) const {
   if (result.lookup.markers.size() < 4) {
     result.status = LocalizationStatus::PNP_FAILED;
     result.message = "PnP needs at least four matched grid markers";
     return result;
   }
 
-  if (center_window_ap3p_) {
+  result.pnp_solver = use_ap3p ? "ap3p" : "ippe_iterative";
+  if (select_center_window) {
     if (frame_size.width <= 0 || frame_size.height <= 0) {
       result.status = LocalizationStatus::PNP_FAILED;
       result.message = "center-window AP3P needs the image dimensions";
@@ -1126,7 +1987,7 @@ LocalizationResult LocalizationPipeline::localize(
   prior.expected_object_to_camera_rotation =
       cv::Mat(grid_to_camera_rotation).clone();
   pose_estimation::PnpEstimate pose;
-  if (center_window_ap3p_) {
+  if (use_ap3p) {
     pose = pose_estimation::solveAp3p(object_points, image_points,
                                       camera_matrix, dist_coeffs, prior);
   } else {
@@ -1160,6 +2021,8 @@ LocalizationResult LocalizationPipeline::localize(
   result.pose_valid = true;
 
   result.status = LocalizationStatus::SUCCESS;
-  result.message = "global camera pose solved from marker grid";
+  result.message = result.grid_type == "short_range"
+                       ? "global camera pose solved from short-range marker tile"
+                       : "global camera pose solved from marker grid";
   return result;
 }

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Crosshair, Maximize2, RotateCcw } from 'lucide-react';
-import { asVector } from '../lib/logModel.js';
+import { asVector, gridMarkerKey } from '../lib/logModel.js';
 import { AXIS_COLORS, gridCellPosition, rawRotationQuaternion, rawToScene } from '../lib/sceneMath.js';
 
 function lineMaterial(color, opacity = 1) {
@@ -105,7 +105,7 @@ function addTrajectory(group, model, useFiltered) {
 }
 
 function addMarker(group, marker, highlighted, frameLabel = null) {
-  const color = marker.kind === 'aruco' ? 0x61d9f4 : 0x9df7c7;
+  const color = marker.kind === 'aruco' ? 0x61d9f4 : (marker.kind === 'short-range' ? 0xff9f66 : 0x9df7c7);
   const markerGroup = new THREE.Group();
   markerGroup.position.copy(rawToScene(marker.position));
   markerGroup.quaternion.copy(rawRotationQuaternion(marker.orientation));
@@ -158,7 +158,7 @@ export default function WorldScene({ model, frameIndex, useFiltered, markerId = 
   const fittedModel = useRef(null);
   const frame = model.frames[frameIndex];
   const currentMatchedKeys = useMemo(() => {
-    const keys = new Set((frame?.grid?.matched_markers || []).map((marker) => `grid:${marker.map_row ?? '?'}:${marker.map_col ?? '?'}:${marker.id ?? '?'}`));
+    const keys = new Set((frame?.grid?.matched_markers || []).map((marker) => gridMarkerKey(marker, frame?.grid)));
     for (const pose of frame?.poseRecords || []) {
       if (pose?.marker_pose === true) keys.add(`aruco:${pose.marker_id ?? '?'}`);
       for (const marker of Array.isArray(pose?.marker_poses) ? pose.marker_poses : []) keys.add(`aruco:${marker.marker_id ?? '?'}`);
@@ -314,7 +314,8 @@ export default function WorldScene({ model, frameIndex, useFiltered, markerId = 
       <div className="scene-legend">
         <span><i className="legend-camera" />camera</span>
         <span><i className="legend-path" />trajectory</span>
-        <span><i className="legend-marker" />markers</span>
+        <span><i className="legend-marker" />main</span>
+        {model.config?.marker_grid?.short_range && <span><i className="legend-short-marker" />short-range</span>}
       </div>
       <p className="scale-note">glyphs schematic · not to scale</p>
       <p className="coordinate-note">frames <b className="axis-x">X</b> <b className="axis-y">Y</b> <b className="axis-z">Z</b> · right-handed +Z-up view · values unchanged</p>

@@ -125,6 +125,10 @@ public:
     if (snapshot.attitude_valid == 0U) {
       return false;
     }
+    if (snapshot.use_short_range > 1U) {
+      sample.status = "invalid";
+      return false;
+    }
     if (!std::isfinite(camera_timestamp) ||
         !std::isfinite(snapshot.attitude_timestamp) ||
         !std::isfinite(max_age_seconds) || max_age_seconds <= 0.0) {
@@ -146,6 +150,7 @@ public:
       return false;
     }
     sample.quaternion_xyzw = *normalized;
+    sample.use_short_range = snapshot.use_short_range != 0U;
     sample.valid = true;
     sample.status = "valid";
     return true;

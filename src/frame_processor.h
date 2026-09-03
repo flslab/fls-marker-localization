@@ -23,6 +23,7 @@ struct PoseOutput {
 
 struct AttitudeSample {
   bool valid = false;
+  bool use_short_range = false;
   std::string status = "disabled";
   cv::Vec4d quaternion_xyzw{0.0, 0.0, 0.0, 1.0};
   double host_timestamp = 0.0;

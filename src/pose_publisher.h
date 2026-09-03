@@ -23,7 +23,9 @@ struct Layout {
   std::uint32_t pose_tail_padding;
   double pose_timestamp;
   std::uint32_t attitude_sequence_begin;
-  std::uint32_t attitude_valid;
+  std::uint8_t attitude_valid;
+  std::uint8_t use_short_range;
+  std::uint8_t attitude_padding[2];
   double attitude_timestamp;
   float qx, qy, qz, qw;
   std::uint32_t attitude_sequence_end;
@@ -35,6 +37,7 @@ static_assert(offsetof(Layout, x) == 4);
 static_assert(offsetof(Layout, pose_timestamp) == 32);
 static_assert(offsetof(Layout, attitude_sequence_begin) == 40);
 static_assert(offsetof(Layout, attitude_valid) == 44);
+static_assert(offsetof(Layout, use_short_range) == 45);
 static_assert(offsetof(Layout, attitude_timestamp) == 48);
 static_assert(offsetof(Layout, qx) == 56);
 static_assert(offsetof(Layout, qw) == 68);

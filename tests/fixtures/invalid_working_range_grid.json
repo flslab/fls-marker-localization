@@ -1,0 +1,10 @@
+{
+  "rows": 2,
+  "cols": 2,
+  "num_ids": 4,
+  "min_k": 2,
+  "window_size": 2,
+  "cell_spacing": 0.1,
+  "working_range": {"min_distance": 2.0, "max_distance": 0.5},
+  "grid": [[0, 1], [2, 3]]
+}

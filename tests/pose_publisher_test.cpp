@@ -39,12 +39,14 @@ std::uint32_t attitudeChecksum(const pose_shared_memory::Layout &state) {
 
 void writeAttitude(pose_shared_memory::Layout &state, std::uint32_t sequence,
                    std::uint32_t valid, double timestamp,
-                   const cv::Vec4f &quaternion_xyzw) {
+                   const cv::Vec4f &quaternion_xyzw,
+                   bool use_short_range = false) {
   require(sequence != 0 && (sequence & 1U) == 0,
           "test sequence must be nonzero and even");
   __atomic_store_n(&state.attitude_sequence_begin, sequence - 1U,
                    __ATOMIC_RELEASE);
   state.attitude_valid = valid;
+  state.use_short_range = use_short_range;
   state.attitude_timestamp = timestamp;
   state.qx = quaternion_xyzw[0];
   state.qy = quaternion_xyzw[1];
@@ -85,13 +87,15 @@ int main() {
               "uninitialized attitude should be absent");
       require(sample.status == "absent", "wrong uninitialized status");
 
-      writeAttitude(state, 2, 1, 100.0, {0.0F, 0.0F, 0.0F, 4.0F});
-      require(state.attitude_checksum == 0xA5680237U,
+      writeAttitude(state, 2, 1, 100.0, {0.0F, 0.0F, 0.0F, 4.0F}, true);
+      require(state.attitude_checksum == 0x624DFAFCU,
               "attitude checksum does not match the Python wire format");
       require(publisher.readAttitude(100.02, 0.1, sample),
               "stable attitude was rejected");
       require(sample.valid && sample.status == "valid",
               "stable attitude status is invalid");
+      require(sample.use_short_range,
+              "shared short-range selection was not read");
       require(sample.sequence == 2, "wrong attitude sequence");
       require(std::abs(sample.age_seconds - 0.02) < 1e-12,
               "wrong attitude age");
