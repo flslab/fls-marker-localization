@@ -177,7 +177,11 @@ void LibCamera::requestComplete(Request *request) {
 }
 
 void LibCamera::processRequest(Request *request) {
-    requestQueue.push(request);
+    {
+        std::lock_guard<std::mutex> lock(free_requests_mutex_);
+        requestQueue.push(request);
+    }
+    request_available_.notify_one();
 }
 
 void LibCamera::returnFrameBuffer(LibcameraOutData frameData) {
@@ -188,8 +192,8 @@ void LibCamera::returnFrameBuffer(LibcameraOutData frameData) {
 }
 
 bool LibCamera::readFrame(LibcameraOutData *frameData){
-    std::lock_guard<std::mutex> lock(free_requests_mutex_);
-    // int w, h, stride;
+    std::unique_lock<std::mutex> lock(free_requests_mutex_);
+    request_available_.wait(lock, [this] { return !requestQueue.empty(); });
     if (!requestQueue.empty()){
         Request *request = this->requestQueue.front();
 
@@ -200,7 +204,7 @@ bool LibCamera::readFrame(LibcameraOutData *frameData){
             for (unsigned int i = 0; i < buffer->planes().size(); ++i) {
                 const FrameBuffer::Plane &plane = buffer->planes()[i];
                 const FrameMetadata::Plane &meta = buffer->metadata().planes()[i];
-                
+
                 void *data = mappedBuffers_[plane.fd.get()].first;
                 int length = std::min(meta.bytesused, plane.length);
 

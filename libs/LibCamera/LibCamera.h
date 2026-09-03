@@ -1,4 +1,5 @@
 #include <atomic>
+#include <condition_variable>
 #include <iomanip>
 #include <iostream>
 #include <signal.h>
@@ -81,6 +82,7 @@ class LibCamera {
         std::mutex control_mutex_;
         std::mutex camera_stop_mutex_;
         std::mutex free_requests_mutex_;
+        std::condition_variable request_available_;
 
         Stream *viewfinder_stream_ = nullptr;
         std::string cameraId;
