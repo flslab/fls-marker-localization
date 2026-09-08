@@ -1,0 +1,1786 @@
+{
+  "schema": "fls-marker-grid",
+  "schema_version": 1,
+  "units": "metres",
+  "coordinate_frame": "world_FLU",
+  "grid_origin": [
+    0,
+    0,
+    0
+  ],
+  "origin_definition": "centre of tile (0, 0)",
+  "hypergrid": {
+    "infinite": true,
+    "marker_spacing": 0.155,
+    "tile_size": 0.31,
+    "marker_diameter": 0.01,
+    "markers_per_tile": 4,
+    "layout": "centered_2x2",
+    "tile_local_offsets": [
+      [
+        -0.5,
+        0.5,
+        0
+      ],
+      [
+        0.5,
+        0.5,
+        0
+      ],
+      [
+        0.5,
+        -0.5,
+        0
+      ],
+      [
+        -0.5,
+        -0.5,
+        0
+      ]
+    ],
+    "offset_units": "marker_spacing",
+    "grid_coordinate_position": "origin + [(grid_x + 0.5) * marker_spacing, (grid_y + 0.5) * marker_spacing, 0]",
+    "markers_always_on": true,
+    "markers_have_ids": false
+  },
+  "mygrid": {
+    "selected_tile_count": 10,
+    "markers_per_tile": 4,
+    "layout": "centered_2x2",
+    "marker_spacing": 0.024,
+    "marker_diameter": 0.006,
+    "signature_equivalence": "cyclic_rotation",
+    "signatures_are_asymmetric": true,
+    "tiles": [
+      {
+        "i": -2,
+        "j": -1,
+        "center": [
+          -0.62,
+          -0.31,
+          0
+        ],
+        "signature": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "signature_is_cyclic": true,
+        "signature_order": "clockwise_from_top_left",
+        "layout": "centered_2x2",
+        "marker_spacing": 0.024,
+        "markers": [
+          {
+            "signature_index": 0,
+            "local_row": 0,
+            "local_col": 0,
+            "tile_coordinates": [
+              -2,
+              -1
+            ],
+            "local_grid_coordinates": [
+              0,
+              0
+            ],
+            "grid_coordinates": {
+              "tile": [
+                -2,
+                -1
+              ],
+              "local": [
+                0,
+                0
+              ]
+            },
+            "id": 0,
+            "offset": [
+              -0.012,
+              0.012,
+              0
+            ],
+            "global_position": [
+              -0.632,
+              -0.298,
+              0
+            ],
+            "global_x": -0.632,
+            "global_y": -0.298,
+            "global_z": 0
+          },
+          {
+            "signature_index": 1,
+            "local_row": 0,
+            "local_col": 1,
+            "tile_coordinates": [
+              -2,
+              -1
+            ],
+            "local_grid_coordinates": [
+              0,
+              1
+            ],
+            "grid_coordinates": {
+              "tile": [
+                -2,
+                -1
+              ],
+              "local": [
+                0,
+                1
+              ]
+            },
+            "id": 0,
+            "offset": [
+              0.012,
+              0.012,
+              0
+            ],
+            "global_position": [
+              -0.608,
+              -0.298,
+              0
+            ],
+            "global_x": -0.608,
+            "global_y": -0.298,
+            "global_z": 0
+          },
+          {
+            "signature_index": 2,
+            "local_row": 1,
+            "local_col": 1,
+            "tile_coordinates": [
+              -2,
+              -1
+            ],
+            "local_grid_coordinates": [
+              1,
+              1
+            ],
+            "grid_coordinates": {
+              "tile": [
+                -2,
+                -1
+              ],
+              "local": [
+                1,
+                1
+              ]
+            },
+            "id": 0,
+            "offset": [
+              0.012,
+              -0.012,
+              0
+            ],
+            "global_position": [
+              -0.608,
+              -0.322,
+              0
+            ],
+            "global_x": -0.608,
+            "global_y": -0.322,
+            "global_z": 0
+          },
+          {
+            "signature_index": 3,
+            "local_row": 1,
+            "local_col": 0,
+            "tile_coordinates": [
+              -2,
+              -1
+            ],
+            "local_grid_coordinates": [
+              1,
+              0
+            ],
+            "grid_coordinates": {
+              "tile": [
+                -2,
+                -1
+              ],
+              "local": [
+                1,
+                0
+              ]
+            },
+            "id": 1,
+            "offset": [
+              -0.012,
+              -0.012,
+              0
+            ],
+            "global_position": [
+              -0.632,
+              -0.322,
+              0
+            ],
+            "global_x": -0.632,
+            "global_y": -0.322,
+            "global_z": 0
+          }
+        ]
+      },
+      {
+        "i": -2,
+        "j": 0,
+        "center": [
+          -0.62,
+          0,
+          0
+        ],
+        "signature": [
+          0,
+          0,
+          0,
+          2
+        ],
+        "signature_is_cyclic": true,
+        "signature_order": "clockwise_from_top_left",
+        "layout": "centered_2x2",
+        "marker_spacing": 0.024,
+        "markers": [
+          {
+            "signature_index": 0,
+            "local_row": 0,
+            "local_col": 0,
+            "tile_coordinates": [
+              -2,
+              0
+            ],
+            "local_grid_coordinates": [
+              0,
+              0
+            ],
+            "grid_coordinates": {
+              "tile": [
+                -2,
+                0
+              ],
+              "local": [
+                0,
+                0
+              ]
+            },
+            "id": 0,
+            "offset": [
+              -0.012,
+              0.012,
+              0
+            ],
+            "global_position": [
+              -0.632,
+              0.012,
+              0
+            ],
+            "global_x": -0.632,
+            "global_y": 0.012,
+            "global_z": 0
+          },
+          {
+            "signature_index": 1,
+            "local_row": 0,
+            "local_col": 1,
+            "tile_coordinates": [
+              -2,
+              0
+            ],
+            "local_grid_coordinates": [
+              0,
+              1
+            ],
+            "grid_coordinates": {
+              "tile": [
+                -2,
+                0
+              ],
+              "local": [
+                0,
+                1
+              ]
+            },
+            "id": 0,
+            "offset": [
+              0.012,
+              0.012,
+              0
+            ],
+            "global_position": [
+              -0.608,
+              0.012,
+              0
+            ],
+            "global_x": -0.608,
+            "global_y": 0.012,
+            "global_z": 0
+          },
+          {
+            "signature_index": 2,
+            "local_row": 1,
+            "local_col": 1,
+            "tile_coordinates": [
+              -2,
+              0
+            ],
+            "local_grid_coordinates": [
+              1,
+              1
+            ],
+            "grid_coordinates": {
+              "tile": [
+                -2,
+                0
+              ],
+              "local": [
+                1,
+                1
+              ]
+            },
+            "id": 0,
+            "offset": [
+              0.012,
+              -0.012,
+              0
+            ],
+            "global_position": [
+              -0.608,
+              -0.012,
+              0
+            ],
+            "global_x": -0.608,
+            "global_y": -0.012,
+            "global_z": 0
+          },
+          {
+            "signature_index": 3,
+            "local_row": 1,
+            "local_col": 0,
+            "tile_coordinates": [
+              -2,
+              0
+            ],
+            "local_grid_coordinates": [
+              1,
+              0
+            ],
+            "grid_coordinates": {
+              "tile": [
+                -2,
+                0
+              ],
+              "local": [
+                1,
+                0
+              ]
+            },
+            "id": 2,
+            "offset": [
+              -0.012,
+              -0.012,
+              0
+            ],
+            "global_position": [
+              -0.632,
+              -0.012,
+              0
+            ],
+            "global_x": -0.632,
+            "global_y": -0.012,
+            "global_z": 0
+          }
+        ]
+      },
+      {
+        "i": -1,
+        "j": -2,
+        "center": [
+          -0.31,
+          -0.62,
+          0
+        ],
+        "signature": [
+          0,
+          0,
+          0,
+          3
+        ],
+        "signature_is_cyclic": true,
+        "signature_order": "clockwise_from_top_left",
+        "layout": "centered_2x2",
+        "marker_spacing": 0.024,
+        "markers": [
+          {
+            "signature_index": 0,
+            "local_row": 0,
+            "local_col": 0,
+            "tile_coordinates": [
+              -1,
+              -2
+            ],
+            "local_grid_coordinates": [
+              0,
+              0
+            ],
+            "grid_coordinates": {
+              "tile": [
+                -1,
+                -2
+              ],
+              "local": [
+                0,
+                0
+              ]
+            },
+            "id": 0,
+            "offset": [
+              -0.012,
+              0.012,
+              0
+            ],
+            "global_position": [
+              -0.322,
+              -0.608,
+              0
+            ],
+            "global_x": -0.322,
+            "global_y": -0.608,
+            "global_z": 0
+          },
+          {
+            "signature_index": 1,
+            "local_row": 0,
+            "local_col": 1,
+            "tile_coordinates": [
+              -1,
+              -2
+            ],
+            "local_grid_coordinates": [
+              0,
+              1
+            ],
+            "grid_coordinates": {
+              "tile": [
+                -1,
+                -2
+              ],
+              "local": [
+                0,
+                1
+              ]
+            },
+            "id": 0,
+            "offset": [
+              0.012,
+              0.012,
+              0
+            ],
+            "global_position": [
+              -0.298,
+              -0.608,
+              0
+            ],
+            "global_x": -0.298,
+            "global_y": -0.608,
+            "global_z": 0
+          },
+          {
+            "signature_index": 2,
+            "local_row": 1,
+            "local_col": 1,
+            "tile_coordinates": [
+              -1,
+              -2
+            ],
+            "local_grid_coordinates": [
+              1,
+              1
+            ],
+            "grid_coordinates": {
+              "tile": [
+                -1,
+                -2
+              ],
+              "local": [
+                1,
+                1
+              ]
+            },
+            "id": 0,
+            "offset": [
+              0.012,
+              -0.012,
+              0
+            ],
+            "global_position": [
+              -0.298,
+              -0.632,
+              0
+            ],
+            "global_x": -0.298,
+            "global_y": -0.632,
+            "global_z": 0
+          },
+          {
+            "signature_index": 3,
+            "local_row": 1,
+            "local_col": 0,
+            "tile_coordinates": [
+              -1,
+              -2
+            ],
+            "local_grid_coordinates": [
+              1,
+              0
+            ],
+            "grid_coordinates": {
+              "tile": [
+                -1,
+                -2
+              ],
+              "local": [
+                1,
+                0
+              ]
+            },
+            "id": 3,
+            "offset": [
+              -0.012,
+              -0.012,
+              0
+            ],
+            "global_position": [
+              -0.322,
+              -0.632,
+              0
+            ],
+            "global_x": -0.322,
+            "global_y": -0.632,
+            "global_z": 0
+          }
+        ]
+      },
+      {
+        "i": -1,
+        "j": 2,
+        "center": [
+          -0.31,
+          0.62,
+          0
+        ],
+        "signature": [
+          0,
+          0,
+          0,
+          4
+        ],
+        "signature_is_cyclic": true,
+        "signature_order": "clockwise_from_top_left",
+        "layout": "centered_2x2",
+        "marker_spacing": 0.024,
+        "markers": [
+          {
+            "signature_index": 0,
+            "local_row": 0,
+            "local_col": 0,
+            "tile_coordinates": [
+              -1,
+              2
+            ],
+            "local_grid_coordinates": [
+              0,
+              0
+            ],
+            "grid_coordinates": {
+              "tile": [
+                -1,
+                2
+              ],
+              "local": [
+                0,
+                0
+              ]
+            },
+            "id": 0,
+            "offset": [
+              -0.012,
+              0.012,
+              0
+            ],
+            "global_position": [
+              -0.322,
+              0.632,
+              0
+            ],
+            "global_x": -0.322,
+            "global_y": 0.632,
+            "global_z": 0
+          },
+          {
+            "signature_index": 1,
+            "local_row": 0,
+            "local_col": 1,
+            "tile_coordinates": [
+              -1,
+              2
+            ],
+            "local_grid_coordinates": [
+              0,
+              1
+            ],
+            "grid_coordinates": {
+              "tile": [
+                -1,
+                2
+              ],
+              "local": [
+                0,
+                1
+              ]
+            },
+            "id": 0,
+            "offset": [
+              0.012,
+              0.012,
+              0
+            ],
+            "global_position": [
+              -0.298,
+              0.632,
+              0
+            ],
+            "global_x": -0.298,
+            "global_y": 0.632,
+            "global_z": 0
+          },
+          {
+            "signature_index": 2,
+            "local_row": 1,
+            "local_col": 1,
+            "tile_coordinates": [
+              -1,
+              2
+            ],
+            "local_grid_coordinates": [
+              1,
+              1
+            ],
+            "grid_coordinates": {
+              "tile": [
+                -1,
+                2
+              ],
+              "local": [
+                1,
+                1
+              ]
+            },
+            "id": 0,
+            "offset": [
+              0.012,
+              -0.012,
+              0
+            ],
+            "global_position": [
+              -0.298,
+              0.608,
+              0
+            ],
+            "global_x": -0.298,
+            "global_y": 0.608,
+            "global_z": 0
+          },
+          {
+            "signature_index": 3,
+            "local_row": 1,
+            "local_col": 0,
+            "tile_coordinates": [
+              -1,
+              2
+            ],
+            "local_grid_coordinates": [
+              1,
+              0
+            ],
+            "grid_coordinates": {
+              "tile": [
+                -1,
+                2
+              ],
+              "local": [
+                1,
+                0
+              ]
+            },
+            "id": 4,
+            "offset": [
+              -0.012,
+              -0.012,
+              0
+            ],
+            "global_position": [
+              -0.322,
+              0.608,
+              0
+            ],
+            "global_x": -0.322,
+            "global_y": 0.608,
+            "global_z": 0
+          }
+        ]
+      },
+      {
+        "i": 0,
+        "j": 0,
+        "center": [
+          0,
+          0,
+          0
+        ],
+        "signature": [
+          0,
+          0,
+          0,
+          5
+        ],
+        "signature_is_cyclic": true,
+        "signature_order": "clockwise_from_top_left",
+        "layout": "centered_2x2",
+        "marker_spacing": 0.024,
+        "markers": [
+          {
+            "signature_index": 0,
+            "local_row": 0,
+            "local_col": 0,
+            "tile_coordinates": [
+              0,
+              0
+            ],
+            "local_grid_coordinates": [
+              0,
+              0
+            ],
+            "grid_coordinates": {
+              "tile": [
+                0,
+                0
+              ],
+              "local": [
+                0,
+                0
+              ]
+            },
+            "id": 0,
+            "offset": [
+              -0.012,
+              0.012,
+              0
+            ],
+            "global_position": [
+              -0.012,
+              0.012,
+              0
+            ],
+            "global_x": -0.012,
+            "global_y": 0.012,
+            "global_z": 0
+          },
+          {
+            "signature_index": 1,
+            "local_row": 0,
+            "local_col": 1,
+            "tile_coordinates": [
+              0,
+              0
+            ],
+            "local_grid_coordinates": [
+              0,
+              1
+            ],
+            "grid_coordinates": {
+              "tile": [
+                0,
+                0
+              ],
+              "local": [
+                0,
+                1
+              ]
+            },
+            "id": 0,
+            "offset": [
+              0.012,
+              0.012,
+              0
+            ],
+            "global_position": [
+              0.012,
+              0.012,
+              0
+            ],
+            "global_x": 0.012,
+            "global_y": 0.012,
+            "global_z": 0
+          },
+          {
+            "signature_index": 2,
+            "local_row": 1,
+            "local_col": 1,
+            "tile_coordinates": [
+              0,
+              0
+            ],
+            "local_grid_coordinates": [
+              1,
+              1
+            ],
+            "grid_coordinates": {
+              "tile": [
+                0,
+                0
+              ],
+              "local": [
+                1,
+                1
+              ]
+            },
+            "id": 0,
+            "offset": [
+              0.012,
+              -0.012,
+              0
+            ],
+            "global_position": [
+              0.012,
+              -0.012,
+              0
+            ],
+            "global_x": 0.012,
+            "global_y": -0.012,
+            "global_z": 0
+          },
+          {
+            "signature_index": 3,
+            "local_row": 1,
+            "local_col": 0,
+            "tile_coordinates": [
+              0,
+              0
+            ],
+            "local_grid_coordinates": [
+              1,
+              0
+            ],
+            "grid_coordinates": {
+              "tile": [
+                0,
+                0
+              ],
+              "local": [
+                1,
+                0
+              ]
+            },
+            "id": 5,
+            "offset": [
+              -0.012,
+              -0.012,
+              0
+            ],
+            "global_position": [
+              -0.012,
+              -0.012,
+              0
+            ],
+            "global_x": -0.012,
+            "global_y": -0.012,
+            "global_z": 0
+          }
+        ],
+        "blender_animation": {
+          "initial_state": "off",
+          "events": [
+            {
+              "time_s": 0,
+              "state": "on"
+            },
+            {
+              "time_s": 2,
+              "state": "static"
+            }
+          ]
+        }
+      },
+      {
+        "i": 0,
+        "j": 1,
+        "center": [
+          0,
+          0.31,
+          0
+        ],
+        "signature": [
+          0,
+          0,
+          0,
+          6
+        ],
+        "signature_is_cyclic": true,
+        "signature_order": "clockwise_from_top_left",
+        "layout": "centered_2x2",
+        "marker_spacing": 0.024,
+        "markers": [
+          {
+            "signature_index": 0,
+            "local_row": 0,
+            "local_col": 0,
+            "tile_coordinates": [
+              0,
+              1
+            ],
+            "local_grid_coordinates": [
+              0,
+              0
+            ],
+            "grid_coordinates": {
+              "tile": [
+                0,
+                1
+              ],
+              "local": [
+                0,
+                0
+              ]
+            },
+            "id": 0,
+            "offset": [
+              -0.012,
+              0.012,
+              0
+            ],
+            "global_position": [
+              -0.012,
+              0.322,
+              0
+            ],
+            "global_x": -0.012,
+            "global_y": 0.322,
+            "global_z": 0
+          },
+          {
+            "signature_index": 1,
+            "local_row": 0,
+            "local_col": 1,
+            "tile_coordinates": [
+              0,
+              1
+            ],
+            "local_grid_coordinates": [
+              0,
+              1
+            ],
+            "grid_coordinates": {
+              "tile": [
+                0,
+                1
+              ],
+              "local": [
+                0,
+                1
+              ]
+            },
+            "id": 0,
+            "offset": [
+              0.012,
+              0.012,
+              0
+            ],
+            "global_position": [
+              0.012,
+              0.322,
+              0
+            ],
+            "global_x": 0.012,
+            "global_y": 0.322,
+            "global_z": 0
+          },
+          {
+            "signature_index": 2,
+            "local_row": 1,
+            "local_col": 1,
+            "tile_coordinates": [
+              0,
+              1
+            ],
+            "local_grid_coordinates": [
+              1,
+              1
+            ],
+            "grid_coordinates": {
+              "tile": [
+                0,
+                1
+              ],
+              "local": [
+                1,
+                1
+              ]
+            },
+            "id": 0,
+            "offset": [
+              0.012,
+              -0.012,
+              0
+            ],
+            "global_position": [
+              0.012,
+              0.298,
+              0
+            ],
+            "global_x": 0.012,
+            "global_y": 0.298,
+            "global_z": 0
+          },
+          {
+            "signature_index": 3,
+            "local_row": 1,
+            "local_col": 0,
+            "tile_coordinates": [
+              0,
+              1
+            ],
+            "local_grid_coordinates": [
+              1,
+              0
+            ],
+            "grid_coordinates": {
+              "tile": [
+                0,
+                1
+              ],
+              "local": [
+                1,
+                0
+              ]
+            },
+            "id": 6,
+            "offset": [
+              -0.012,
+              -0.012,
+              0
+            ],
+            "global_position": [
+              -0.012,
+              0.298,
+              0
+            ],
+            "global_x": -0.012,
+            "global_y": 0.298,
+            "global_z": 0
+          }
+        ]
+      },
+      {
+        "i": 1,
+        "j": -2,
+        "center": [
+          0.31,
+          -0.62,
+          0
+        ],
+        "signature": [
+          0,
+          0,
+          0,
+          7
+        ],
+        "signature_is_cyclic": true,
+        "signature_order": "clockwise_from_top_left",
+        "layout": "centered_2x2",
+        "marker_spacing": 0.024,
+        "markers": [
+          {
+            "signature_index": 0,
+            "local_row": 0,
+            "local_col": 0,
+            "tile_coordinates": [
+              1,
+              -2
+            ],
+            "local_grid_coordinates": [
+              0,
+              0
+            ],
+            "grid_coordinates": {
+              "tile": [
+                1,
+                -2
+              ],
+              "local": [
+                0,
+                0
+              ]
+            },
+            "id": 0,
+            "offset": [
+              -0.012,
+              0.012,
+              0
+            ],
+            "global_position": [
+              0.298,
+              -0.608,
+              0
+            ],
+            "global_x": 0.298,
+            "global_y": -0.608,
+            "global_z": 0
+          },
+          {
+            "signature_index": 1,
+            "local_row": 0,
+            "local_col": 1,
+            "tile_coordinates": [
+              1,
+              -2
+            ],
+            "local_grid_coordinates": [
+              0,
+              1
+            ],
+            "grid_coordinates": {
+              "tile": [
+                1,
+                -2
+              ],
+              "local": [
+                0,
+                1
+              ]
+            },
+            "id": 0,
+            "offset": [
+              0.012,
+              0.012,
+              0
+            ],
+            "global_position": [
+              0.322,
+              -0.608,
+              0
+            ],
+            "global_x": 0.322,
+            "global_y": -0.608,
+            "global_z": 0
+          },
+          {
+            "signature_index": 2,
+            "local_row": 1,
+            "local_col": 1,
+            "tile_coordinates": [
+              1,
+              -2
+            ],
+            "local_grid_coordinates": [
+              1,
+              1
+            ],
+            "grid_coordinates": {
+              "tile": [
+                1,
+                -2
+              ],
+              "local": [
+                1,
+                1
+              ]
+            },
+            "id": 0,
+            "offset": [
+              0.012,
+              -0.012,
+              0
+            ],
+            "global_position": [
+              0.322,
+              -0.632,
+              0
+            ],
+            "global_x": 0.322,
+            "global_y": -0.632,
+            "global_z": 0
+          },
+          {
+            "signature_index": 3,
+            "local_row": 1,
+            "local_col": 0,
+            "tile_coordinates": [
+              1,
+              -2
+            ],
+            "local_grid_coordinates": [
+              1,
+              0
+            ],
+            "grid_coordinates": {
+              "tile": [
+                1,
+                -2
+              ],
+              "local": [
+                1,
+                0
+              ]
+            },
+            "id": 7,
+            "offset": [
+              -0.012,
+              -0.012,
+              0
+            ],
+            "global_position": [
+              0.298,
+              -0.632,
+              0
+            ],
+            "global_x": 0.298,
+            "global_y": -0.632,
+            "global_z": 0
+          }
+        ]
+      },
+      {
+        "i": 1,
+        "j": 0,
+        "center": [
+          0.31,
+          0,
+          0
+        ],
+        "signature": [
+          0,
+          0,
+          0,
+          8
+        ],
+        "signature_is_cyclic": true,
+        "signature_order": "clockwise_from_top_left",
+        "layout": "centered_2x2",
+        "marker_spacing": 0.024,
+        "markers": [
+          {
+            "signature_index": 0,
+            "local_row": 0,
+            "local_col": 0,
+            "tile_coordinates": [
+              1,
+              0
+            ],
+            "local_grid_coordinates": [
+              0,
+              0
+            ],
+            "grid_coordinates": {
+              "tile": [
+                1,
+                0
+              ],
+              "local": [
+                0,
+                0
+              ]
+            },
+            "id": 0,
+            "offset": [
+              -0.012,
+              0.012,
+              0
+            ],
+            "global_position": [
+              0.298,
+              0.012,
+              0
+            ],
+            "global_x": 0.298,
+            "global_y": 0.012,
+            "global_z": 0
+          },
+          {
+            "signature_index": 1,
+            "local_row": 0,
+            "local_col": 1,
+            "tile_coordinates": [
+              1,
+              0
+            ],
+            "local_grid_coordinates": [
+              0,
+              1
+            ],
+            "grid_coordinates": {
+              "tile": [
+                1,
+                0
+              ],
+              "local": [
+                0,
+                1
+              ]
+            },
+            "id": 0,
+            "offset": [
+              0.012,
+              0.012,
+              0
+            ],
+            "global_position": [
+              0.322,
+              0.012,
+              0
+            ],
+            "global_x": 0.322,
+            "global_y": 0.012,
+            "global_z": 0
+          },
+          {
+            "signature_index": 2,
+            "local_row": 1,
+            "local_col": 1,
+            "tile_coordinates": [
+              1,
+              0
+            ],
+            "local_grid_coordinates": [
+              1,
+              1
+            ],
+            "grid_coordinates": {
+              "tile": [
+                1,
+                0
+              ],
+              "local": [
+                1,
+                1
+              ]
+            },
+            "id": 0,
+            "offset": [
+              0.012,
+              -0.012,
+              0
+            ],
+            "global_position": [
+              0.322,
+              -0.012,
+              0
+            ],
+            "global_x": 0.322,
+            "global_y": -0.012,
+            "global_z": 0
+          },
+          {
+            "signature_index": 3,
+            "local_row": 1,
+            "local_col": 0,
+            "tile_coordinates": [
+              1,
+              0
+            ],
+            "local_grid_coordinates": [
+              1,
+              0
+            ],
+            "grid_coordinates": {
+              "tile": [
+                1,
+                0
+              ],
+              "local": [
+                1,
+                0
+              ]
+            },
+            "id": 8,
+            "offset": [
+              -0.012,
+              -0.012,
+              0
+            ],
+            "global_position": [
+              0.298,
+              -0.012,
+              0
+            ],
+            "global_x": 0.298,
+            "global_y": -0.012,
+            "global_z": 0
+          }
+        ]
+      },
+      {
+        "i": 2,
+        "j": -2,
+        "center": [
+          0.62,
+          -0.62,
+          0
+        ],
+        "signature": [
+          0,
+          0,
+          0,
+          9
+        ],
+        "signature_is_cyclic": true,
+        "signature_order": "clockwise_from_top_left",
+        "layout": "centered_2x2",
+        "marker_spacing": 0.024,
+        "markers": [
+          {
+            "signature_index": 0,
+            "local_row": 0,
+            "local_col": 0,
+            "tile_coordinates": [
+              2,
+              -2
+            ],
+            "local_grid_coordinates": [
+              0,
+              0
+            ],
+            "grid_coordinates": {
+              "tile": [
+                2,
+                -2
+              ],
+              "local": [
+                0,
+                0
+              ]
+            },
+            "id": 0,
+            "offset": [
+              -0.012,
+              0.012,
+              0
+            ],
+            "global_position": [
+              0.608,
+              -0.608,
+              0
+            ],
+            "global_x": 0.608,
+            "global_y": -0.608,
+            "global_z": 0
+          },
+          {
+            "signature_index": 1,
+            "local_row": 0,
+            "local_col": 1,
+            "tile_coordinates": [
+              2,
+              -2
+            ],
+            "local_grid_coordinates": [
+              0,
+              1
+            ],
+            "grid_coordinates": {
+              "tile": [
+                2,
+                -2
+              ],
+              "local": [
+                0,
+                1
+              ]
+            },
+            "id": 0,
+            "offset": [
+              0.012,
+              0.012,
+              0
+            ],
+            "global_position": [
+              0.632,
+              -0.608,
+              0
+            ],
+            "global_x": 0.632,
+            "global_y": -0.608,
+            "global_z": 0
+          },
+          {
+            "signature_index": 2,
+            "local_row": 1,
+            "local_col": 1,
+            "tile_coordinates": [
+              2,
+              -2
+            ],
+            "local_grid_coordinates": [
+              1,
+              1
+            ],
+            "grid_coordinates": {
+              "tile": [
+                2,
+                -2
+              ],
+              "local": [
+                1,
+                1
+              ]
+            },
+            "id": 0,
+            "offset": [
+              0.012,
+              -0.012,
+              0
+            ],
+            "global_position": [
+              0.632,
+              -0.632,
+              0
+            ],
+            "global_x": 0.632,
+            "global_y": -0.632,
+            "global_z": 0
+          },
+          {
+            "signature_index": 3,
+            "local_row": 1,
+            "local_col": 0,
+            "tile_coordinates": [
+              2,
+              -2
+            ],
+            "local_grid_coordinates": [
+              1,
+              0
+            ],
+            "grid_coordinates": {
+              "tile": [
+                2,
+                -2
+              ],
+              "local": [
+                1,
+                0
+              ]
+            },
+            "id": 9,
+            "offset": [
+              -0.012,
+              -0.012,
+              0
+            ],
+            "global_position": [
+              0.608,
+              -0.632,
+              0
+            ],
+            "global_x": 0.608,
+            "global_y": -0.632,
+            "global_z": 0
+          }
+        ]
+      },
+      {
+        "i": 2,
+        "j": 2,
+        "center": [
+          0.62,
+          0.62,
+          0
+        ],
+        "signature": [
+          0,
+          0,
+          0,
+          10
+        ],
+        "signature_is_cyclic": true,
+        "signature_order": "clockwise_from_top_left",
+        "layout": "centered_2x2",
+        "marker_spacing": 0.024,
+        "markers": [
+          {
+            "signature_index": 0,
+            "local_row": 0,
+            "local_col": 0,
+            "tile_coordinates": [
+              2,
+              2
+            ],
+            "local_grid_coordinates": [
+              0,
+              0
+            ],
+            "grid_coordinates": {
+              "tile": [
+                2,
+                2
+              ],
+              "local": [
+                0,
+                0
+              ]
+            },
+            "id": 0,
+            "offset": [
+              -0.012,
+              0.012,
+              0
+            ],
+            "global_position": [
+              0.608,
+              0.632,
+              0
+            ],
+            "global_x": 0.608,
+            "global_y": 0.632,
+            "global_z": 0
+          },
+          {
+            "signature_index": 1,
+            "local_row": 0,
+            "local_col": 1,
+            "tile_coordinates": [
+              2,
+              2
+            ],
+            "local_grid_coordinates": [
+              0,
+              1
+            ],
+            "grid_coordinates": {
+              "tile": [
+                2,
+                2
+              ],
+              "local": [
+                0,
+                1
+              ]
+            },
+            "id": 0,
+            "offset": [
+              0.012,
+              0.012,
+              0
+            ],
+            "global_position": [
+              0.632,
+              0.632,
+              0
+            ],
+            "global_x": 0.632,
+            "global_y": 0.632,
+            "global_z": 0
+          },
+          {
+            "signature_index": 2,
+            "local_row": 1,
+            "local_col": 1,
+            "tile_coordinates": [
+              2,
+              2
+            ],
+            "local_grid_coordinates": [
+              1,
+              1
+            ],
+            "grid_coordinates": {
+              "tile": [
+                2,
+                2
+              ],
+              "local": [
+                1,
+                1
+              ]
+            },
+            "id": 0,
+            "offset": [
+              0.012,
+              -0.012,
+              0
+            ],
+            "global_position": [
+              0.632,
+              0.608,
+              0
+            ],
+            "global_x": 0.632,
+            "global_y": 0.608,
+            "global_z": 0
+          },
+          {
+            "signature_index": 3,
+            "local_row": 1,
+            "local_col": 0,
+            "tile_coordinates": [
+              2,
+              2
+            ],
+            "local_grid_coordinates": [
+              1,
+              0
+            ],
+            "grid_coordinates": {
+              "tile": [
+                2,
+                2
+              ],
+              "local": [
+                1,
+                0
+              ]
+            },
+            "id": 10,
+            "offset": [
+              -0.012,
+              -0.012,
+              0
+            ],
+            "global_position": [
+              0.608,
+              0.608,
+              0
+            ],
+            "global_x": 0.608,
+            "global_y": 0.608,
+            "global_z": 0
+          }
+        ]
+      }
+    ]
+  },
+  "encoding": {
+    "max_ids": 16,
+    "id_range": [
+      0,
+      15
+    ],
+    "payload_bits": 4,
+    "delimiter_bits": 5,
+    "delimiter_pattern": "111110",
+    "packet_format": "[4-bit ID][5 × 1][0]",
+    "payload_bit_order": "most_significant_first",
+    "blink_frequency_hz": 50,
+    "bit_frequency_hz": 50,
+    "bit_duration_s": 0.02
+  },
+  "blender": {
+    "scene_fps": 120,
+    "hypergrid_marker_diameter": 0.01,
+    "mygrid_marker_diameter": 0.006,
+    "mygrid_marker_spacing": 0.024,
+    "emission_strength": 5,
+    "min_brightness": 0,
+    "max_brightness": 1,
+    "interpolate": "constant",
+    "repeat_packets": true
+  }
+}
