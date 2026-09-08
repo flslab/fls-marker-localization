@@ -11,6 +11,7 @@ constexpr double kMaxSyncLowBits = 2.25;
 constexpr int kRequiredConfirmedDecodes = 2;
 constexpr int kRequiredStaticReplacementDecodes = 3;
 constexpr double kBrightIntensity = 0.8;
+constexpr double kMinimumAssociationAreaRatio = 0.01;
 
 enum class DecoderState { WAIT_FOR_SYNC,
                           DECODING };
@@ -20,6 +21,7 @@ enum class DecoderState { WAIT_FOR_SYNC,
 struct MarkerTracker::TrackedBlob {
     std::uint64_t track_id;
     cv::Point2f position;
+    double area;
     bool active = true;
     bool visible = true;
     double last_seen_time;
@@ -37,8 +39,12 @@ struct MarkerTracker::TrackedBlob {
     int pending_decode_count = 0;
     double last_decode_time = 0.0;
 
-    TrackedBlob(std::uint64_t id, cv::Point2f point, double time, bool bright)
-        : track_id(id), position(point), last_seen_time(time), last_state(bright), high_run_start(bright ? time : -1.0), low_run_start(bright ? -1.0 : time) {}
+    TrackedBlob(std::uint64_t id, cv::Point2f point, double contour_area,
+                double time, bool bright)
+        : track_id(id), position(point), area(contour_area),
+          last_seen_time(time), last_state(bright),
+          high_run_start(bright ? time : -1.0),
+          low_run_start(bright ? -1.0 : time) {}
 };
 
 MarkerTracker::MarkerTracker(double bit_duration_ms, int payload_size,
@@ -121,6 +127,7 @@ MarkerTracker::Result MarkerTracker::processFrame(cv::Mat& image,
 
     std::vector<cv::Point2f> current_blobs;
     std::vector<bool> current_blob_states;
+    std::vector<double> current_blob_areas;
     for (const auto& contour : contours) {
         const cv::Moments moments = cv::moments(contour);
         if (moments.m00 <= blob_area_threshold) {
@@ -132,6 +139,7 @@ MarkerTracker::Result MarkerTracker::processFrame(cv::Mat& image,
         current_blobs.emplace_back(center_x, center_y);
         current_blob_states.push_back(
             grayscale.at<uchar>(center_y, center_x) > bright_threshold);
+        current_blob_areas.push_back(moments.m00);
     }
 
     Result result;
@@ -169,6 +177,13 @@ MarkerTracker::Result MarkerTracker::processFrame(cv::Mat& image,
             if (blob_matched[i]) {
                 continue;
             }
+            // When off LEDs disappear, tiny compression highlights must not
+            // turn an established full-size marker into a logic-1 sample.
+            if (dark_blob_intensity_ == 0.0 &&
+                current_blob_areas[i] <
+                    kMinimumAssociationAreaRatio * blob.area) {
+                continue;
+            }
             const double distance = cv::norm(blob.position - current_blobs[i]);
             if (distance < minimum_distance) {
                 minimum_distance = distance;
@@ -179,6 +194,7 @@ MarkerTracker::Result MarkerTracker::processFrame(cv::Mat& image,
         bool current_state = false;
         if (best_index >= 0 && minimum_distance < tracking_threshold_) {
             blob.position = current_blobs[best_index];
+            blob.area = current_blob_areas[best_index];
             blob.last_seen_time = current_time;
             blob_matched[best_index] = true;
             blob.visible = true;
@@ -278,8 +294,9 @@ MarkerTracker::Result MarkerTracker::processFrame(cv::Mat& image,
 
     for (std::size_t i = 0; i < current_blobs.size(); ++i) {
         if (!blob_matched[i]) {
-            tracked_blobs_.emplace_back(next_track_id_++, current_blobs[i], current_time,
-                                        current_blob_states[i]);
+            tracked_blobs_.emplace_back(
+                next_track_id_++, current_blobs[i], current_blob_areas[i],
+                current_time, current_blob_states[i]);
         }
     }
     tracked_blobs_.erase(

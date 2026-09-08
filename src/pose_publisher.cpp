@@ -91,7 +91,7 @@ public:
     SharedState snapshot{};
     std::uint32_t begin = 0;
     bool stable_snapshot = false;
-    constexpr int max_snapshot_attempts = 8;
+    constexpr int max_snapshot_attempts = 64;
     for (int attempt = 0; attempt < max_snapshot_attempts; ++attempt) {
       begin = __atomic_load_n(&state->attitude_sequence_begin,
                               __ATOMIC_ACQUIRE);

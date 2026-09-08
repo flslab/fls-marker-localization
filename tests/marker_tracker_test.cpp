@@ -76,6 +76,41 @@ void testDarkBlobIntensityKeepsTrackVisible() {
   CHECK(zero_dark_result.current_blobs.empty());
 }
 
+void testZeroIntensityIgnoresTinyBrightArtifacts() {
+  constexpr int bit_duration_ms = 10;
+  const cv::Point center(50, 70);
+  const std::vector<int> id_eight_packet = {1, 0, 1, 0, 0,
+                                             0, 1, 1, 1, 1};
+  MarkerTracker tracker(bit_duration_ms, 4, 30.0, 4.5, false, false, 0.0);
+
+  std::uint64_t marker_track_id = 0;
+  MarkerTracker::Result result;
+  for (int millisecond = 0; millisecond <= 320; ++millisecond) {
+    cv::Mat frame = cv::Mat::zeros(140, 140, CV_8UC1);
+    const bool on = id_eight_packet[
+        (millisecond / bit_duration_ms) % id_eight_packet.size()];
+    if (on) {
+      cv::circle(frame, center, 30, cv::Scalar(255), cv::FILLED);
+    } else {
+      cv::rectangle(frame, center + cv::Point(19, -1),
+                    center + cv::Point(26, 2), cv::Scalar(255), cv::FILLED);
+    }
+    result = tracker.processFrame(frame, millisecond / 1000.0, 3.0);
+    if (millisecond == 0) {
+      CHECK(result.current_blobs.size() == 1);
+      marker_track_id = result.current_blobs.front().track_id;
+    }
+  }
+
+  const auto decoded = std::find_if(
+      result.decoded_markers.begin(), result.decoded_markers.end(),
+      [&](const MarkerTracker::BlobInfo &blob) {
+        return blob.track_id == marker_track_id;
+      });
+  CHECK(decoded != result.decoded_markers.end());
+  CHECK(decoded->id == 8);
+}
+
 void testStaticModeDoesNotImposePoseCardinality() {
   cv::Mat frame = cv::Mat::zeros(120, 120, CV_8UC1);
   const std::vector<cv::Point> centers = {{25, 25}, {95, 25}, {25, 95}};
@@ -275,6 +310,8 @@ int main() {
   const std::vector<std::pair<std::string, std::function<void()>>> tests = {
       {"dark blob intensity tracking",
        testDarkBlobIntensityKeepsTrackVisible},
+      {"zero-intensity compression artifacts",
+       testZeroIntensityIgnoresTinyBrightArtifacts},
       {"static marker IDs do not impose pose cardinality",
        testStaticModeDoesNotImposePoseCardinality},
       {"stable unique track identity", testTrackIdentityIsStableAndUnique},

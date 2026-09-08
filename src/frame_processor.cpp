@@ -479,10 +479,13 @@ public:
                          const cv::Mat &distortion_coefficients)
       : BlobFrameProcessor(options, camera_matrix, distortion_coefficients),
         pipeline(options.grid_map_file, options.grid_window_size,
-                 makeGeometry(options), options.grid_center_ap3p),
-        id_assigner(pipeline.grid(), pipeline.geometry()),
+                 makeGeometry(options), options.grid_center_ap3p,
+                 options.reconstruct_dark_markers),
+        id_assigner(pipeline.grid(), pipeline.geometry(),
+                    options.reconstruct_dark_markers),
         cross_grid_assigner(pipeline.grid(), pipeline.shortRangeGrid(),
-                            pipeline.geometry()),
+                            pipeline.geometry(),
+                            options.reconstruct_dark_markers),
         main_marker_ids(pipeline.grid().markerIds()),
         short_range_marker_ids(pipeline.shortRangeGrid().markerIds()),
         current_distance(options.distance) {
@@ -515,6 +518,9 @@ public:
               << ", spacing " << grid.cellSpacing() << " m, PnP "
               << (options.grid_center_ap3p ? "center 2x2 AP3P"
                                            : "all-marker IPPE+iterative")
+              << (options.reconstruct_dark_markers
+                      ? ", dark-marker reconstruction"
+                      : "")
               << ')' << std::endl;
     const ShortRangeMarkerGrid &short_range = pipeline.shortRangeGrid();
     if (short_range.enabled()) {
@@ -555,7 +561,8 @@ public:
     const std::set<std::uint64_t> decode_ignored_tracks =
         decoderIgnoredTracksForGridSelection(
             short_grid_selected, map_locked_before_tracking, seen_tracks,
-            known_main_tracks, known_short_range_tracks);
+            known_main_tracks, known_short_range_tracks,
+            options.reconstruct_dark_markers);
     const std::size_t decoder_suppressed_track_count =
         decode_ignored_tracks.size();
     TrackedFrame frame =
@@ -567,6 +574,16 @@ public:
       visible_tracks.erase(track_id);
       known_main_tracks.erase(track_id);
       known_short_range_tracks.erase(track_id);
+      track_identities.erase(track_id);
+    }
+    if (options.reconstruct_dark_markers) {
+      for (const auto &blob : frame.markers.current_blobs) {
+        const auto known = track_identities.find(blob.track_id);
+        if (known != track_identities.end() &&
+            visible_tracks.count(blob.track_id) == 0) {
+          known->second.cache_anchor_eligible = false;
+        }
+      }
     }
     visible_tracks.clear();
     for (const auto &blob : frame.markers.current_blobs) {
@@ -587,19 +604,31 @@ public:
     for (const auto &marker : frame.markers.decoded_markers) {
       const bool eligible = isMarkerObservationEligible(
           marker.visible, marker.last_seen_age, options.grid_max_marker_age);
-      const bool is_main = main_marker_ids.count(marker.id) != 0;
+      MarkerDetection detection;
+      detection.x = marker.x;
+      detection.y = marker.y;
+      detection.id = marker.id;
+      detection.track_id = marker.track_id;
+      detection.visible = marker.visible;
+      detection.last_seen_age = marker.last_seen_age;
+      detection = withTrackIdentity(detection);
+      const TrackIdentity *known = trackIdentity(marker.track_id);
+      const bool is_main = known ? !known->short_range
+                                 : main_marker_ids.count(detection.id) != 0;
       const bool is_short_range =
-          short_range_marker_ids.count(marker.id) != 0;
+          known ? known->short_range
+                : short_range_marker_ids.count(detection.id) != 0;
+      if (!options.reconstruct_dark_markers) {
+        if (is_main) {
+          known_main_tracks.insert(marker.track_id);
+          known_short_range_tracks.erase(marker.track_id);
+        } else if (is_short_range) {
+          known_short_range_tracks.insert(marker.track_id);
+          known_main_tracks.erase(marker.track_id);
+        }
+      }
       const bool decoder_suppressed =
           decode_ignored_tracks.count(marker.track_id) != 0;
-      if (is_main) {
-        known_main_tracks.insert(marker.track_id);
-        known_short_range_tracks.erase(marker.track_id);
-      }
-      if (is_short_range) {
-        known_short_range_tracks.insert(marker.track_id);
-        known_main_tracks.erase(marker.track_id);
-      }
       const char *grid_type = is_main          ? "main"
                               : is_short_range ? "short_range"
                                                : "unknown";
@@ -607,7 +636,8 @@ public:
       tracked_short_range_marker_count += is_short_range ? 1 : 0;
       visible_short_range_marker_count +=
           is_short_range && marker.visible ? 1 : 0;
-      track_logs.push_back({{"id", marker.id},
+      track_logs.push_back({{"id", detection.id},
+                            {"decoder_id", marker.id},
                             {"track_id", marker.track_id},
                             {"grid_type", grid_type},
                             {"image_x", marker.x},
@@ -618,18 +648,15 @@ public:
                             {"eligible_for_localization",
                              eligible && (is_main || is_short_range)}});
       if (eligible && (is_main || is_short_range)) {
-        MarkerDetection detection;
-        detection.x = marker.x;
-        detection.y = marker.y;
-        detection.id = marker.id;
-        detection.track_id = marker.track_id;
-        detection.visible = marker.visible;
-        detection.last_seen_age = marker.last_seen_age;
         (is_short_range ? decoded_short_range_detections
                         : decoded_main_detections)
             .push_back(detection);
       }
     }
+    const std::size_t decoded_main_marker_count =
+        decoded_main_detections.size();
+    const std::size_t decoded_short_range_marker_count =
+        decoded_short_range_detections.size();
     std::vector<MarkerDetection> current_grid_blobs;
     std::vector<MarkerDetection> current_main_blobs;
     current_grid_blobs.reserve(frame.markers.current_blobs.size());
@@ -640,15 +667,34 @@ public:
       detection.y = blob.y;
       detection.id = blob.id;
       detection.track_id = blob.track_id;
+      detection = withTrackIdentity(detection);
+      const TrackIdentity *known = trackIdentity(blob.track_id);
       current_grid_blobs.push_back(detection);
-      const bool is_main = main_marker_ids.count(blob.id) != 0;
-      const bool is_short_range = short_range_marker_ids.count(blob.id) != 0;
-      const bool known_short_range =
+      const bool is_main = known ? !known->short_range
+                                 : main_marker_ids.count(detection.id) != 0;
+      const bool is_short_range =
+          known ? known->short_range
+                : short_range_marker_ids.count(detection.id) != 0;
+      const bool known_short_range = known && known->short_range;
+      const bool classified_short_range = known_short_range ||
           known_short_range_tracks.count(blob.track_id) != 0;
       if (is_main ||
-          (blob.id < 0 && !known_short_range &&
+          (detection.id < 0 && !classified_short_range &&
            (main_grid_selected || visible_short_range_marker_count == 0))) {
         current_main_blobs.push_back(detection);
+      }
+      if (known) {
+        std::vector<MarkerDetection> &identified =
+            known->short_range ? decoded_short_range_detections
+                               : decoded_main_detections;
+        const bool already_present = std::any_of(
+            identified.begin(), identified.end(),
+            [&](const MarkerDetection &item) {
+              return item.track_id == detection.track_id;
+            });
+        if (!already_present) {
+          identified.push_back(detection);
+        }
       }
       for (auto &blob_log : output.log["blobs"]) {
         if (blob_log.at("track_id").get<std::uint64_t>() != blob.track_id) {
@@ -656,26 +702,34 @@ public:
         }
         blob_log["decoder_suppressed"] =
             decode_ignored_tracks.count(blob.track_id) != 0;
+        blob_log["id"] = detection.id;
+        if (known) {
+          blob_log["id_source"] =
+              blob.id == known->id ? "decoder" : "grid_cache";
+          if (!known->short_range && known->map_row >= 0) {
+            blob_log["map_row"] = known->map_row;
+            blob_log["map_col"] = known->map_col;
+          }
+        }
         if (is_main) {
           blob_log["grid_type"] = "main";
         } else if (is_short_range) {
           blob_log["grid_type"] = "short_range";
-        } else if (blob.id >= 0) {
+        } else if (detection.id >= 0) {
           blob_log["grid_type"] = "unknown";
         }
         break;
       }
     }
-    const std::size_t decoded_main_marker_count =
-        decoded_main_detections.size();
-    const std::size_t decoded_short_range_marker_count =
-        decoded_short_range_detections.size();
     GridIdAssignmentResult cross_main_assignment;
     GridIdAssignmentResult cross_short_assignment;
-    const auto merge_cross_assignments = [](
+    const auto merge_cross_assignments = [this](
         std::vector<MarkerDetection> &into,
-        const GridIdAssignmentResult &from) {
+        const GridIdAssignmentResult &from, bool short_range) {
       for (const MarkerDetection &detection : from.detections) {
+        if (!identityMatches(detection, short_range)) {
+          continue;
+        }
         const auto existing = std::find_if(
             into.begin(), into.end(), [&](const MarkerDetection &candidate) {
               return candidate.track_id == detection.track_id;
@@ -690,12 +744,12 @@ public:
     const auto record_cross_assignments = [&](bool short_range,
                                                const GridIdAssignmentResult &result) {
       for (const MarkerDetection &detection : result.detections) {
-        std::set<std::uint64_t> &selected =
-            short_range ? known_short_range_tracks : known_main_tracks;
-        std::set<std::uint64_t> &other =
-            short_range ? known_main_tracks : known_short_range_tracks;
-        selected.insert(detection.track_id);
-        other.erase(detection.track_id);
+        if (!identityMatches(detection, short_range) ||
+            (options.reconstruct_dark_markers && !short_range &&
+             !id_assigner.remember(detection)) ||
+            !rememberTrackIdentity(detection, short_range)) {
+          continue;
+        }
         for (auto &blob_log : output.log["blobs"]) {
           if (blob_log.at("track_id").get<std::uint64_t>() !=
               detection.track_id) {
@@ -739,7 +793,7 @@ public:
               false, current_grid_blobs, camera_matrix,
               distortion_coefficients, grid_to_camera, current_distance);
           merge_cross_assignments(decoded_main_detections,
-                                  cross_main_assignment);
+                                  cross_main_assignment, false);
           record_cross_assignments(false, cross_main_assignment);
         }
         if (cross_grid_assigner.hasGridTracks(true)) {
@@ -747,17 +801,23 @@ public:
               true, current_grid_blobs, camera_matrix,
               distortion_coefficients, grid_to_camera, current_distance);
           merge_cross_assignments(decoded_short_range_detections,
-                                  cross_short_assignment);
+                                  cross_short_assignment, true);
           record_cross_assignments(true, cross_short_assignment);
         }
         detections = short_grid_selected ? decoded_short_range_detections
                                          : decoded_main_detections;
+        const double short_normalization_distance =
+            cross_short_assignment.normalization_distance.value_or(
+                current_distance);
+        const double main_normalization_distance =
+            cross_main_assignment.normalization_distance.value_or(
+                current_distance);
         LocalizationResult short_range_localization;
         if (pipeline.shortRangeGrid().enabled() && !main_grid_selected) {
           short_range_localization = pipeline.localizeShortRange(
               decoded_short_range_detections, camera_matrix,
-              distortion_coefficients, grid_to_camera, current_distance,
-              image.size());
+              distortion_coefficients, grid_to_camera,
+              short_normalization_distance, image.size());
         }
         if (short_grid_selected ||
             short_range_localization.lookup.status ==
@@ -766,15 +826,27 @@ public:
           detections = decoded_short_range_detections;
         } else if (!short_grid_selected) {
           assignment_attempted = true;
+          for (MarkerDetection &detection : decoded_main_detections) {
+            detection = withTrackIdentity(detection);
+          }
+          for (MarkerDetection &detection : current_main_blobs) {
+            detection = withTrackIdentity(detection);
+          }
           assignment = id_assigner.assign(
               decoded_main_detections, current_main_blobs, camera_matrix,
-              distortion_coefficients, grid_to_camera, current_distance);
+              distortion_coefficients, grid_to_camera,
+              main_normalization_distance);
           detections = assignment.detections;
+          detections.erase(
+              std::remove_if(
+                  detections.begin(), detections.end(),
+                  [&](const MarkerDetection &detection) {
+                    return detection.hasMapCell() &&
+                           !rememberTrackIdentity(detection, false);
+                  }),
+              detections.end());
           std::map<std::uint64_t, const MarkerDetection *> assigned_by_track;
           for (const auto &detection : detections) {
-            if (main_marker_ids.count(detection.id) != 0) {
-              known_main_tracks.insert(detection.track_id);
-            }
             assigned_by_track[detection.track_id] = &detection;
           }
           for (auto &blob_log : output.log["blobs"]) {
@@ -794,11 +866,15 @@ public:
           }
           localization = pipeline.localize(
               detections, camera_matrix, distortion_coefficients,
-              grid_to_camera, current_distance, image.size());
+              grid_to_camera,
+              assignment.normalization_distance.value_or(
+                  main_normalization_distance),
+              image.size());
         }
         if (localization.pose_valid &&
             cross_grid_assigner.rememberUnique(localization.lookup,
                                                detections)) {
+          rememberLookupIdentities(localization, detections);
           const double refined_distance =
               localization.camera_to_plane_distance;
           if (short_grid_selected) {
@@ -870,6 +946,10 @@ public:
       return json{{"map_locked", value.map_locked},
                   {"alignment_valid", value.alignment_valid},
                   {"inferred_marker_count", value.inferred_marker_count},
+                  {"reconstructed_marker_count",
+                   value.reconstructed_marker_count},
+                  {"normalization_distance",
+                   value.normalization_distance.value_or(-1.0)},
                   {"rejected_blob_count", value.rejected_blob_count},
                   {"message", value.message}};
     };
@@ -887,8 +967,10 @@ public:
         {"decoder_suppressed_track_count",
          decoder_suppressed_track_count},
         {"decoder_gate_mode",
-         map_locked_before_tracking ? "non_selected_and_unknown"
-                                    : "known_non_selected"},
+         options.reconstruct_dark_markers
+             ? (map_locked_before_tracking ? "all_seen" : "matched_tracks")
+             : (map_locked_before_tracking ? "non_selected_and_unknown"
+                                           : "known_non_selected")},
         {"map_locked_before_tracking", map_locked_before_tracking},
         {"selected_grid_has_cached_identity", selected_grid_locked},
         {"working_ranges",
@@ -1028,7 +1110,14 @@ public:
          "R_c_g=R_d_c^T*R_w_d(q)^T from shared attitude"},
         {"rounding_tolerance_cells", options.grid_rounding_tolerance},
         {"max_marker_age_seconds", options.grid_max_marker_age},
+        {"reconstruct_dark_markers", options.reconstruct_dark_markers},
         {"pnp_solver", options.grid_center_ap3p ? "ap3p" : "ippe_iterative"},
+        {"dark_marker_pose_solver",
+         options.reconstruct_dark_markers
+             ? (options.grid_center_ap3p
+                    ? "ap3p_with_known_rotation_fallback"
+                    : "known_rotation")
+             : "disabled"},
         {"center_window_ap3p", options.grid_center_ap3p},
         {"grid_selection_source", "shared_memory"},
         {"blob_annotation_legend",
@@ -1089,6 +1178,99 @@ public:
   }
 
 private:
+  struct TrackIdentity {
+    bool short_range = false;
+    int id = -1;
+    int map_row = -1;
+    int map_col = -1;
+    bool cache_anchor_eligible = true;
+  };
+
+  const TrackIdentity *trackIdentity(std::uint64_t track_id) const {
+    if (!options.reconstruct_dark_markers) {
+      return nullptr;
+    }
+    const auto known = track_identities.find(track_id);
+    return known == track_identities.end() ? nullptr : &known->second;
+  }
+
+  bool identityMatches(const MarkerDetection &detection,
+                       bool short_range) const {
+    if (!options.reconstruct_dark_markers) {
+      return true;
+    }
+    const TrackIdentity *known = trackIdentity(detection.track_id);
+    if (!known) {
+      return true;
+    }
+    return known->short_range == short_range && known->id == detection.id &&
+           (short_range || !detection.hasMapCell() || known->map_row < 0 ||
+            (known->map_row == detection.map_row &&
+             known->map_col == detection.map_col));
+  }
+
+  bool rememberTrackIdentity(const MarkerDetection &detection,
+                             bool short_range) {
+    if (detection.track_id == 0 || detection.id < 0 ||
+        !identityMatches(detection, short_range)) {
+      return false;
+    }
+    std::set<std::uint64_t> &selected =
+        short_range ? known_short_range_tracks : known_main_tracks;
+    std::set<std::uint64_t> &other =
+        short_range ? known_main_tracks : known_short_range_tracks;
+    selected.insert(detection.track_id);
+    other.erase(detection.track_id);
+    if (!options.reconstruct_dark_markers) {
+      return true;
+    }
+    auto [known, inserted] = track_identities.emplace(
+        detection.track_id,
+        TrackIdentity{short_range, detection.id, detection.map_row,
+                      detection.map_col, detection.cache_anchor_eligible});
+    if (!inserted && !short_range && known->second.map_row < 0 &&
+        detection.hasMapCell()) {
+      known->second.map_row = detection.map_row;
+      known->second.map_col = detection.map_col;
+    }
+    if (!detection.position_inferred && detection.cache_anchor_eligible) {
+      known->second.cache_anchor_eligible = true;
+    }
+    return true;
+  }
+
+  MarkerDetection withTrackIdentity(MarkerDetection detection) const {
+    const TrackIdentity *known = trackIdentity(detection.track_id);
+    if (!known) {
+      return detection;
+    }
+    const bool decoder_matches = detection.id == known->id;
+    detection.id = known->id;
+    detection.inferred = detection.inferred || !decoder_matches;
+    detection.cache_anchor_eligible = known->cache_anchor_eligible;
+    if (!known->short_range && known->map_row >= 0) {
+      detection.map_row = known->map_row;
+      detection.map_col = known->map_col;
+    }
+    return detection;
+  }
+
+  void rememberLookupIdentities(
+      const LocalizationResult &localization,
+      const std::vector<MarkerDetection> &detections) {
+    for (const GlobalMarker &marker : localization.lookup.markers) {
+      if (marker.detection_index >= detections.size()) {
+        continue;
+      }
+      MarkerDetection detection = detections[marker.detection_index];
+      detection.id = marker.id;
+      detection.map_row = marker.map_row;
+      detection.map_col = marker.map_col;
+      detection.cache_anchor_eligible = true;
+      rememberTrackIdentity(detection, marker.grid_type == "short_range");
+    }
+  }
+
   GridSelectionDecision selectGrid(const AttitudeSample &attitude) const {
     if (!pipeline.shortRangeGrid().enabled()) {
       return {"main", "short_range_not_configured"};
@@ -1136,6 +1318,10 @@ private:
           {"attempted", assignment_attempted},
           {"alignment_valid", assignment.alignment_valid},
           {"inferred_marker_count", assignment.inferred_marker_count},
+          {"reconstructed_marker_count",
+           assignment.reconstructed_marker_count},
+          {"normalization_distance",
+           assignment.normalization_distance.value_or(-1.0)},
           {"rejected_blob_count", assignment.rejected_blob_count},
           {"message", assignment.message}}},
         {"max_marker_age", options.grid_max_marker_age},
@@ -1177,9 +1363,16 @@ private:
       if (marker.detection_index < detections.size()) {
         const auto &detection = detections[marker.detection_index];
         marker_log["track_id"] = detection.track_id;
-        marker_log["id_source"] = detection.inferred ? "map" : "decoder";
+        marker_log["id_source"] =
+            detection.position_inferred
+                ? "cached_grid_identity"
+                : detection.inferred ? "map" : "decoder";
+        marker_log["position_source"] =
+            detection.position_inferred ? "grid_reconstruction" : "image";
         marker_log["visible"] = detection.visible;
-        marker_log["last_seen_age"] = detection.last_seen_age;
+        if (!detection.position_inferred) {
+          marker_log["last_seen_age"] = detection.last_seen_age;
+        }
       }
       log["relative_markers"].push_back(std::move(marker_log));
     }
@@ -1195,6 +1388,12 @@ private:
           {"map_col", marker.map_col},
           {"global_position",
            {marker.global_x, marker.global_y, marker.global_z}}};
+      if (marker.detection_index < detections.size()) {
+        marker_log["position_source"] =
+            detections[marker.detection_index].position_inferred
+                ? "grid_reconstruction"
+                : "image";
+      }
       if (marker.grid_type == "short_range") {
         marker_log["tile_i"] = marker.tile_i;
         marker_log["tile_j"] = marker.tile_j;
@@ -1241,6 +1440,7 @@ private:
   std::set<std::uint64_t> visible_tracks;
   std::set<std::uint64_t> known_main_tracks;
   std::set<std::uint64_t> known_short_range_tracks;
+  std::map<std::uint64_t, TrackIdentity> track_identities;
   double current_distance;
 };
 

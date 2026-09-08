@@ -1,4 +1,5 @@
 #include "localization_pipeline.h"
+#include "pose_estimator.h"
 #include "pose_math.h"
 
 #include <algorithm>
@@ -371,6 +372,18 @@ void testDecoderGate() {
   const std::set<std::uint64_t> known_main = {1, 2};
   const std::set<std::uint64_t> known_short = {4, 8};
   CHECK(decoderIgnoredTracksForGridSelection(
+            false, false, seen, known_main, known_short, true) ==
+        std::set<std::uint64_t>({1, 2, 4, 8}));
+  CHECK(decoderIgnoredTracksForGridSelection(
+            false, true, seen, known_main, known_short, true) ==
+        std::set<std::uint64_t>({1, 2, 3, 4, 8}));
+  CHECK(decoderIgnoredTracksForGridSelection(
+            true, false, seen, known_main, known_short, true) ==
+        std::set<std::uint64_t>({1, 2, 4, 8}));
+  CHECK(decoderIgnoredTracksForGridSelection(
+            true, true, seen, known_main, known_short, true) ==
+        std::set<std::uint64_t>({1, 2, 3, 4, 8}));
+  CHECK(decoderIgnoredTracksForGridSelection(
             false, false, seen, known_main, known_short) == known_short);
   CHECK(decoderIgnoredTracksForGridSelection(
             false, true, seen, known_main, known_short) ==
@@ -572,6 +585,171 @@ void testCrossGridIdAssignmentIsBidirectional() {
     CHECK(detection->id ==
           main.cells()[detection->map_row][detection->map_col]);
   }
+}
+
+void testShortRangeDarkMarkerReconstruction() {
+  const std::string path = fixturePath("short_range_grid.json");
+  const MarkerGrid main = MarkerGrid::fromJson(path, 2);
+  const ShortRangeMarkerGrid short_range =
+      ShortRangeMarkerGrid::fromJson(path, main);
+  const cv::Mat intrinsics = cameraMatrix(900.0, 880.0, 640.0, 360.0);
+  const cv::Mat distortion = cv::Mat::zeros(5, 1, CV_64F);
+  const cv::Matx33d rotation = rpyRotation({3.0, -4.0, 12.0});
+  constexpr double initial_distance = 0.42;
+  const cv::Point2d initial_foot(-0.08, -0.09);
+  const cv::Size frame_size(1280, 720);
+  CameraPlaneGeometry geometry;
+  geometry.rounding_tolerance = 0.20;
+  CrossGridIdAssigner assigner(main, short_range, geometry, true);
+
+  std::vector<MarkerDetection> decoded_main;
+  std::uint64_t track_id = 1;
+  for (int row = 2; row <= 3; ++row) {
+    for (int col = 2; col <= 3; ++col) {
+      decoded_main.push_back(worldPointDetection(
+          main.cellToGlobal(row, col), main.cells()[row][col], track_id++,
+          initial_foot, initial_distance, rotation, intrinsics, true));
+    }
+  }
+  const CameraMapper main_mapper(main.cellSpacing(), geometry);
+  const GridMappingResult main_mapping = main_mapper.detectionsToGrid(
+      decoded_main, intrinsics, distortion, rotation, initial_distance);
+  CHECK(main_mapping.valid);
+  const GridLookupResult main_lookup = main.lookup(main_mapping.markers);
+  CHECK(main_lookup.status == GridLookupStatus::UNIQUE);
+  CHECK(assigner.rememberUnique(main_lookup, decoded_main));
+
+  const ShortRangeTile &tile = short_range.tiles()[1];
+  std::vector<MarkerDetection> initial_short;
+  for (const ShortRangeMarker &marker : tile.markers) {
+    initial_short.push_back(worldPointDetection(
+        marker.global_position, marker.id, track_id++, initial_foot,
+        initial_distance, rotation, intrinsics, false));
+  }
+  std::vector<MarkerDetection> initial_overlap = decoded_main;
+  initial_overlap.insert(initial_overlap.end(), initial_short.begin(),
+                         initial_short.end());
+  const GridIdAssignmentResult assigned = assigner.assign(
+      true, initial_overlap, intrinsics, distortion, rotation,
+      initial_distance);
+  CHECK(assigned.detections.size() == 4);
+  const CameraMapper short_mapper(short_range.cellSpacing(), geometry);
+  const GridMappingResult short_mapping = short_mapper.detectionsToGrid(
+      assigned.detections, intrinsics, distortion, rotation, initial_distance);
+  CHECK(short_mapping.valid);
+  const GridLookupResult short_lookup =
+      short_range.lookup(short_mapping.markers);
+  CHECK(short_lookup.status == GridLookupStatus::UNIQUE);
+  CHECK(assigner.rememberUnique(short_lookup, assigned.detections));
+
+  constexpr double moved_distance = 0.30;
+  const cv::Point2d moved_foot(-0.075, -0.10);
+  std::vector<MarkerDetection> mixed_main_anchors = {
+      worldPointDetection(main.cellToGlobal(2, 2), main.cells()[2][2], 1,
+                          moved_foot, moved_distance, rotation, intrinsics,
+                          false),
+      worldPointDetection(main.cellToGlobal(2, 3), main.cells()[2][3], 2,
+                          moved_foot, moved_distance, rotation, intrinsics,
+                          false),
+      worldPointDetection(main.cellToGlobal(3, 2), main.cells()[3][2], 3,
+                          moved_foot, moved_distance, rotation, intrinsics,
+                          false),
+      worldPointDetection(main.cellToGlobal(3, 3), main.cells()[3][3], 100,
+                          moved_foot, moved_distance, rotation, intrinsics,
+                          false),
+      worldPointDetection(tile.markers[0].global_position, tile.markers[0].id,
+                          5, moved_foot, moved_distance, rotation, intrinsics,
+                          false)};
+  // This stale short-range track is outside its own grid tolerance but inside
+  // the main grid's wider one, so the tighter represented spacing must win.
+  mixed_main_anchors.back().x += 25.0F;
+  assigner.forgetTracks({4});
+  const GridIdAssignmentResult mixed_main = assigner.assign(
+      false, mixed_main_anchors, intrinsics, distortion, rotation,
+      initial_distance);
+  CHECK(mixed_main.alignment_valid);
+  CHECK(mixed_main.detections.size() == 4);
+  CHECK(mixed_main.reconstructed_marker_count == 0);
+  CHECK(mixed_main.normalization_distance.has_value());
+  CHECK_NEAR(*mixed_main.normalization_distance, moved_distance, 1e-4);
+  CHECK(findTrack(mixed_main.detections, 5) == nullptr);
+  CHECK(findTrack(mixed_main.detections, 100) != nullptr);
+
+  const std::vector<MarkerDetection> lit = {
+      worldPointDetection(tile.markers[0].global_position, tile.markers[0].id,
+                          5, moved_foot, moved_distance, rotation, intrinsics,
+                          false),
+      worldPointDetection(tile.markers[3].global_position, tile.markers[3].id,
+                          8, moved_foot, moved_distance, rotation, intrinsics,
+                          false)};
+  const GridIdAssignmentResult reconstructed = assigner.assign(
+      true, lit, intrinsics, distortion, rotation, initial_distance);
+  CHECK(reconstructed.detections.size() == 4);
+  CHECK(reconstructed.reconstructed_marker_count == 2);
+  CHECK(reconstructed.normalization_distance.has_value());
+  CHECK_NEAR(*reconstructed.normalization_distance, moved_distance, 1e-3);
+  CHECK(findTrack(reconstructed.detections, 6)->position_inferred);
+  CHECK(findTrack(reconstructed.detections, 7)->position_inferred);
+
+  const LocalizationPipeline pipeline(path, 2, geometry, false, true);
+  const LocalizationResult localization = pipeline.localizeShortRange(
+      reconstructed.detections, intrinsics, distortion, rotation,
+      *reconstructed.normalization_distance, frame_size);
+  CHECK(localization.status == LocalizationStatus::SUCCESS);
+  CHECK(localization.pose_valid);
+  CHECK(localization.pnp_solver == "known_rotation");
+  CHECK(localization.pose_markers.size() == 2);
+  CHECK_NEAR(localization.distance_used, moved_distance, 1e-3);
+  CHECK_NEAR(localization.camera_to_plane_distance, moved_distance, 1e-3);
+
+  const std::vector<MarkerDetection> reacquired = {
+      worldPointDetection(tile.markers[0].global_position, tile.markers[0].id,
+                          9, moved_foot, moved_distance, rotation, intrinsics,
+                          false),
+      lit.back()};
+  const GridIdAssignmentResult retained = assigner.assign(
+      true, reacquired, intrinsics, distortion, rotation, moved_distance);
+  CHECK(retained.detections.size() == 4);
+  CHECK(findTrack(retained.detections, 5) != nullptr);
+  CHECK(findTrack(retained.detections, 5)->position_inferred);
+  CHECK(findTrack(retained.detections, 9) == nullptr);
+
+  assigner.forgetTracks({5});
+  const GridIdAssignmentResult transferred = assigner.assign(
+      true, reacquired, intrinsics, distortion, rotation, moved_distance);
+  CHECK(transferred.detections.size() == 4);
+  CHECK(transferred.reconstructed_marker_count == 2);
+  CHECK(findTrack(transferred.detections, 5) == nullptr);
+  CHECK(findTrack(transferred.detections, 9) != nullptr);
+
+  MarkerDetection returning_first = reacquired.front();
+  returning_first.inferred = true;
+  returning_first.cache_anchor_eligible = false;
+  MarkerDetection returning_second = reacquired.back();
+  returning_second.inferred = true;
+  returning_second.cache_anchor_eligible = false;
+  const GridIdAssignmentResult lone_returning = assigner.assign(
+      true, {returning_first}, intrinsics, distortion, rotation,
+      moved_distance);
+  CHECK(lone_returning.detections.empty());
+  const GridIdAssignmentResult jointly_revalidated = assigner.assign(
+      true, {returning_first, returning_second}, intrinsics, distortion,
+      rotation, moved_distance);
+  CHECK(jointly_revalidated.detections.size() == 4);
+  const MarkerDetection *revalidated_first =
+      findTrack(jointly_revalidated.detections, 9);
+  const MarkerDetection *revalidated_second =
+      findTrack(jointly_revalidated.detections, 8);
+  CHECK(revalidated_first != nullptr);
+  CHECK(revalidated_second != nullptr);
+  CHECK(revalidated_first->cache_anchor_eligible);
+  CHECK(revalidated_second->cache_anchor_eligible);
+
+  returning_second.x += 20.0F;
+  const GridIdAssignmentResult inconsistent_returning = assigner.assign(
+      true, {returning_first, returning_second}, intrinsics, distortion,
+      rotation, moved_distance);
+  CHECK(inconsistent_returning.detections.empty());
 }
 
 void testCrossGridIdAssignmentRejectsIncompleteAndConflictingEvidence() {
@@ -1123,6 +1301,277 @@ void testGridIdAssignmentPropagatesAcrossCameraMotion() {
   CHECK(new_from_one_anchor->id == grid.cells()[0][4]);
 }
 
+void testDarkMarkerReconstructionUsesVisibleAnchorsAndKnownRotation() {
+  const std::string map_path = fixturePath("unique_grid.json");
+  const MarkerGrid grid = MarkerGrid::fromJson(map_path, 2);
+  const cv::Mat intrinsics = cameraMatrix(900.0, 880.0, 640.0, 360.0);
+  const cv::Mat distortion =
+      (cv::Mat_<double>(5, 1) << 0.03, -0.01, 0.001, -0.002, 0.0);
+  CameraPlaneGeometry geometry;
+  geometry.rounding_tolerance = 0.20;
+  const cv::Size frame_size(1280, 720);
+
+  const auto makeDetection = [&](int row, int col, std::uint64_t track_id,
+                                 const cv::Point2d &camera_foot,
+                                 double distance,
+                                 const cv::Matx33d &rotation, bool decoded) {
+    const cv::Point3f point = grid.cellToGlobal(row, col);
+    const cv::Vec3d camera_position(
+        camera_foot.x, camera_foot.y, grid.gridOrigin().z - distance);
+    const cv::Vec3d translation = -(rotation * camera_position);
+    cv::Mat rvec;
+    cv::Rodrigues(cv::Mat(rotation), rvec);
+    const cv::Mat tvec = (cv::Mat_<double>(3, 1)
+                              << translation[0], translation[1], translation[2]);
+    std::vector<cv::Point2f> projected;
+    cv::projectPoints(std::vector<cv::Point3f>{point}, rvec, tvec, intrinsics,
+                      distortion, projected);
+    MarkerDetection detection;
+    detection.x = projected.front().x;
+    detection.y = projected.front().y;
+    detection.id = decoded ? grid.cells()[row][col] : -1;
+    detection.track_id = track_id;
+    return detection;
+  };
+
+  const cv::Matx33d initial_rotation = rpyRotation({3.0, -4.0, 8.0});
+  constexpr double initial_distance = 2.4;
+  const cv::Point2d initial_foot(0.625, -2.375);
+  std::vector<MarkerDetection> initial;
+  std::uint64_t track_id = 1;
+  for (int row = 1; row <= 2; ++row) {
+    for (int col = 1; col <= 2; ++col) {
+      initial.push_back(makeDetection(row, col, track_id++, initial_foot,
+                                      initial_distance, initial_rotation, true));
+    }
+  }
+
+  GridIdAssigner enabled(grid, geometry, true);
+  GridIdAssigner disabled(grid, geometry);
+  CHECK(enabled
+            .assign(initial, initial, intrinsics, distortion, initial_rotation,
+                    initial_distance)
+            .map_locked);
+  CHECK(disabled
+            .assign(initial, initial, intrinsics, distortion, initial_rotation,
+                    initial_distance)
+            .map_locked);
+
+  const cv::Matx33d moved_rotation = rpyRotation({6.0, -5.0, 13.0});
+  constexpr double moved_distance = 1.6;
+  const cv::Point2d moved_foot(0.59, -2.41);
+  GridIdAssigner robust_prefit(grid, geometry, true);
+  CHECK(robust_prefit
+            .assign(initial, initial, intrinsics, distortion, initial_rotation,
+                    initial_distance)
+            .map_locked);
+  std::vector<MarkerDetection> one_bad_track = {
+      makeDetection(1, 1, 1, moved_foot, moved_distance, moved_rotation, false),
+      makeDetection(1, 2, 2, moved_foot, moved_distance, moved_rotation, false),
+      makeDetection(2, 1, 3, moved_foot, moved_distance, moved_rotation, false),
+      // Track 4 is cached at (2, 2), but its observed pixel is an outlier.
+      makeDetection(0, 0, 4, moved_foot, moved_distance, moved_rotation, false)};
+  const GridIdAssignmentResult robust = robust_prefit.assign(
+      {}, one_bad_track, intrinsics, distortion, moved_rotation,
+      initial_distance);
+  CHECK(robust.alignment_valid);
+  CHECK(robust.detections.size() == 3);
+  CHECK(robust.reconstructed_marker_count == 0);
+  CHECK(findTrack(robust.detections, 4) == nullptr);
+  CHECK(robust.normalization_distance.has_value());
+  CHECK_NEAR(*robust.normalization_distance, moved_distance, 1e-3);
+
+  const std::vector<MarkerDetection> lit = {
+      makeDetection(1, 1, 1, moved_foot, moved_distance, moved_rotation, false),
+      makeDetection(2, 2, 4, moved_foot, moved_distance, moved_rotation, false)};
+
+  const GridIdAssignmentResult baseline = disabled.assign(
+      {}, lit, intrinsics, distortion, moved_rotation, initial_distance);
+  CHECK(baseline.reconstructed_marker_count == 0);
+
+  const GridIdAssignmentResult reconstructed = enabled.assign(
+      {}, lit, intrinsics, distortion, moved_rotation, initial_distance);
+  CHECK(reconstructed.alignment_valid);
+  CHECK(reconstructed.detections.size() == 4);
+  CHECK(reconstructed.reconstructed_marker_count == 2);
+  CHECK(reconstructed.normalization_distance.has_value());
+  CHECK_NEAR(*reconstructed.normalization_distance, moved_distance, 1e-3);
+  for (const auto &[expected_track, row, col] :
+       std::vector<std::tuple<std::uint64_t, int, int>>{{2, 1, 2},
+                                                        {3, 2, 1}}) {
+    const MarkerDetection *dark =
+        findTrack(reconstructed.detections, expected_track);
+    CHECK(dark != nullptr);
+    CHECK(!dark->visible);
+    CHECK(dark->position_inferred);
+    CHECK(dark->map_row == row);
+    CHECK(dark->map_col == col);
+    const MarkerDetection expected = makeDetection(
+        row, col, expected_track, moved_foot, moved_distance, moved_rotation,
+        false);
+    CHECK_NEAR(dark->x, expected.x, 1e-2);
+    CHECK_NEAR(dark->y, expected.y, 1e-2);
+  }
+
+  const LocalizationPipeline pipeline(map_path, 2, geometry, false, true);
+  const LocalizationResult fully_lit = pipeline.localize(
+      initial, intrinsics, distortion, initial_rotation, initial_distance,
+      frame_size);
+  CHECK(fully_lit.status == LocalizationStatus::SUCCESS);
+  CHECK(fully_lit.pnp_solver == "known_rotation");
+  const LocalizationResult localization = pipeline.localize(
+      reconstructed.detections, intrinsics, distortion, moved_rotation,
+      *reconstructed.normalization_distance, frame_size);
+  CHECK(localization.status == LocalizationStatus::SUCCESS);
+  CHECK(localization.pose_valid);
+  CHECK(localization.pnp_solver == "known_rotation");
+  CHECK(localization.pose_markers.size() == 2);
+  CHECK_NEAR(localization.distance_used, moved_distance, 1e-3);
+  CHECK_NEAR(localization.camera_to_plane_distance, moved_distance, 1e-3);
+  const cv::Vec3d recovered_camera_position(
+      localization.camera_position_world.at<double>(0, 0),
+      localization.camera_position_world.at<double>(1, 0),
+      localization.camera_position_world.at<double>(2, 0));
+  const cv::Vec3d expected_camera_position(
+      moved_foot.x, moved_foot.y, grid.gridOrigin().z - moved_distance);
+  CHECK_NEAR(cv::norm(recovered_camera_position - expected_camera_position),
+             0.0, 1e-3);
+
+  const LocalizationPipeline ap3p_with_reconstruction(
+      map_path, 2, geometry, true, true);
+  const LocalizationResult fully_lit_ap3p = ap3p_with_reconstruction.localize(
+      initial, intrinsics, distortion, initial_rotation, initial_distance,
+      frame_size);
+  CHECK(fully_lit_ap3p.status == LocalizationStatus::SUCCESS);
+  CHECK(fully_lit_ap3p.pnp_solver == "ap3p");
+  CHECK(fully_lit_ap3p.pose_markers.size() == 4);
+  const LocalizationResult sparse_fallback =
+      ap3p_with_reconstruction.localize(
+          reconstructed.detections, intrinsics, distortion, moved_rotation,
+          *reconstructed.normalization_distance, frame_size);
+  CHECK(sparse_fallback.status == LocalizationStatus::SUCCESS);
+  CHECK(sparse_fallback.pnp_solver == "known_rotation");
+  CHECK(sparse_fallback.pose_markers.size() == 2);
+
+  const std::vector<MarkerDetection> reacquired = {
+      makeDetection(1, 1, 9, moved_foot, moved_distance, moved_rotation, false),
+      lit.back()};
+  const GridIdAssignmentResult retained = enabled.assign(
+      {}, reacquired, intrinsics, distortion, moved_rotation, moved_distance);
+  CHECK(retained.detections.size() == 4);
+  CHECK(findTrack(retained.detections, 1) != nullptr);
+  CHECK(findTrack(retained.detections, 1)->position_inferred);
+  CHECK(findTrack(retained.detections, 9) == nullptr);
+
+  enabled.forgetTracks({1});
+  const GridIdAssignmentResult transferred = enabled.assign(
+      {}, reacquired, intrinsics, distortion, moved_rotation, moved_distance);
+  CHECK(transferred.detections.size() == 4);
+  CHECK(transferred.reconstructed_marker_count == 2);
+  CHECK(findTrack(transferred.detections, 1) == nullptr);
+  CHECK(findTrack(transferred.detections, 9) != nullptr);
+
+  MarkerDetection gap_cached = reacquired.front();
+  gap_cached.id = grid.cells()[1][1];
+  gap_cached.inferred = true;
+  gap_cached.cache_anchor_eligible = false;
+  const GridIdAssignmentResult rejected_decoded_cache = enabled.assign(
+      {gap_cached}, {gap_cached}, intrinsics, distortion, moved_rotation,
+      moved_distance);
+  CHECK(rejected_decoded_cache.detections.empty());
+  CHECK(rejected_decoded_cache.rejected_blob_count == 1);
+  const GridIdAssignmentResult rejected_current_cache = enabled.assign(
+      {}, {gap_cached}, intrinsics, distortion, moved_rotation, moved_distance);
+  CHECK(rejected_current_cache.detections.empty());
+  CHECK(rejected_current_cache.rejected_blob_count == 1);
+
+  const GridIdAssignmentResult revalidated_cache = enabled.assign(
+      {}, {lit.back(), gap_cached}, intrinsics, distortion, moved_rotation,
+      moved_distance);
+  const MarkerDetection *revalidated =
+      findTrack(revalidated_cache.detections, gap_cached.track_id);
+  CHECK(revalidated != nullptr);
+  CHECK(revalidated->cache_anchor_eligible);
+
+  MarkerDetection gap_cached_second = lit.back();
+  gap_cached_second.id = grid.cells()[2][2];
+  gap_cached_second.inferred = true;
+  gap_cached_second.cache_anchor_eligible = false;
+  const GridIdAssignmentResult jointly_revalidated_cache = enabled.assign(
+      {}, {gap_cached, gap_cached_second}, intrinsics, distortion,
+      moved_rotation, moved_distance);
+  CHECK(jointly_revalidated_cache.detections.size() == 4);
+  const MarkerDetection *joint_first = findTrack(
+      jointly_revalidated_cache.detections, gap_cached.track_id);
+  const MarkerDetection *joint_second = findTrack(
+      jointly_revalidated_cache.detections, gap_cached_second.track_id);
+  CHECK(joint_first != nullptr);
+  CHECK(joint_second != nullptr);
+  CHECK(joint_first->cache_anchor_eligible);
+  CHECK(joint_second->cache_anchor_eligible);
+
+  gap_cached_second.x += 20.0F;
+  const GridIdAssignmentResult inconsistent_cache = enabled.assign(
+      {}, {gap_cached, gap_cached_second}, intrinsics, distortion,
+      moved_rotation, moved_distance);
+  CHECK(inconsistent_cache.detections.empty());
+
+  const cv::Point2d one_anchor_foot(0.61, -2.39);
+  const std::vector<MarkerDetection> one_lit = {
+      makeDetection(1, 1, 9, one_anchor_foot, moved_distance, moved_rotation,
+                    false)};
+  const GridIdAssignmentResult one_anchor = enabled.assign(
+      {}, one_lit, intrinsics, distortion, moved_rotation, moved_distance);
+  CHECK(one_anchor.detections.size() == 4);
+  CHECK(one_anchor.reconstructed_marker_count == 3);
+  CHECK(one_anchor.normalization_distance.has_value());
+  CHECK_NEAR(*one_anchor.normalization_distance, moved_distance, 1e-9);
+  const LocalizationResult one_anchor_localization = pipeline.localize(
+      one_anchor.detections, intrinsics, distortion, moved_rotation,
+      *one_anchor.normalization_distance, frame_size);
+  CHECK(one_anchor_localization.status == LocalizationStatus::SUCCESS);
+  CHECK(one_anchor_localization.pose_markers.size() == 1);
+  CHECK(one_anchor_localization.pnp_solver == "known_rotation");
+
+  const GridIdAssignmentResult no_anchor = enabled.assign(
+      {}, {}, intrinsics, distortion, moved_rotation, moved_distance);
+  CHECK(no_anchor.reconstructed_marker_count == 0);
+  CHECK(!no_anchor.normalization_distance.has_value());
+  CHECK(no_anchor.detections.empty());
+}
+
+void testOneAnchorKnownRotationUsesDownwardCameraSide() {
+  const MarkerGrid grid =
+      MarkerGrid::fromJson(fixturePath("unique_grid.json"), 2);
+  const cv::Mat intrinsics = cameraMatrix(900.0, 880.0, 640.0, 360.0);
+  const cv::Mat distortion = cv::Mat::zeros(5, 1, CV_64F);
+  const auto rotation =
+      pose_math::gridToCameraRotationFromDroneQuaternionXyzw(
+          {0.0, 0.0, 0.0, 1.0});
+  CHECK(rotation.has_value());
+  CHECK((*rotation)(2, 2) < 0.0);
+
+  constexpr double distance = 1.6;
+  const cv::Point3f point = grid.cellToGlobal(2, 2);
+  const cv::Vec3d camera_position(0.62, -2.38,
+                                  grid.gridOrigin().z + distance);
+  const cv::Vec3d translation = -(*rotation * camera_position);
+  cv::Mat rvec;
+  cv::Rodrigues(cv::Mat(*rotation), rvec);
+  const cv::Mat tvec = (cv::Mat_<double>(3, 1)
+                            << translation[0], translation[1], translation[2]);
+  std::vector<cv::Point2f> image_points;
+  cv::projectPoints(std::vector<cv::Point3f>{point}, rvec, tvec, intrinsics,
+                    distortion, image_points);
+
+  const pose_estimation::PnpEstimate pose =
+      pose_estimation::solveKnownRotation(
+          {point}, image_points, intrinsics, distortion, *rotation, distance);
+  CHECK(pose.valid);
+  CHECK_NEAR(cv::norm(pose.camera_position_object - cv::Mat(camera_position)),
+             0.0, 1e-6);
+}
+
 void testGridIdAssignmentRejectsConflictsAndDuplicateCells() {
   const MarkerGrid grid =
       MarkerGrid::fromJson(fixturePath("unique_grid.json"), 2);
@@ -1388,6 +1837,8 @@ void testMapAlignedLocalizationDoesNotNeedAnotherWindow() {
     detection.map_col = col;
     detections.push_back(detection);
   }
+  detections.back().visible = false;
+  detections.back().last_seen_age = 0.05;
 
   const LocalizationPipeline pipeline(map_path, 2, geometry);
   const LocalizationResult result = pipeline.localize(
@@ -1718,6 +2169,8 @@ int main() {
       {"short-range lookup and pose", testShortRangeLookupAndPose},
       {"bidirectional cross-grid ID assignment",
        testCrossGridIdAssignmentIsBidirectional},
+      {"short-range dark marker reconstruction",
+       testShortRangeDarkMarkerReconstruction},
       {"cross-grid ID conflict rejection",
        testCrossGridIdAssignmentRejectsIncompleteAndConflictingEvidence},
       {"centered rectangular grid coordinates",
@@ -1736,6 +2189,10 @@ int main() {
        testGridIdAssignmentNeedsACompleteDecodedWindow},
       {"grid ID propagation across camera motion",
        testGridIdAssignmentPropagatesAcrossCameraMotion},
+      {"dark marker reconstruction",
+       testDarkMarkerReconstructionUsesVisibleAnchorsAndKnownRotation},
+      {"one-anchor downward-camera pose",
+       testOneAnchorKnownRotationUsesDownwardCameraSide},
       {"grid ID conflict and duplicate rejection",
        testGridIdAssignmentRejectsConflictsAndDuplicateCells},
       {"grid ID split-anchor rejection",

@@ -20,8 +20,12 @@ struct MarkerDetection {
   bool visible = true;
   double last_seen_age = 0.0;
   bool inferred = false;
+  // False after a tracking gap until the cached cell is spatially confirmed.
+  bool cache_anchor_eligible = true;
   int map_row = -1;
   int map_col = -1;
+  // Pixel coordinates projected from a cached grid identity, not observed.
+  bool position_inferred = false;
 
   bool hasMapCell() const { return map_row >= 0 && map_col >= 0; }
 };
@@ -45,7 +49,8 @@ std::set<std::uint64_t> decoderIgnoredTracksForGridSelection(
     bool short_range_selected, bool selected_grid_locked,
     const std::set<std::uint64_t> &seen_tracks,
     const std::set<std::uint64_t> &known_main_tracks,
-    const std::set<std::uint64_t> &known_short_tracks);
+    const std::set<std::uint64_t> &known_short_tracks,
+    bool preserve_matched_track_ids = false);
 
 struct RelativeMarker {
   std::size_t detection_index = 0;
@@ -225,6 +230,9 @@ struct GridIdAssignmentResult {
   bool map_locked = false;
   bool alignment_valid = false;
   int inferred_marker_count = 0;
+  int reconstructed_marker_count = 0;
+  // Known-rotation range fitted from the current visible assigned markers.
+  std::optional<double> normalization_distance;
   int rejected_blob_count = 0;
   std::string message;
   std::vector<MarkerDetection> detections;
@@ -234,7 +242,8 @@ struct GridIdAssignmentResult {
 // the map location. It deliberately does not modify MarkerTracker state.
 class GridIdAssigner {
 public:
-  GridIdAssigner(const MarkerGrid &grid, CameraPlaneGeometry geometry);
+  GridIdAssigner(const MarkerGrid &grid, CameraPlaneGeometry geometry,
+                 bool reconstruct_dark_markers = false);
 
   GridIdAssignmentResult assign(
       const std::vector<MarkerDetection> &decoded_detections,
@@ -243,6 +252,7 @@ public:
       const cv::Matx33d &grid_to_camera_rotation,
       double camera_to_plane_distance);
 
+  bool remember(const MarkerDetection &detection);
   void forgetTracks(const std::vector<std::uint64_t> &track_ids);
   bool mapLocked() const { return !track_cells_.empty(); }
   bool hasTrack(std::uint64_t track_id) const {
@@ -259,6 +269,7 @@ private:
   CameraPlaneGeometry geometry_;
   CameraMapper camera_mapper_;
   std::map<std::uint64_t, Cell> track_cells_;
+  bool reconstruct_dark_markers_ = false;
 };
 
 // Bridges the two physical grids during a handoff. A unique lookup supplies
@@ -268,7 +279,8 @@ class CrossGridIdAssigner {
 public:
   CrossGridIdAssigner(const MarkerGrid &main_grid,
                       const ShortRangeMarkerGrid &short_range_grid,
-                      CameraPlaneGeometry geometry);
+                      CameraPlaneGeometry geometry,
+                      bool reconstruct_dark_markers = false);
 
   bool rememberUnique(const GridLookupResult &lookup,
                       const std::vector<MarkerDetection> &detections);
@@ -304,6 +316,7 @@ private:
   std::unique_ptr<CameraMapper> short_range_camera_mapper_;
   std::vector<Identity> catalog_;
   std::map<std::uint64_t, std::size_t> track_identities_;
+  bool reconstruct_dark_markers_ = false;
 };
 
 enum class LocalizationStatus {
@@ -347,7 +360,8 @@ class LocalizationPipeline {
 public:
   LocalizationPipeline(const std::string &map_file, int window_size,
                        CameraPlaneGeometry geometry,
-                       bool center_window_ap3p = false);
+                       bool center_window_ap3p = false,
+                       bool reconstruct_dark_markers = false);
 
   LocalizationResult localize(
       const std::vector<MarkerDetection> &detections,
@@ -374,9 +388,12 @@ private:
   CameraMapper camera_mapper_;
   std::unique_ptr<CameraMapper> short_range_camera_mapper_;
   bool center_window_ap3p_ = false;
+  bool reconstruct_dark_markers_ = false;
 
   LocalizationResult solveMatchedPose(
-      LocalizationResult result, const cv::Mat &camera_matrix,
+      LocalizationResult result,
+      const std::vector<MarkerDetection> &detections,
+      const cv::Mat &camera_matrix,
       const cv::Mat &dist_coeffs,
       const cv::Matx33d &grid_to_camera_rotation, double distance,
       cv::Size frame_size, bool select_center_window,

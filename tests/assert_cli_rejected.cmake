@@ -7,6 +7,9 @@ set(command "${EYE_EXECUTABLE}" "${CLI_OPTION}")
 if(DEFINED CLI_VALUE)
     list(APPEND command "${CLI_VALUE}")
 endif()
+if(DEFINED CLI_EXTRA_ARGS)
+    list(APPEND command ${CLI_EXTRA_ARGS})
+endif()
 
 execute_process(
     COMMAND ${command}

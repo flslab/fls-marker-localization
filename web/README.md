@@ -7,6 +7,26 @@ marker floor, accumulates each down-facing camera footprint, and finds the
 smallest set of unique marker windows needed for the certified route and one
 distinct launch/landing home per drone.
 
+## Marker grid generator
+
+The **Marker grid** tab authors the `fls-marker-grid` JSON format entirely in
+the browser. It describes an infinite, always-on HyperGrid by marker spacing
+instead of materializing a finite ID matrix. Its tile size is always twice the
+HyperGrid spacing, and `grid_origin` is the world-FLU position of the centre of
+tile `(0, 0)`.
+
+Each tile owns four HyperGrid markers in a centred 2×2 layout. Click tiles in
+the pan-and-zoom canvas to install a second, tighter 2×2 group of four MyGrid
+markers at its centre. MyGrid IDs form an asymmetric clockwise cyclic signature
+that is unique under rotation (and reflection) across the exported map. Click
+any marker to inspect its logical grid and global XYZ coordinates. Optional
+per-tile event lists control on, off, static, and blinking-ID mode transitions at
+arbitrary times in a simulated scene. MyGrids start off in blinking mode, so an
+`on` event creates the ID blink pattern unless a prior event selected static
+mode; a tile without events stays off. Encoding and Blender settings are embedded in the download;
+the payload width is `ceil(log2(max_ids))` and the all-ones delimiter is one bit
+longer than the payload, followed by `0`.
+
 ## Run locally
 
 ```sh

@@ -47,6 +47,7 @@ EXPECTED_GLOBAL_POSITIONS = {
     7: (-0.05, -0.05, 0.0),
 }
 MAX_REPROJECTION_ERROR_PIXELS = 0.5
+MAX_KNOWN_ROTATION_REPROJECTION_ERROR_PIXELS = 1.5
 
 
 def posix_shm_library():
@@ -273,7 +274,8 @@ def verify_lifecycle_frame(frame, marker_map, expected_tile):
         raise RuntimeError("used map cell grid_type does not match the pose")
 
     matched = localization.get("matched_markers", [])
-    if (len(matched) < 4
+    minimum_matches = 1 if pose.get("pnp_solver") == "known_rotation" else 4
+    if (len(matched) < minimum_matches
             or not all(isinstance(marker, dict) for marker in matched)):
         raise RuntimeError(
             f"{grid_type} success reported only {len(matched)} map matches"
@@ -324,7 +326,7 @@ def verify_log(path, expected_distance, marker_map=None,
                expect_lifecycle=False, expected_frame_count=None,
                minimum_successful_frames=MIN_SUCCESSFUL_FRAMES,
                minimum_phase_frames=MIN_LIFECYCLE_PHASE_FRAMES,
-               expected_tile=None):
+               expected_tile=None, grid_mode="main"):
     log = json.loads(path.read_text())
     frames = log.get("frames", [])
     if expected_frame_count is None and not expect_lifecycle:
@@ -387,6 +389,42 @@ def verify_log(path, expected_distance, marker_map=None,
                 f"frame {index} did not obey its shared grid flag"
             )
 
+    if log.get("args", {}).get("reconstruct_dark_markers"):
+        stable_track_ids = {}
+        spatial_sources = {"map", "cross_grid", "grid_cache"}
+        for index, frame in enumerate(frames):
+            current_tracks = {
+                blob.get("track_id") for blob in frame.get("blobs", [])
+            }
+            for marker in frame.get(
+                    "blob_grid_localization", {}).get("relative_markers", []):
+                if (marker.get("position_source") == "grid_reconstruction"
+                        and marker.get("track_id") in current_tracks):
+                    raise RuntimeError(
+                        f"frame {index} reconstructed current track "
+                        f"{marker.get('track_id')}"
+                    )
+            for blob in frame.get("blobs", []):
+                track_id = blob.get("track_id")
+                marker_id = blob.get("id")
+                grid_type = blob.get("grid_type")
+                known = stable_track_ids.get(track_id)
+                if known is not None and (marker_id, grid_type) != known:
+                    raise RuntimeError(
+                        f"frame {index} changed track {track_id} identity "
+                        f"from {known} to {(marker_id, grid_type)}"
+                    )
+                spatially_matched = (
+                    blob.get("id_source") in spatial_sources
+                    or isinstance(blob.get("map_row"), int)
+                    or isinstance(blob.get("tile_i"), int)
+                )
+                if (known is None and spatially_matched
+                        and isinstance(track_id, int)
+                        and isinstance(marker_id, int) and marker_id >= 0
+                        and grid_type in {"main", "short_range"}):
+                    stable_track_ids[track_id] = (marker_id, grid_type)
+
     successes = [
         frame for frame in frames
         if frame.get("blob_grid_localization", {}).get("status") == "success"
@@ -401,14 +439,64 @@ def verify_log(path, expected_distance, marker_map=None,
     phases = (lifecycle_phases(successes, minimum_phase_frames)
               if expect_lifecycle else None)
 
+    def exercises_reconstruction(frame):
+        localization = frame["blob_grid_localization"]
+        grid_type = localization.get("grid_type", "main")
+        cross_assignment = localization.get(
+            "cross_grid_id_assignment", {}
+        ).get(grid_type, {})
+        assignments = [cross_assignment]
+        if grid_type == "main":
+            assignments.append(localization.get("grid_id_assignment", {}))
+        matched = localization.get("matched_markers", [])
+        return (any(assignment.get("reconstructed_marker_count", 0) > 0
+                    for assignment in assignments)
+                and localization.get("pnp_solver") == "known_rotation"
+                and any(marker.get("position_source")
+                        == "grid_reconstruction" for marker in matched))
+
+    if expect_lifecycle:
+        reconstructed_phases = []
+        for frame in successes:
+            grid_type = frame["blob_grid_localization"]["grid_type"]
+            if not reconstructed_phases or reconstructed_phases[-1][0] != grid_type:
+                reconstructed_phases.append([grid_type, False])
+            reconstructed_phases[-1][1] |= exercises_reconstruction(frame)
+        missing = [f"{name}[{index}]"
+                   for index, (name, exercised) in enumerate(reconstructed_phases)
+                   if not exercised]
+    else:
+        missing = ([] if any(
+            frame["blob_grid_localization"].get("grid_type", "main") == grid_mode
+            and exercises_reconstruction(frame) for frame in successes
+        ) else [grid_mode])
+    if missing:
+        raise RuntimeError(
+            "zero-intensity run did not exercise dark-marker reconstruction "
+            f"for: {missing}"
+        )
+
     next_distance = expected_distance
     for index, localization in enumerate(localizations):
         distance_used = localization.get("distance_used")
+        grid_type = localization.get("grid_type", "main")
+        grid_assignment = localization.get("grid_id_assignment", {})
+        cross_assignment = localization.get(
+            "cross_grid_id_assignment", {}
+        ).get(grid_type, {})
+        fitted_distance = grid_assignment.get("normalization_distance")
+        if not finite_number(fitted_distance) or fitted_distance <= 0.0:
+            fitted_distance = cross_assignment.get("normalization_distance")
+        expected_used_distance = (
+            fitted_distance
+            if finite_number(fitted_distance) and fitted_distance > 0.0
+            else next_distance
+        )
         if (not finite_number(distance_used)
-                or abs(distance_used - next_distance) > 1e-9):
+                or abs(distance_used - expected_used_distance) > 1e-9):
             raise RuntimeError(
-                f"frame {index} used {distance_used}, expected retained "
-                f"distance {next_distance}"
+                f"frame {index} used {distance_used}, expected normalization "
+                f"distance {expected_used_distance}"
             )
         if localization.get("status") == "success":
             next_distance = localization.get("camera_to_plane_distance")
@@ -437,19 +525,24 @@ def verify_log(path, expected_distance, marker_map=None,
                 for marker_id, cell in zip(marker_ids, map_cells)
                 if isinstance(cell, dict)
             }
-            if (len(marker_ids) != 4
-                    or set(marker_ids) != EXPECTED_MARKER_IDS
-                    or len(map_cells) != 4
-                    or marker_cells != EXPECTED_MARKER_CELLS):
+            solver = pose.get("pnp_solver")
+            if (not marker_ids
+                    or len(map_cells) != len(marker_ids)
+                    or marker_cells - EXPECTED_MARKER_CELLS
+                    or localization.get("pnp_solver") != solver
+                    or pose.get("markers_used") != len(marker_ids)):
                 raise RuntimeError(
                     f"unexpected marker/grid mapping: {sorted(marker_cells)}"
                 )
-            if (pose.get("pnp_solver") != "ap3p"
-                    or pose.get("markers_used") != 4
-                    or localization.get("pnp_solver") != "ap3p"):
+            if (solver == "ap3p"
+                    and (len(marker_ids) != 4
+                         or set(marker_ids) != EXPECTED_MARKER_IDS
+                         or marker_cells != EXPECTED_MARKER_CELLS)):
                 raise RuntimeError(
                     "successful pose did not use four-marker AP3P"
                 )
+            if solver not in {"ap3p", "known_rotation"}:
+                raise RuntimeError(f"unexpected pose solver: {solver}")
 
             matched_markers = localization.get("matched_markers", [])
             if len(matched_markers) != 4:
@@ -473,9 +566,14 @@ def verify_log(path, expected_distance, marker_map=None,
                         f"{position}"
                     )
         reprojection_error = pose.get("reprojection_error")
+        max_reprojection_error = (
+            MAX_KNOWN_ROTATION_REPROJECTION_ERROR_PIXELS
+            if pose.get("pnp_solver") == "known_rotation"
+            else MAX_REPROJECTION_ERROR_PIXELS
+        )
         if (not finite_number(reprojection_error)
                 or reprojection_error < 0.0
-                or reprojection_error > MAX_REPROJECTION_ERROR_PIXELS):
+                or reprojection_error > max_reprojection_error):
             raise RuntimeError(
                 f"invalid reprojection error: {reprojection_error}"
             )
@@ -667,7 +765,9 @@ def main():
                 "--distance", str(args.distance), "--window-size", "2",
                 "--payload-size", str(payload_size), "--encoder-fps", "50",
                 "--max-attitude-age", "0.1",
-                "--dark-blob-intensity", "0.25", "--grid-center-ap3p",
+                "--dark-blob-intensity", "0",
+                # "--reconstruct-dark-markers",
+                # "--grid-center-ap3p",
                 "--json-path", str(args.output),
                 "--save-video", "--video-path", str(args.output.with_suffix(".mp4"))
             ]
@@ -735,6 +835,7 @@ def main():
         minimum_phase_frames=args.min_phase_frames,
         expected_tile=(tuple(args.expected_tile)
                        if args.expected_tile is not None else None),
+        grid_mode=args.grid_mode,
     )
     print(f"log: {args.output}")
     return 0

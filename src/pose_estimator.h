@@ -41,6 +41,13 @@ PnpEstimate solveAp3pRansac(
     const std::vector<cv::Point2f> &image_points,
     const cv::Mat &camera_matrix, const cv::Mat &distortion_coefficients);
 
+PnpEstimate solveKnownRotation(
+    const std::vector<cv::Point3f> &object_points,
+    const std::vector<cv::Point2f> &image_points,
+    const cv::Mat &camera_matrix, const cv::Mat &distortion_coefficients,
+    const cv::Matx33d &object_to_camera_rotation,
+    double camera_to_plane_distance = -1.0);
+
 PnpEstimate solvePlanarIppe(
     const std::vector<cv::Point3f> &object_points,
     const std::vector<cv::Point2f> &image_points,

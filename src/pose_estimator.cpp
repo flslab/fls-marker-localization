@@ -129,7 +129,15 @@ bool translationForKnownRotation(
     const std::vector<cv::Point3f> &object_points,
     const std::vector<cv::Point2f> &image_points,
     const cv::Mat &camera_matrix, const cv::Mat &distortion_coefficients,
-    const cv::Mat &object_to_camera_rotation, cv::Mat &translation) {
+    const cv::Mat &object_to_camera_rotation, cv::Mat &translation,
+    double camera_to_plane_distance = -1.0) {
+  const bool use_distance_constraint =
+      object_points.size() == 1 && finite(camera_to_plane_distance) &&
+      camera_to_plane_distance > 0.0;
+  if (object_points.size() != image_points.size() || object_points.empty() ||
+      (object_points.size() < 2 && !use_distance_constraint)) {
+    return false;
+  }
   std::vector<cv::Point2f> normalized_points;
   cv::undistortPoints(image_points, normalized_points, camera_matrix,
                       distortion_coefficients);
@@ -139,10 +147,12 @@ bool translationForKnownRotation(
 
   cv::Mat rotation_64f;
   object_to_camera_rotation.convertTo(rotation_64f, CV_64F);
+  const int equation_count =
+      static_cast<int>(object_points.size() * 2) +
+      (use_distance_constraint ? 1 : 0);
   cv::Mat coefficients = cv::Mat::zeros(
-      static_cast<int>(object_points.size() * 2), 3, CV_64F);
-  cv::Mat values = cv::Mat::zeros(
-      static_cast<int>(object_points.size() * 2), 1, CV_64F);
+      equation_count, 3, CV_64F);
+  cv::Mat values = cv::Mat::zeros(equation_count, 1, CV_64F);
   for (std::size_t i = 0; i < object_points.size(); ++i) {
     const cv::Point3f &point = object_points[i];
     const cv::Mat object =
@@ -159,6 +169,16 @@ bool translationForKnownRotation(
     coefficients.at<double>(row + 1, 2) = -v;
     values.at<double>(row + 1, 0) =
         v * rotated.at<double>(2, 0) - rotated.at<double>(1, 0);
+  }
+  if (use_distance_constraint) {
+    const int row = equation_count - 1;
+    for (int axis = 0; axis < 3; ++axis) {
+      coefficients.at<double>(row, axis) =
+          rotation_64f.at<double>(axis, 2);
+    }
+    const double signed_distance = std::copysign(
+        camera_to_plane_distance, rotation_64f.at<double>(2, 2));
+    values.at<double>(row, 0) = signed_distance - object_points.front().z;
   }
   return cv::solve(coefficients, values, translation, cv::DECOMP_SVD) &&
          cv::checkRange(translation);
@@ -268,6 +288,55 @@ PnpEstimate solveAp3pRansac(
     return result;
   } catch (const cv::Exception &error) {
     return {false, "AP3P RANSAC failed: " + std::string(error.what())};
+  }
+}
+
+PnpEstimate solveKnownRotation(
+    const std::vector<cv::Point3f> &object_points,
+    const std::vector<cv::Point2f> &image_points,
+    const cv::Mat &camera_matrix, const cv::Mat &distortion_coefficients,
+    const cv::Matx33d &object_to_camera_rotation,
+    double camera_to_plane_distance) {
+  if (!validCorrespondences(object_points, image_points, 1)) {
+    return {false, "known-rotation pose needs matching correspondences"};
+  }
+  if (object_points.size() == 1 &&
+      (!finite(camera_to_plane_distance) || camera_to_plane_distance <= 0.0)) {
+    return {false, "one-point known-rotation pose needs a plane distance"};
+  }
+
+  try {
+    const cv::Mat rotation = cv::Mat(object_to_camera_rotation);
+    cv::Mat translation;
+    if (!translationForKnownRotation(
+            object_points, image_points, camera_matrix,
+            distortion_coefficients, rotation, translation,
+            camera_to_plane_distance)) {
+      return {false, "could not solve translation for the known rotation"};
+    }
+    for (const cv::Point3f &point : object_points) {
+      const cv::Vec3d camera_point =
+          object_to_camera_rotation * cv::Vec3d(point.x, point.y, point.z) +
+          cv::Vec3d(translation.at<double>(0, 0),
+                    translation.at<double>(1, 0),
+                    translation.at<double>(2, 0));
+      if (!finite(camera_point[2]) || camera_point[2] <= 1e-6) {
+        return {false, "known-rotation pose placed a marker behind the camera"};
+      }
+    }
+
+    cv::Mat rvec;
+    cv::Rodrigues(rotation, rvec);
+    PnpEstimate result = makeEstimate(
+        object_points, image_points, camera_matrix, distortion_coefficients,
+        rvec, translation);
+    result.inlier_count = result.valid
+                              ? static_cast<int>(object_points.size())
+                              : 0;
+    return result;
+  } catch (const cv::Exception &error) {
+    return {false,
+            "known-rotation pose failed: " + std::string(error.what())};
   }
 }
 

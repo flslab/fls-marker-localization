@@ -44,6 +44,7 @@ struct ApplicationOptions {
   std::string grid_map_file;
   int grid_window_size = 2;
   bool grid_center_ap3p = false;
+  bool reconstruct_dark_markers = false;
   double grid_rounding_tolerance = 0.30;
   double grid_max_marker_age = 0.0;
   double max_attitude_age = 0.1;

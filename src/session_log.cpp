@@ -65,6 +65,7 @@ json optionsJson(const ApplicationOptions &options) {
           {"grid_map_file", options.grid_map_file},
           {"grid_window_size", options.grid_window_size},
           {"grid_center_ap3p", options.grid_center_ap3p},
+          {"reconstruct_dark_markers", options.reconstruct_dark_markers},
           {"grid_rounding_tolerance", options.grid_rounding_tolerance},
           {"grid_max_marker_age", options.grid_max_marker_age},
           {"max_attitude_age", options.max_attitude_age},

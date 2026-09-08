@@ -183,6 +183,19 @@ if(BUILD_TESTING)
             -DCLI_OPTION=--grid-center-ap3p
             "-DEXPECTED_PATTERN=--grid-center-ap3p requires --grid-map"
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/assert_cli_rejected.cmake)
+    add_test(NAME localization_cli_rejects_reconstruction_without_map
+        COMMAND ${CMAKE_COMMAND}
+            -DEYE_EXECUTABLE=$<TARGET_FILE:eye>
+            -DCLI_OPTION=--reconstruct-dark-markers
+            "-DEXPECTED_PATTERN=--reconstruct-dark-markers requires --grid-map"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/assert_cli_rejected.cmake)
+    add_test(NAME localization_cli_rejects_reconstruction_with_dim_blobs
+        COMMAND ${CMAKE_COMMAND}
+            -DEYE_EXECUTABLE=$<TARGET_FILE:eye>
+            -DCLI_OPTION=--reconstruct-dark-markers
+            "-DCLI_EXTRA_ARGS=--grid-map;${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/unique_grid.json;--dark-blob-intensity;0.1"
+            "-DEXPECTED_PATTERN=--reconstruct-dark-markers requires --dark-blob-intensity 0"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/assert_cli_rejected.cmake)
     add_test(NAME localization_cli_rejects_invalid_payload_size
         COMMAND ${CMAKE_COMMAND}
             -DEYE_EXECUTABLE=$<TARGET_FILE:eye>

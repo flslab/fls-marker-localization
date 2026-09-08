@@ -50,6 +50,7 @@ Run for 10 seconds:
 | `--contrast`              | —     | Double | Image contrast adjustment                             | camera default     |
 | `--brightness`            | —     | Double | Image brightness adjustment                           | camera default     |
 | `--dark-blob-intensity`   | —     | Double | Normalized marker intensity for logic-0 states        | 0                  |
+| `--reconstruct-dark-markers` | —  | Flag   | Infer dark marker pixels from the locked grid pose    | false              |
 | `--exposure`              | —     | Int    | Exposure time                                         | camera default     |
 | `--fps`                   | —     | Int    | Frame rate in frames per second                       | 120                |
 | `--stream`                | —     | Flag   | Enables video streaming                               | false              |
@@ -241,11 +242,38 @@ marker visibility at half the configured dark intensity while continuing to
 classify pixels above `0.8` as logic 1. The default `0` preserves the original
 on/off behavior.
 
+When logic-0 LEDs are fully off, enable
+`--reconstruct-dark-markers` together with `--grid-map` and
+`--dark-blob-intensity 0`. After a decoded window locks marker identities, the
+tracker uses the shared camera orientation and the currently lit, assigned
+markers to solve camera translation, then projects cached dark markers through
+the calibrated camera model. With two or more lit markers, the solve also
+updates the camera-to-plane distance; with one lit marker it retains the last
+valid distance. Reconstruction pauses when no assigned marker is lit. A marker
+must have an active cached grid identity before it goes dark; finite,
+positive-depth projections are retained at image edges so a known tile remains
+identifiable.
+
+Once a track is spatially matched to the grid, its canonical marker ID remains
+fixed until that track retires, including through decoder conflicts, attitude
+gaps, and main/short-range transitions. A track reacquired after a dark gap
+must align with a continuously visible grid anchor before it can influence the
+reconstructed grid pose.
+
+Projected positions restore the known grid image and lookup, but are not
+treated as independent pose measurements. Reconstruction normally estimates
+translation from lit markers with the known orientation
+(`pnp_solver: "known_rotation"`). With `--grid-center-ap3p`, a complete measured
+2 x 2 window uses AP3P when its reprojection check passes; sparse, dark, or
+rejected-AP3P frames fall back to the known-orientation solver. This also applies
+during short-range grid handoffs.
+
 Each frame log includes `blob_grid_localization`, with every decoded track's
 freshness/eligibility, map-lock and spatial-assignment counts, normalization
 residuals, relative cells, whether lookup ran, matched map cells/global points,
-and PnP reprojection error. It also records the distance used for that frame
-and the new camera-to-plane distance when solved. A successful `poses` record
+the number of reconstructed markers, inferred-position provenance, and PnP
+reprojection error. It also records the distance used for that frame and the
+new camera-to-plane distance when solved. A successful `poses` record
 contains the raw PnP `marker_position` (`tvec`) plus attitude-derived
 world-frame `camera_position`, `camera_orientation`, `drone_position`, and
 `drone_orientation`.

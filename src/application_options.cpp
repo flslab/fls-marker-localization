@@ -87,6 +87,8 @@ ApplicationOptions parseApplicationOptions(int argc, char **argv) {
       options.grid_window_size = parseInteger(argument, i, argc, argv);
     } else if (argument == "--grid-center-ap3p") {
       options.grid_center_ap3p = true;
+    } else if (argument == "--reconstruct-dark-markers") {
+      options.reconstruct_dark_markers = true;
     } else if (argument == "--grid-rounding-tolerance") {
       options.grid_rounding_tolerance = parseDouble(argument, i, argc, argv);
     } else if (argument == "--grid-max-marker-age") {
@@ -181,6 +183,14 @@ ApplicationOptions parseApplicationOptions(int argc, char **argv) {
   }
   if (options.grid_center_ap3p && options.grid_map_file.empty()) {
     throw std::invalid_argument("--grid-center-ap3p requires --grid-map");
+  }
+  if (options.reconstruct_dark_markers && options.grid_map_file.empty()) {
+    throw std::invalid_argument(
+        "--reconstruct-dark-markers requires --grid-map");
+  }
+  if (options.reconstruct_dark_markers && options.dark_blob_intensity != 0.0) {
+    throw std::invalid_argument(
+        "--reconstruct-dark-markers requires --dark-blob-intensity 0");
   }
   if (options.grid_center_ap3p && options.grid_window_size != 2) {
     throw std::invalid_argument(
