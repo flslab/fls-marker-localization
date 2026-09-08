@@ -1,0 +1,53 @@
+{
+  "camera": {
+    "width": 640,
+    "height": 400,
+    "frame_rate": 120.0,
+    "buffer_count": 4,
+    "pixel_format": "YUV420"
+  },
+  "calibration": {
+    "camera_matrix": [
+      [478.11017984, 0.0, 322.59805209],
+      [0.0, 478.29786406, 195.78709198],
+      [0.0, 0.0, 1.0]
+    ],
+    "distortion_coefficients": [0.0, 0.0, 0.0, 0.0, 0.0]
+  },
+  "camera_mount": {
+    "position_drone_flu_m": [0.0, 0.0, 0.0],
+    "camera_to_drone_rotation": [
+      [0.0, -1.0, 0.0],
+      [-1.0, 0.0, 0.0],
+      [0.0, 0.0, -1.0]
+    ]
+  },
+  "detector": {
+    "intensity_threshold": 160,
+    "minimum_area": 8,
+    "maximum_area": 6500,
+    "minimum_fill_ratio": 0.45,
+    "maximum_candidates": 64
+  },
+  "tracking": {
+    "maximum_pose_points": 16,
+    "initial_distance_m": 0.045,
+    "maximum_reprojection_error_px": 5.0,
+    "lattice_tolerance_cells": 0.45,
+    "projection_gate_px": 35.0,
+    "hypergrid_confirmation_frames": 3,
+    "lost_after_frames": 30,
+    "maximum_attitude_age_s": 0.1
+  },
+  "output": {
+    "directory": "logs/high_rate_localizer",
+    "annotated_video_fps": 30.0,
+    "annotated_video_name": "video.mp4",
+    "json_name": "log.json"
+  },
+  "grid_file": "hypergrid-mygrid-normal.json",
+  "shared_memory_name": "/fls_localizer_v2",
+  "landing_tile": [0, 0],
+  "video_test_landing_time_s": 16.0
+}
+
