@@ -45,8 +45,10 @@ class UdpServer:
 
     def serve(self) -> None:
         controller = self.protocol.controller
-        controller.render(force=True)
-        next_tick = monotonic() + controller.grid.bit_duration_s
+        now = monotonic()
+        controller.render(now, force=True)
+        self._log_frame(controller, now)
+        next_tick = now + controller.grid.bit_duration_s
         while self.running:
             timeout = max(0.0, min(0.25, next_tick - monotonic()))
             readable, _, _ = select.select((self.socket,), (), (), timeout)
@@ -55,7 +57,13 @@ class UdpServer:
 
             now = monotonic()
             if now >= next_tick:
-                controller.render(now)
+                # Refresh every bit, including consecutive equal bits.  A WS2811
+                # normally retains its latch indefinitely, but sending the full
+                # frame on every clock tick also recovers immediately from a
+                # disturbed SPI/data pulse and makes the physical output follow
+                # the packet clock rather than the optimization cache.
+                controller.render(now, force=True)
+                self._log_frame(controller, now)
                 elapsed_ticks = int(
                     (now - controller.phase_start) / controller.grid.bit_duration_s
                 )
@@ -63,6 +71,18 @@ class UdpServer:
                     controller.phase_start
                     + (elapsed_ticks + 1) * controller.grid.bit_duration_s
                 )
+
+    @staticmethod
+    def _log_frame(controller: MarkerGridController, now: float) -> None:
+        if not LOGGER.isEnabledFor(logging.DEBUG):
+            return
+        packet_index = controller.current_packet_index(now)
+        LOGGER.debug(
+            "frame %d/%d pixels=%s",
+            packet_index,
+            controller.grid.packet_bits - 1,
+            controller.pixels_for_packet_index(packet_index),
+        )
 
     def close(self) -> None:
         self.socket.close()
@@ -80,6 +100,14 @@ class UdpServer:
             if isinstance(request, dict):
                 request_id = request.get("request_id")
             response = self.protocol.handle(request)
+            if isinstance(request, dict) and request.get("command") == "set_mode":
+                target = request.get("tile", "all tiles")
+                LOGGER.info(
+                    "MyGrid %s -> %s (%d changed)",
+                    target,
+                    request.get("mode"),
+                    response["changed"],
+                )
         except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as error:
             response: Dict[str, Any] = {
                 "version": MarkerGridProtocol.VERSION,
@@ -184,11 +212,15 @@ def main() -> int:
     signal.signal(signal.SIGINT, server.stop)
     signal.signal(signal.SIGTERM, server.stop)
     LOGGER.info(
-        "ready on udp://%s:%d with %d row-major tiles (GPIO %d)",
+        "ready on udp://%s:%d with %d row-major tiles (GPIO %d, "
+        "MyGrid=%d, HyperGrid=%d, %.6g s/bit)",
         args.host,
         args.port,
         len(grid.tiles),
         args.gpio,
+        args.mygrid_level,
+        args.hypergrid_level,
+        grid.bit_duration_s,
     )
     try:
         server.serve()

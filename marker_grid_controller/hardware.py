@@ -28,16 +28,15 @@ class Ws2811Output:
         # RGB is intentional: these are bare WS2811 R/G/B outputs, not a GRB
         # packaged LED. Global brightness remains 255; the two logical output
         # levels are applied per channel by MarkerGridController.
-        self._color = ws.Color
         self._strip = ws.PixelStrip(
-            pixel_count,
-            gpio,
-            frequency_hz,
-            dma_channel,
-            invert,
-            255,
-            channel,
-            ws.WS2811_STRIP_RGB,
+            num=pixel_count,
+            pin=gpio,
+            freq_hz=frequency_hz,
+            dma=dma_channel,
+            invert=invert,
+            brightness=255,
+            channel=channel,
+            strip_type=ws.WS2811_STRIP_RGB,
         )
         self._strip.begin()
         self._pixel_count = pixel_count
@@ -48,12 +47,12 @@ class Ws2811Output:
                 f"expected {self._pixel_count} WS2811 values, got {len(pixels)}"
             )
         for index, (red, green, blue) in enumerate(pixels):
-            self._strip.setPixelColor(index, self._color(red, green, blue))
+            self._strip.setPixelColorRGB(index, red, green, blue)
         self._strip.show()
 
     def close(self) -> None:
         for index in range(self._pixel_count):
-            self._strip.setPixelColor(index, self._color(0, 0, 0))
+            self._strip.setPixelColorRGB(index, 0, 0, 0)
         self._strip.show()
 
 
