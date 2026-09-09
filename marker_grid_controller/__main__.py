@@ -10,7 +10,7 @@ import neopixel_spi as neopixel
 
 
 def test_leds(pixels):
-    value = 0
+    value = 1
     print("LED test started; press Ctrl+C to stop", flush=True)
     try:
         while True:
@@ -18,7 +18,7 @@ def test_leds(pixels):
                 pixels[index] = (value, value, value)
             pixels.show()
             print(f"LED test: all channels = {value}", flush=True)
-            value = 255 - value
+            value = 256 - value
             time.sleep(1)
     except KeyboardInterrupt:
         print("LED test stopped", flush=True)
