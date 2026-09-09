@@ -18,7 +18,7 @@ class LED:
         self.pixels = neopixel.NeoPixel_SPI(
             board.SPI(),
             self.num_pixels,
-            pixel_order=neopixel.GRB,
+            pixel_order=neopixel.RGB,
             auto_write=False,
             brightness=brightness
         )

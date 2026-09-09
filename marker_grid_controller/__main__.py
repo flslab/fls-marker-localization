@@ -94,20 +94,29 @@ def main():
     tiles, bit_time, packet_length = load_grid(args.grid)
     modes = {coordinate: args.initial_mode for coordinate, _ in tiles}
 
+    # Binding first also prevents a test process and a running controller from
+    # writing conflicting frames to the same SPI bus.
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp.bind((args.host, args.port))
+    udp.setblocking(False)
+
     # Same setup as fls-cf-offboard-controller/led.py.
     pixels = neopixel.NeoPixel_SPI(
         board.SPI(),
         len(tiles) * 2,
-        pixel_order=neopixel.GRB,
+        pixel_order=neopixel.RGB,
         auto_write=False,
         brightness=1.0,
     )
 
     if args.test:
-        test_leds(pixels)
-        for index in range(len(tiles) * 2):
-            pixels[index] = (0, 0, 0)
-        pixels.show()
+        try:
+            test_leds(pixels)
+        finally:
+            udp.close()
+            for index in range(len(tiles) * 2):
+                pixels[index] = (0, 0, 0)
+            pixels.show()
         return
 
     def draw(bit):
@@ -129,9 +138,6 @@ def main():
         pixels.show()
 
     allowed_ip = socket.gethostbyname(args.allow_host) if args.allow_host else None
-    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    udp.bind((args.host, args.port))
-    udp.setblocking(False)
 
     running = True
 
