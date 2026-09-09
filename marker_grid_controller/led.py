@@ -93,7 +93,7 @@ if __name__ == '__main__':
 
     led = LED(num_pixels=args.n, brightness=args.brightness, color=args.color)
     # led.show_single_color(color=args.color)
-
+    led.running = True
     led.halo_loop()
 
     time.sleep(args.t)
