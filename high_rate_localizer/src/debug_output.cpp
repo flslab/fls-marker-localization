@@ -124,6 +124,31 @@ cv::Mat DebugOutput::annotate(const cv::Mat &image,
     }
     cv::putText(annotated, rmse.str(), {12, 68}, cv::FONT_HERSHEY_SIMPLEX, 0.43,
                 cv::Scalar(80, 255, 255), 1, cv::LINE_AA);
+
+    std::ostringstream truth;
+    truth << std::fixed << std::setprecision(4) << "GT FLU xyz ["
+          << result.ground_truth.position_world_flu[0] << ", "
+          << result.ground_truth.position_world_flu[1] << ", "
+          << result.ground_truth.position_world_flu[2] << "] m";
+    cv::putText(annotated, truth.str(), {12, 90}, cv::FONT_HERSHEY_SIMPLEX,
+                0.43, cv::Scalar(80, 255, 255), 1, cv::LINE_AA);
+
+    std::ostringstream absolute_error;
+    absolute_error << std::fixed << std::setprecision(4) << "abs error xyz ";
+    if (result.ground_truth.pose_evaluated) {
+      absolute_error << "["
+                     << std::abs(result.ground_truth.position_error_xyz[0])
+                     << ", "
+                     << std::abs(result.ground_truth.position_error_xyz[1])
+                     << ", "
+                     << std::abs(result.ground_truth.position_error_xyz[2])
+                     << "] m";
+    } else {
+      absolute_error << "[n/a]";
+    }
+    cv::putText(annotated, absolute_error.str(), {12, 112},
+                cv::FONT_HERSHEY_SIMPLEX, 0.43, cv::Scalar(80, 180, 255), 1,
+                cv::LINE_AA);
   }
   return annotated;
 }
