@@ -19,6 +19,14 @@ python3 -m marker_grid_controller \
   --initial-mode blink --mygrid-level 255 --hypergrid-level 255
 ```
 
+Hardware test—all channels alternate between 0 and 255 every second and each
+transition is printed:
+
+```sh
+python3 -m marker_grid_controller \
+  high_rate_localizer/config/hypergrid-mygrid.json --gpio 10 --test
+```
+
 Each row-major tile uses two WS2811 values:
 
 - chip 1 R/G/B: the first three MyGrid patterns

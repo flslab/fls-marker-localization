@@ -9,6 +9,21 @@ import board
 import neopixel_spi as neopixel
 
 
+def test_leds(pixels):
+    value = 0
+    print("LED test started; press Ctrl+C to stop", flush=True)
+    try:
+        while True:
+            for index in range(len(pixels)):
+                pixels[index] = (value, value, value)
+            pixels.show()
+            print(f"LED test: all channels = {value}", flush=True)
+            value = 255 - value
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("LED test stopped", flush=True)
+
+
 def load_grid(path):
     with open(path, encoding="utf-8") as file:
         grid = json.load(file)
@@ -62,6 +77,11 @@ def main():
     )
     parser.add_argument("--mygrid-level", type=int, default=255)
     parser.add_argument("--hypergrid-level", type=int, default=255)
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help="alternate every LED between 0 and 255 once per second",
+    )
     args = parser.parse_args()
 
     if args.gpio != 10:
@@ -82,6 +102,13 @@ def main():
         auto_write=False,
         brightness=1.0,
     )
+
+    if args.test:
+        test_leds(pixels)
+        for index in range(len(tiles) * 2):
+            pixels[index] = (0, 0, 0)
+        pixels.show()
+        return
 
     def draw(bit):
         for index, (coordinate, patterns) in enumerate(tiles):
