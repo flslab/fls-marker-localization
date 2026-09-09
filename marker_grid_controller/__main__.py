@@ -132,7 +132,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="accept commands only from this orchestrator host or IP",
     )
     parser.add_argument("--gpio", type=int, default=10, help="WS2811 data GPIO")
-    parser.add_argument("--frequency-hz", type=int, default=800_000)
+    parser.add_argument(
+        "--frequency-hz",
+        type=int,
+        default=800_000,
+        help=(
+            "WS2811 wire rate; use 400000 when the chips' SET pins are tied "
+            "to VDD (default: 800000)"
+        ),
+    )
     parser.add_argument("--dma-channel", type=int, default=10)
     parser.add_argument("--mygrid-level", type=int, default=255)
     parser.add_argument("--hypergrid-level", type=int, default=255)
