@@ -137,8 +137,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=800_000,
         help=(
-            "WS2811 wire rate; use 400000 when the chips' SET pins are tied "
-            "to VDD (default: 800000)"
+            "compatibility option retained for existing launch commands; "
+            "NeoPixel_SPI configures the SPI waveform"
         ),
     )
     parser.add_argument("--dma-channel", type=int, default=10)
@@ -175,12 +175,6 @@ def main() -> int:
 
     grid = GridDefinition.load(args.grid)
     pixel_count = len(grid.tiles) * 2
-    wire_duration_s = pixel_count * 24 / args.frequency_hz
-    if wire_duration_s >= grid.bit_duration_s:
-        raise SystemExit(
-            f"{pixel_count} WS2811 chips need at least {wire_duration_s:g} s "
-            f"per update, longer than the {grid.bit_duration_s:g} s bit period"
-        )
     if args.check:
         print(f"{len(grid.tiles)} tiles, {pixel_count} WS2811 chips")
         print(

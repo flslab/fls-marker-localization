@@ -1,4 +1,4 @@
-"""WS2811 output adapter for Raspberry Pi GPIO 10 / SPI0 MOSI."""
+"""WS2811 output using the proven offboard-controller NeoPixel SPI stack."""
 
 from __future__ import annotations
 
@@ -8,6 +8,14 @@ from .controller import RGB
 
 
 class Ws2811Output:
+    """Adapt marker-grid RGB frames to Adafruit ``NeoPixel_SPI``.
+
+    This intentionally matches ``fls-cf-offboard-controller/led.py``: it uses
+    ``board.SPI()``, GRB wire order, disabled auto-write, and full library
+    brightness. MarkerGridController applies the independent MyGrid and
+    HyperGrid levels to the individual channel values.
+    """
+
     def __init__(
         self,
         pixel_count: int,
@@ -18,42 +26,47 @@ class Ws2811Output:
         invert: bool = False,
         channel: int = 0,
     ) -> None:
+        if gpio != 10:
+            raise ValueError("NeoPixel SPI output requires GPIO 10 / SPI0 MOSI")
+        if invert:
+            raise ValueError("NeoPixel SPI output does not support inversion")
+        if channel != 0:
+            raise ValueError("NeoPixel SPI output requires channel 0")
+        # These arguments remain accepted so existing launch commands and
+        # manifests do not break. NeoPixel_SPI owns the SPI waveform settings.
+        del frequency_hz, dma_channel
+
         try:
-            import rpi_ws281x as ws
+            import board
+            import neopixel_spi as neopixel
         except ImportError as error:
             raise RuntimeError(
-                "rpi_ws281x is required on the marker-grid Raspberry Pi"
+                "adafruit-blinka and adafruit-circuitpython-neopixel-spi are "
+                "required on the marker-grid Raspberry Pi"
             ) from error
 
-        # RGB is intentional: these are bare WS2811 R/G/B outputs, not a GRB
-        # packaged LED. Global brightness remains 255; the two logical output
-        # levels are applied per channel by MarkerGridController.
-        self._strip = ws.PixelStrip(
-            num=pixel_count,
-            pin=gpio,
-            freq_hz=frequency_hz,
-            dma=dma_channel,
-            invert=invert,
-            brightness=255,
-            channel=channel,
-            strip_type=ws.WS2811_STRIP_RGB,
-        )
-        self._strip.begin()
         self._pixel_count = pixel_count
+        self._pixels = neopixel.NeoPixel_SPI(
+            board.SPI(),
+            pixel_count,
+            pixel_order=neopixel.GRB,
+            auto_write=False,
+            brightness=1.0,
+        )
 
     def write(self, pixels: Sequence[RGB]) -> None:
         if len(pixels) != self._pixel_count:
             raise ValueError(
                 f"expected {self._pixel_count} WS2811 values, got {len(pixels)}"
             )
-        for index, (red, green, blue) in enumerate(pixels):
-            self._strip.setPixelColorRGB(index, red, green, blue)
-        self._strip.show()
+        for index, color in enumerate(pixels):
+            self._pixels[index] = tuple(int(component) for component in color)
+        self._pixels.show()
 
     def close(self) -> None:
         for index in range(self._pixel_count):
-            self._strip.setPixelColorRGB(index, 0, 0, 0)
-        self._strip.show()
+            self._pixels[index] = (0, 0, 0)
+        self._pixels.show()
 
 
 class DryRunOutput:

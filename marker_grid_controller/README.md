@@ -1,9 +1,10 @@
 # Marker-grid LED controller
 
 This is the Raspberry Pi Zero W node for the physical MyGrid/HyperGrid. It is
-Python because network commands are sparse and the `rpi_ws281x` library hands
-the timing-sensitive WS2811 transfer to the Pi's DMA/SPI peripheral. A C++
-daemon would add build and deployment work without improving the LED waveform.
+Python because network commands are sparse and the Adafruit `NeoPixel_SPI`
+stack handles the timing-sensitive GPIO 10 transfer. The hardware adapter uses
+the same `board.SPI()`, GRB order, manual `show()`, and brightness settings as
+the proven `fls-cf-offboard-controller/led.py` implementation.
 
 The grid is controlled only by the swarm orchestrator. Drones report lifecycle
 events through their existing orchestrator connection; they do not connect to
@@ -36,14 +37,14 @@ single hardware dependency in the node's virtual environment:
 sudo raspi-config nonint do_spi 0
 python3 -m pip install -r marker_grid_controller/requirements.txt
 python3 -m marker_grid_controller \
-  high_rate_localizer/config/hypergrid-mygrid-normal.json --check
+  high_rate_localizer/config/hypergrid-mygrid.json --check
 ```
 
 For a no-GPIO integration test:
 
 ```sh
 python3 -m marker_grid_controller \
-  high_rate_localizer/config/hypergrid-mygrid-normal.json --dry-run
+  high_rate_localizer/config/hypergrid-mygrid.json --dry-run
 ```
 
 The orchestrator starts the production process. Direct invocation is:
@@ -53,6 +54,22 @@ python3 -m marker_grid_controller GRID.json \
   --host 0.0.0.0 --port 5558 --allow-host ORCHESTRATOR_IP --gpio 10 \
   --initial-mode blink --mygrid-level 255 --hypergrid-level 255
 ```
+
+## Zero-output and wire-rate check
+
+`--mygrid-level` controls chip 1 R/G/B and chip 2 R. `--hypergrid-level`
+controls chip 2 G/B. Setting only one level to zero intentionally leaves the
+other group active. To transmit an unambiguous all-zero frame continuously,
+set both levels to zero and start MyGrid in `off` mode:
+
+```sh
+python3 -m marker_grid_controller GRID.json --gpio 10 \
+  --initial-mode off --mygrid-level 0 --hypergrid-level 0 --verbose
+```
+
+Every verbose `pixels=` tuple must be `(0, 0, 0)` in this test. If it is and
+the LEDs remain illuminated, verify that the runtime has the updated adapter
+and the same dependencies as `fls-cf-offboard-controller/led.py`.
 
 ## UDP protocol
 
