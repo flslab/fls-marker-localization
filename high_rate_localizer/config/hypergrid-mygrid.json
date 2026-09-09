@@ -234,9 +234,9 @@
     "delimiter_pattern": "111110",
     "packet_format": "[4-bit ID][5 × 1][0]",
     "payload_bit_order": "most_significant_first",
-    "blink_frequency_hz": 50,
-    "bit_frequency_hz": 50,
-    "bit_duration_s": 0.02
+    "blink_frequency_hz": 20,
+    "bit_frequency_hz": 20,
+    "bit_duration_s": 0.05
   },
   "blender": {
     "scene_fps": 120,
