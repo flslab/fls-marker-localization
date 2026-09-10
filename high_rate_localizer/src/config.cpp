@@ -37,6 +37,20 @@ cv::Vec3d readVec3(const json &value, const char *field) {
 
 } // namespace
 
+void applyOutputTag(OutputConfig &output, const std::string &tag) {
+  if (tag.empty()) {
+    return;
+  }
+  const auto tagged_name = [&tag](const std::string &name) {
+    std::filesystem::path path(name);
+    path.replace_filename(path.stem().string() + "_" + tag +
+                          path.extension().string());
+    return path.string();
+  };
+  output.annotated_video_name = tagged_name(output.annotated_video_name);
+  output.json_name = tagged_name(output.json_name);
+}
+
 ApplicationConfig loadApplicationConfig(const std::filesystem::path &path) {
   std::ifstream input(path);
   if (!input) {

@@ -55,6 +55,10 @@ shared-memory publication continue at the camera rate. JSON serialization and
 video encoding run on a background thread; video frames are dropped first if
 debug output falls behind.
 
+The production runner also accepts `--tag TAG`. When present, it writes
+`log_TAG.json` and `video_TAG.mp4`, matching the filenames collected by the
+LightBender orchestrator.
+
 The JSON retains the established `args`, `config`, and `frames` structure and
 can be opened directly in the repository's web log viewer.
 

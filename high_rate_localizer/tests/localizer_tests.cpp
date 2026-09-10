@@ -250,6 +250,24 @@ void testTrajectory() {
           "cumulative position RMSE is incorrect");
 }
 
+void testOutputTag() {
+  flsloc::OutputConfig output;
+  output.annotated_video_name = "captures/video.mp4";
+  output.json_name = "log.json";
+  flsloc::applyOutputTag(output, "mission_2026-09-10_12-34-56");
+  require(output.annotated_video_name ==
+              "captures/video_mission_2026-09-10_12-34-56.mp4",
+          "tag was not added to the video filename");
+  require(output.json_name == "log_mission_2026-09-10_12-34-56.json",
+          "tag was not added to the log filename");
+
+  flsloc::OutputConfig untagged;
+  flsloc::applyOutputTag(untagged, "");
+  require(untagged.annotated_video_name == "video.mp4" &&
+              untagged.json_name == "log.json",
+          "an empty tag changed the output filenames");
+}
+
 } // namespace
 
 int main() try {
@@ -260,6 +278,7 @@ int main() try {
   testTakeoffAttitudeAcquisition(map);
   testHyperGrid(map);
   testTrajectory();
+  testOutputTag();
   std::cout << "all high-rate localizer tests passed" << std::endl;
   return 0;
 } catch (const std::exception &error) {

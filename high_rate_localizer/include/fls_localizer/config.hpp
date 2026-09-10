@@ -49,6 +49,8 @@ struct OutputConfig {
   std::string json_name = "log.json";
 };
 
+void applyOutputTag(OutputConfig &output, const std::string &tag);
+
 struct ApplicationConfig {
   CameraConfig camera;
   CalibrationConfig calibration;

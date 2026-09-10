@@ -17,13 +17,40 @@ namespace {
 std::atomic<bool> running{true};
 void stop(int) { running.store(false); }
 
+struct Arguments {
+  std::filesystem::path config;
+  std::string tag;
+};
+
+Arguments parse(int argc, char **argv) {
+  Arguments result;
+  for (int index = 1; index < argc; ++index) {
+    const std::string option = argv[index];
+    if (index + 1 >= argc) {
+      throw std::runtime_error("missing value after " + option);
+    }
+    if (option == "--config") {
+      result.config = argv[++index];
+    } else if (option == "--tag") {
+      result.tag = argv[++index];
+    } else {
+      throw std::runtime_error("unknown option: " + option);
+    }
+  }
+  if (result.config.empty()) {
+    throw std::runtime_error(
+        "usage: fls_localizer --config FILE [--tag TAG]");
+  }
+  return result;
+}
+
 } // namespace
 
 int main(int argc, char **argv) try {
-  if (argc != 3 || std::string(argv[1]) != "--config") {
-    throw std::runtime_error("usage: fls_localizer --config FILE");
-  }
-  flsloc::ApplicationConfig config = flsloc::loadApplicationConfig(argv[2]);
+  const Arguments arguments = parse(argc, argv);
+  flsloc::ApplicationConfig config =
+      flsloc::loadApplicationConfig(arguments.config);
+  flsloc::applyOutputTag(config.output, arguments.tag);
   flsloc::GridMap map = flsloc::GridMap::load(config.grid_file);
   flsloc::LocalizationPipeline pipeline(config, map);
   flsloc::LibcameraSource camera(config.camera);
