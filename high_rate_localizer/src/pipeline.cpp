@@ -319,6 +319,7 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
             PoseSolution pose = pose_solver_.solveWithAttitude(
                 matches, controller.quaternion_xyzw, predicted_distance);
             if (acceptable(pose)) {
+              shared_attitude_pose_ready_ = true;
               state_ = LocalizerState::LandingTracking;
               result.tile_i = landing_tile->i;
               result.tile_j = landing_tile->j;
@@ -337,6 +338,7 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
           PoseSolution pose = pose_solver_.solveWithAttitude(
               hyper_matches, controller.quaternion_xyzw, predicted_distance);
           if (acceptable(pose)) {
+            shared_attitude_pose_ready_ = true;
             if (state_ == LocalizerState::Lost &&
                 !controller.landing_requested) {
               state_ = LocalizerState::HyperGridTracking;
@@ -361,13 +363,20 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
 
       if (!pose_used && state_ == LocalizerState::TakeoffTracking &&
           start_tile_) {
+        // The unconstrained initial PnP pose and the EKF attitude can imply
+        // different camera positions even when both explain the same image.
+        // Allow one conservative acquisition before enforcing the normal
+        // per-frame association gate.
+        const double gate = shared_attitude_pose_ready_
+                                ? config_.tracking.projection_gate_px
+                                : config_.tracking.projection_gate_px * 4.0;
         auto matches = matchKnownTile(*start_tile_, result.blobs,
-                                      predicted_camera, world_to_camera,
-                                      config_.tracking.projection_gate_px);
+                                      predicted_camera, world_to_camera, gate);
         if (matches.size() >= 2) {
           PoseSolution pose = pose_solver_.solveWithAttitude(
               matches, controller.quaternion_xyzw, predicted_distance);
           if (acceptable(pose)) {
+            shared_attitude_pose_ready_ = true;
             usePose(result, PoseSource::MyGrid, std::move(matches),
                     std::move(pose));
             pose_used = true;

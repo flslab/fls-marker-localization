@@ -2,6 +2,7 @@
 #include "fls_localizer/config.hpp"
 #include "fls_localizer/grid_map.hpp"
 #include "fls_localizer/hypergrid.hpp"
+#include "fls_localizer/pipeline.hpp"
 #include "fls_localizer/pose_solver.hpp"
 #include "fls_localizer/trajectory.hpp"
 
@@ -116,6 +117,79 @@ void testPose(const flsloc::GridMap &map) {
           "FLU position transform is incorrect");
 }
 
+void testTakeoffAttitudeAcquisition(const flsloc::GridMap &map) {
+  flsloc::ApplicationConfig config = testConfig();
+  config.calibration.camera_matrix =
+      (cv::Mat_<double>(3, 3) << 478.11017984, 0.0, 322.59805209, 0.0,
+       478.29786406, 195.78709198, 0.0, 0.0, 1.0);
+  config.calibration.distortion =
+      (cv::Mat_<double>(5, 1) << 0.159361045, 0.00175631861, -0.000966795628,
+       0.001165244, -1.18066737);
+  config.tracking.initial_distance_m = 0.045;
+  config.tracking.maximum_reprojection_error_px = 5.0;
+  config.tracking.projection_gate_px = 35.0;
+
+  const flsloc::MyGridTile *tile = map.findTile(0, 0);
+  require(tile != nullptr, "takeoff test tile missing");
+  const std::array<cv::Point2f, 4> centers{
+      cv::Point2f(432.880F, 336.835F), cv::Point2f(157.069F, 323.528F),
+      cv::Point2f(166.407F, 47.305F), cv::Point2f(447.958F, 60.872F)};
+  const int packet_bits =
+      map.payloadBits() + static_cast<int>(map.delimiterPattern().size());
+  flsloc::LocalizationPipeline pipeline(config, map);
+  flsloc::FrameResult initial;
+  std::uint64_t frame = 0;
+  double timestamp = 0.0;
+  for (; frame < 300; ++frame) {
+    timestamp = frame / 120.0;
+    const int bit =
+        static_cast<int>(timestamp / map.bitDurationSeconds()) % packet_bits;
+    cv::Mat gray = cv::Mat::zeros(400, 640, CV_8UC1);
+    for (int marker = 0; marker < 4; ++marker) {
+      const int id = tile->markers[marker].id;
+      const bool on =
+          bit < map.payloadBits()
+              ? ((id >> (map.payloadBits() - bit - 1)) & 1) != 0
+              : map.delimiterPattern()[bit - map.payloadBits()] == '1';
+      if (on) {
+        cv::circle(gray, centers[marker], 8, cv::Scalar(255), -1);
+      }
+    }
+    initial = pipeline.process(frame, timestamp, gray, {});
+    if (initial.state == flsloc::LocalizerState::InitialPoseReady) {
+      break;
+    }
+  }
+  require(initial.state == flsloc::LocalizerState::InitialPoseReady,
+          "takeoff test did not decode the initial pose");
+
+  cv::Mat static_markers = cv::Mat::zeros(400, 640, CV_8UC1);
+  for (const cv::Point2f &center : centers) {
+    cv::circle(static_markers, center, 8, cv::Scalar(255), -1);
+  }
+  const double yaw = -1.522218;
+  flsloc::ControllerInput controller;
+  controller.attitude_valid = true;
+  controller.ekf_reset_generation = initial.initial_pose_generation;
+  controller.timestamp = timestamp + 1.0 / 120.0;
+  controller.quaternion_xyzw = {0.0, 0.0, std::sin(yaw / 2.0),
+                                std::cos(yaw / 2.0)};
+  const flsloc::FrameResult acquired = pipeline.process(
+      ++frame, controller.timestamp, static_markers, controller);
+  require(acquired.state == flsloc::LocalizerState::TakeoffTracking,
+          "takeoff did not enter shared-attitude tracking");
+  require(acquired.pose.valid && acquired.matched.size() == 4,
+          "wide takeoff acquisition did not recover the known tile");
+  require(acquired.pose.reprojection_rms < 2.0,
+          "shared-attitude takeoff pose was not geometrically valid");
+
+  controller.timestamp += 1.0 / 120.0;
+  const flsloc::FrameResult tracked = pipeline.process(
+      ++frame, controller.timestamp, static_markers, controller);
+  require(tracked.pose.valid && tracked.matched.size() == 4,
+          "normal projection gate did not retain the acquired takeoff pose");
+}
+
 void testHyperGrid(const flsloc::GridMap &map) {
   flsloc::ApplicationConfig config = testConfig();
   flsloc::PoseSolver solver(config);
@@ -183,6 +257,7 @@ int main() try {
   testGrid(map);
   testBlink(map);
   testPose(map);
+  testTakeoffAttitudeAcquisition(map);
   testHyperGrid(map);
   testTrajectory();
   std::cout << "all high-rate localizer tests passed" << std::endl;

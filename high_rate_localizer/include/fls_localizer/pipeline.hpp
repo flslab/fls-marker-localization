@@ -53,6 +53,7 @@ private:
   std::uint32_t initial_pose_generation_ = 0;
   int hypergrid_confirmations_ = 0;
   int invalid_frames_ = 0;
+  bool shared_attitude_pose_ready_ = false;
   float hypergrid_acquisition_height_m_ = 0.0F;
   std::uint32_t session_generation_ = 0;
 };
