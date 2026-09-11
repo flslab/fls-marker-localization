@@ -41,7 +41,8 @@ std::uint32_t localizerChecksum(const shared::LocalizerBlock &block) {
 
 class SharedMemory::Impl {
 public:
-  explicit Impl(const std::string &name) {
+  Impl(const std::string &name, PoseTechnique pose_technique)
+      : pose_technique_(pose_technique) {
     descriptor_ = shm_open(name.c_str(), O_CREAT | O_RDWR, 0660);
     if (descriptor_ < 0 ||
         ftruncate(descriptor_, sizeof(shared::Layout)) != 0) {
@@ -115,6 +116,7 @@ public:
   }
 
   void publish(const FrameResult &result) {
+    const PoseSolution &pose = result.sharedMemoryPose(pose_technique_);
     shared::LocalizerBlock block{};
     block.pose_sequence = pose_sequence_;
     block.frame_id = result.frame_id;
@@ -124,24 +126,24 @@ public:
     block.state = static_cast<std::uint8_t>(result.state);
     block.pose_source = static_cast<std::uint8_t>(result.source);
     block.mygrid_request = static_cast<std::uint8_t>(result.mygrid_request);
-    block.pose_valid = result.pose.valid ? 1 : 0;
+    block.pose_valid = pose.accepted ? 1 : 0;
     block.tile_i = result.tile_i;
     block.tile_j = result.tile_j;
     block.processing_ms = static_cast<float>(result.processing_ms);
     block.hypergrid_acquisition_height_m =
         result.hypergrid_acquisition_height_m;
-    if (result.pose.valid) {
+    if (pose.accepted) {
       ++pose_sequence_;
       block.pose_sequence = pose_sequence_;
-      block.x = static_cast<float>(result.pose.drone_position_world[0]);
-      block.y = static_cast<float>(result.pose.drone_position_world[1]);
-      block.z = static_cast<float>(result.pose.drone_position_world[2]);
-      block.qx = static_cast<float>(result.pose.drone_quaternion_xyzw[0]);
-      block.qy = static_cast<float>(result.pose.drone_quaternion_xyzw[1]);
-      block.qz = static_cast<float>(result.pose.drone_quaternion_xyzw[2]);
-      block.qw = static_cast<float>(result.pose.drone_quaternion_xyzw[3]);
-      block.initial_yaw = static_cast<float>(result.pose.drone_rpy[2]);
-      block.reprojection_rms = static_cast<float>(result.pose.reprojection_rms);
+      block.x = static_cast<float>(pose.drone_position_world[0]);
+      block.y = static_cast<float>(pose.drone_position_world[1]);
+      block.z = static_cast<float>(pose.drone_position_world[2]);
+      block.qx = static_cast<float>(pose.drone_quaternion_xyzw[0]);
+      block.qy = static_cast<float>(pose.drone_quaternion_xyzw[1]);
+      block.qz = static_cast<float>(pose.drone_quaternion_xyzw[2]);
+      block.qw = static_cast<float>(pose.drone_quaternion_xyzw[3]);
+      block.initial_yaw = static_cast<float>(pose.drone_rpy[2]);
+      block.reprojection_rms = static_cast<float>(pose.reprojection_rms);
     }
     write(block);
   }
@@ -169,10 +171,12 @@ private:
   int descriptor_ = -1;
   shared::Layout *layout_ = nullptr;
   std::uint32_t pose_sequence_ = 0;
+  PoseTechnique pose_technique_ = PoseTechnique::SharedAttitude;
 };
 
-SharedMemory::SharedMemory(const std::string &name)
-    : impl_(std::make_unique<Impl>(name)) {}
+SharedMemory::SharedMemory(const std::string &name,
+                           PoseTechnique pose_technique)
+    : impl_(std::make_unique<Impl>(name, pose_technique)) {}
 SharedMemory::~SharedMemory() = default;
 ControllerInput SharedMemory::readController() const {
   return impl_->readController();

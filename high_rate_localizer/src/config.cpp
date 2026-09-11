@@ -35,6 +35,19 @@ cv::Vec3d readVec3(const json &value, const char *field) {
           value[2].get<double>()};
 }
 
+PoseTechnique readPoseTechnique(const json &root) {
+  const std::string value =
+      root.value("shared_memory_pose_technique", "shared_attitude");
+  if (value == "shared_attitude") {
+    return PoseTechnique::SharedAttitude;
+  }
+  if (value == "pnp") {
+    return PoseTechnique::Pnp;
+  }
+  throw std::runtime_error(
+      "shared_memory_pose_technique must be shared_attitude or pnp");
+}
+
 } // namespace
 
 void applyOutputTag(OutputConfig &output, const std::string &tag) {
@@ -144,6 +157,7 @@ ApplicationConfig loadApplicationConfig(const std::filesystem::path &path) {
   }
   config.shared_memory_name =
       root.value("shared_memory_name", config.shared_memory_name);
+  config.shared_memory_pose_technique = readPoseTechnique(root);
   if (root.contains("landing_tile")) {
     config.default_landing_tile_i = root["landing_tile"].at(0).get<int>();
     config.default_landing_tile_j = root["landing_tile"].at(1).get<int>();

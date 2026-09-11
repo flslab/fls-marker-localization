@@ -43,6 +43,12 @@ The localizer writes:
 - selected tile, feature count, reprojection RMS, and processing time.
 - conservative HyperGrid acquisition height in metres.
 
+`shared_memory_pose_technique` in the localizer JSON chooses whether normal
+tracking samples contain the accepted `shared_attitude` or `pnp` pose. The
+initial pose always comes from PnP because it is the input used to initialize
+the controller EKF; only after that reset can the controller provide shared
+attitude. The shared-memory ABI is unchanged by this selection.
+
 `pose_source` is `0=none`, `1=MyGrid`, `2=HyperGrid`.
 `mygrid_request` is `0=blink`, `1=static`, `2=off`.
 

@@ -40,7 +40,59 @@ cv::Vec4d quaternion(const json &value) {
   return *normalized;
 }
 
+cv::Matx33d rotationFromRpy(const cv::Vec3d &rpy) {
+  const double cr = std::cos(rpy[0]);
+  const double sr = std::sin(rpy[0]);
+  const double cp = std::cos(rpy[1]);
+  const double sp = std::sin(rpy[1]);
+  const double cy = std::cos(rpy[2]);
+  const double sy = std::sin(rpy[2]);
+  return {cy * cp,
+          cy * sp * sr - sy * cr,
+          cy * sp * cr + sy * sr,
+          sy * cp,
+          sy * sp * sr + cy * cr,
+          sy * sp * cr - cy * sr,
+          -sp,
+          cp * sr,
+          cp * cr};
+}
+
 } // namespace
+
+OrientationErrorModel::OrientationErrorModel(OrientationErrorConfig config)
+    : config_(config), random_(config.seed) {
+  for (int axis = 0; axis < 3; ++axis) {
+    if (!std::isfinite(config_.bias_rpy_rad[axis]) ||
+        !std::isfinite(config_.noise_stddev_rpy_rad[axis]) ||
+        config_.noise_stddev_rpy_rad[axis] < 0.0) {
+      throw std::invalid_argument(
+          "orientation bias must be finite and noise standard deviations "
+          "must be finite and non-negative");
+    }
+    enabled_ = enabled_ || config_.bias_rpy_rad[axis] != 0.0 ||
+               config_.noise_stddev_rpy_rad[axis] != 0.0;
+  }
+}
+
+cv::Vec4d OrientationErrorModel::apply(const cv::Vec4d &quaternion_xyzw) {
+  const auto normalized = normalizeQuaternion(quaternion_xyzw);
+  if (!normalized) {
+    throw std::invalid_argument("cannot perturb an invalid quaternion");
+  }
+  if (!enabled_) {
+    return *normalized;
+  }
+  const cv::Matx33d rotation = *rotationFromQuaternion(*normalized);
+  cv::Vec3d error_rpy = config_.bias_rpy_rad;
+  for (int axis = 0; axis < 3; ++axis) {
+    if (config_.noise_stddev_rpy_rad[axis] > 0.0) {
+      error_rpy[axis] +=
+          config_.noise_stddev_rpy_rad[axis] * standard_normal_(random_);
+    }
+  }
+  return quaternionFromRotation(rotation * rotationFromRpy(error_rpy));
+}
 
 GroundTruthTrajectory
 GroundTruthTrajectory::load(const std::filesystem::path &path) {
@@ -114,10 +166,11 @@ void TrajectoryEvaluator::evaluate(const TrajectorySample &truth,
   evaluation.position_world_flu = truth.position_world_flu;
   evaluation.quaternion_xyzw = truth.quaternion_xyzw;
 
-  if (result.pose.valid) {
+  const PoseSolution &pose = result.trackingPose();
+  if (pose.accepted) {
     evaluation.pose_evaluated = true;
     evaluation.position_error_xyz =
-        result.pose.drone_position_world - truth.position_world_flu;
+        pose.drone_position_world - truth.position_world_flu;
     const double squared_error =
         evaluation.position_error_xyz.dot(evaluation.position_error_xyz);
     evaluation.position_rmse_frame_m = std::sqrt(squared_error);

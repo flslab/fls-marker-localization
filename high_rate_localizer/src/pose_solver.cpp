@@ -16,13 +16,6 @@ cv::Matx33d matx(const cv::Mat &value) {
   return result;
 }
 
-double rotationDifference(const cv::Matx33d &left, const cv::Matx33d &right) {
-  const cv::Matx33d relative = left * right.t();
-  const double cosine =
-      std::clamp((cv::trace(cv::Mat(relative))[0] - 1.0) * 0.5, -1.0, 1.0);
-  return std::acos(cosine);
-}
-
 void correspondences(const std::vector<MatchedPoint> &matches,
                      std::vector<cv::Point3f> &object_points,
                      std::vector<cv::Point2f> &image_points) {
@@ -129,8 +122,7 @@ cv::Matx33d PoseSolver::worldToCameraFromDrone(
 std::optional<PoseSolver::IppeCandidate>
 PoseSolver::selectIppe(const std::vector<cv::Point3f> &object_points,
                        const std::vector<cv::Point2f> &image_points,
-                       const std::optional<cv::Matx33d> &expected_rotation,
-                       double expected_distance, bool ignore_yaw) const {
+                       double expected_distance) const {
   if (object_points.size() < 4 || object_points.size() != image_points.size()) {
     return std::nullopt;
   }
@@ -177,21 +169,6 @@ PoseSolver::selectIppe(const std::vector<cv::Point3f> &object_points,
     candidate.reprojection_rms =
         reprojectionRms(object_points, image_points, rotation, translation);
     candidate.cost = candidate.reprojection_rms;
-    if (expected_rotation) {
-      if (ignore_yaw) {
-        const cv::Vec3d actual_normal(rotation(0, 2), rotation(1, 2),
-                                      rotation(2, 2));
-        const cv::Vec3d expected_normal((*expected_rotation)(0, 2),
-                                        (*expected_rotation)(1, 2),
-                                        (*expected_rotation)(2, 2));
-        candidate.cost +=
-            20.0 * std::acos(std::clamp(actual_normal.dot(expected_normal),
-                                        -1.0, 1.0));
-      } else {
-        candidate.cost +=
-            20.0 * rotationDifference(rotation, *expected_rotation);
-      }
-    }
     if (expected_distance > 0.0) {
       candidate.cost +=
           10.0 *
@@ -270,6 +247,7 @@ PoseSolution PoseSolver::makeSolution(const cv::Matx33d &world_to_camera,
   result.solver = std::move(solver);
   result.tvec_world_to_camera = translation;
   result.world_to_camera_rotation = world_to_camera;
+  result.marker_rpy_camera = rpyFromRotation(world_to_camera);
   result.camera_position_world = -(world_to_camera.t() * translation);
   result.drone_position_world =
       result.camera_position_world - drone_to_world * camera_position_drone_;
@@ -287,12 +265,20 @@ PoseSolution PoseSolver::makeSolution(const cv::Matx33d &world_to_camera,
 
 PoseSolution PoseSolver::solveInitial(const std::vector<MatchedPoint> &matches,
                                       double expected_distance) const {
+  return solveWithPnp(matches, expected_distance);
+}
+
+PoseSolution
+PoseSolver::solveWithPnp(const std::vector<MatchedPoint> &matches,
+                         double expected_distance) const {
   std::vector<cv::Point3f> object_points;
   std::vector<cv::Point2f> image_points;
   correspondences(matches, object_points, image_points);
-  const cv::Matx33d expected = camera_to_drone_.t();
-  const auto ippe = selectIppe(object_points, image_points, expected,
-                               expected_distance, true);
+  if (object_points.size() < 4) {
+    return {};
+  }
+  const auto ippe =
+      selectIppe(object_points, image_points, expected_distance);
   if (ippe) {
     const cv::Matx33d camera_to_world = ippe->rotation.t();
     const cv::Matx33d drone_to_world = camera_to_world * camera_to_drone_.t();
@@ -324,8 +310,7 @@ PoseSolution PoseSolver::solveInitial(const std::vector<MatchedPoint> &matches,
 
 PoseSolution
 PoseSolver::solveWithAttitude(const std::vector<MatchedPoint> &matches,
-                              const cv::Vec4d &drone_quaternion_xyzw,
-                              double expected_distance) const {
+                              const cv::Vec4d &drone_quaternion_xyzw) const {
   const auto drone_to_world = rotationFromQuaternion(drone_quaternion_xyzw);
   if (!drone_to_world) {
     return {};
@@ -336,12 +321,6 @@ PoseSolver::solveWithAttitude(const std::vector<MatchedPoint> &matches,
   std::vector<cv::Point2f> image_points;
   correspondences(matches, object_points, image_points);
 
-  std::string solver = "known_rotation";
-  if (matches.size() >= 4) {
-    const auto ippe = selectIppe(object_points, image_points, expected_rotation,
-                                 expected_distance, false);
-    solver = ippe ? "ippe+shared_attitude" : "ippe_degenerate+shared_attitude";
-  }
   cv::Vec3d translation;
   if (!translationForRotation(object_points, image_points, expected_rotation,
                               translation)) {
@@ -349,8 +328,8 @@ PoseSolver::solveWithAttitude(const std::vector<MatchedPoint> &matches,
   }
   const double error = reprojectionRms(object_points, image_points,
                                        expected_rotation, translation);
-  return makeSolution(expected_rotation, translation, *drone_to_world, solver,
-                      error);
+  return makeSolution(expected_rotation, translation, *drone_to_world,
+                      "known_rotation", error);
 }
 
 } // namespace flsloc

@@ -111,10 +111,19 @@ void testPose(const flsloc::GridMap &map) {
     matches.push_back(match);
   }
   const flsloc::PoseSolution pose =
-      solver.solveWithAttitude(matches, {0.0, 0.0, 0.0, 1.0}, 0.20);
+      solver.solveWithAttitude(matches, {0.0, 0.0, 0.0, 1.0});
   require(pose.valid, "IPPE/shared-attitude pose failed");
   require(cv::norm(pose.camera_position_world - expected_camera) < 1e-6,
           "FLU position transform is incorrect");
+  const flsloc::PoseSolution pnp_pose = solver.solveWithPnp(matches);
+  require(pnp_pose.valid, "PnP-only pose failed");
+  require(cv::norm(pnp_pose.camera_position_world - expected_camera) < 1e-6,
+          "PnP-only camera position is incorrect");
+  require(cv::norm(pnp_pose.drone_position_world - expected_camera) < 1e-6,
+          "PnP-only drone position is incorrect");
+  require(cv::norm(pnp_pose.marker_rpy_camera -
+                   flsloc::rpyFromRotation(rotation)) < 1e-6,
+          "marker orientation in the camera frame is incorrect");
 }
 
 void testTakeoffAttitudeAcquisition(const flsloc::GridMap &map) {
@@ -178,15 +187,17 @@ void testTakeoffAttitudeAcquisition(const flsloc::GridMap &map) {
       ++frame, controller.timestamp, static_markers, controller);
   require(acquired.state == flsloc::LocalizerState::TakeoffTracking,
           "takeoff did not enter shared-attitude tracking");
-  require(acquired.pose.valid && acquired.matched.size() == 4,
+  require(acquired.trackingPose().accepted && acquired.matched.size() == 4,
           "wide takeoff acquisition did not recover the known tile");
-  require(acquired.pose.reprojection_rms < 2.0,
+  require(acquired.trackingPose().reprojection_rms < 2.0,
           "shared-attitude takeoff pose was not geometrically valid");
+  require(acquired.poses.shared_attitude.valid && acquired.poses.pnp.valid,
+          "takeoff tracking did not compute both pose techniques");
 
   controller.timestamp += 1.0 / 120.0;
   const flsloc::FrameResult tracked = pipeline.process(
       ++frame, controller.timestamp, static_markers, controller);
-  require(tracked.pose.valid && tracked.matched.size() == 4,
+  require(tracked.trackingPose().accepted && tracked.matched.size() == 4,
           "normal projection gate did not retain the acquired takeoff pose");
 }
 
@@ -233,8 +244,10 @@ void testTrajectory() {
 
   flsloc::TrajectoryEvaluator evaluator;
   flsloc::FrameResult first;
-  first.pose.valid = true;
-  first.pose.drone_position_world = {1.1, 1.8, 3.3};
+  first.poses.shared_attitude.valid = true;
+  first.poses.shared_attitude.accepted = true;
+  first.poses.shared_attitude.drone_position_world = {1.1, 1.8, 3.3};
+  first.tracking_pose_technique = flsloc::PoseTechnique::SharedAttitude;
   evaluator.evaluate(trajectory.sample(0), first);
   const double first_squared_error = 0.01 + 0.04 + 0.09;
   require(std::abs(first.ground_truth.position_rmse_frame_m -
@@ -242,12 +255,51 @@ void testTrajectory() {
           "per-frame position RMSE is incorrect");
 
   flsloc::FrameResult second;
-  second.pose.valid = true;
-  second.pose.drone_position_world = trajectory.sample(1).position_world_flu;
+  second.poses.shared_attitude.valid = true;
+  second.poses.shared_attitude.accepted = true;
+  second.poses.shared_attitude.drone_position_world =
+      trajectory.sample(1).position_world_flu;
+  second.tracking_pose_technique = flsloc::PoseTechnique::SharedAttitude;
   evaluator.evaluate(trajectory.sample(1), second);
   require(std::abs(second.ground_truth.position_rmse_cumulative_m -
                    std::sqrt(first_squared_error / 2.0)) < 1e-12,
           "cumulative position RMSE is incorrect");
+}
+
+void testOrientationErrorModel() {
+  constexpr double degrees_to_radians = 3.14159265358979323846 / 180.0;
+  const cv::Vec4d trajectory_quaternion{0.1, -0.2, 0.3, 0.9};
+  const cv::Vec4d normalized_trajectory_quaternion =
+      *flsloc::normalizeQuaternion(trajectory_quaternion);
+  flsloc::OrientationErrorModel exact({});
+  require(cv::norm(exact.apply(trajectory_quaternion) -
+                   normalized_trajectory_quaternion) < 1e-12,
+          "zero orientation error changed the trajectory attitude");
+
+  flsloc::OrientationErrorConfig bias_config;
+  bias_config.bias_rpy_rad = cv::Vec3d(10.0, -5.0, 20.0) * degrees_to_radians;
+  flsloc::OrientationErrorModel biased(bias_config);
+  const cv::Vec4d biased_quaternion = biased.apply({0.0, 0.0, 0.0, 1.0});
+  const auto biased_rotation =
+      flsloc::rotationFromQuaternion(biased_quaternion);
+  require(biased_rotation.has_value(),
+          "orientation bias made an invalid quaternion");
+  require(cv::norm(flsloc::rpyFromRotation(*biased_rotation) -
+                   bias_config.bias_rpy_rad) < 1e-12,
+          "orientation bias was not applied as roll/pitch/yaw");
+
+  flsloc::OrientationErrorConfig noise_config;
+  noise_config.noise_stddev_rpy_rad = {0.1, 0.2, 0.3};
+  noise_config.seed = 1234;
+  flsloc::OrientationErrorModel first(noise_config);
+  flsloc::OrientationErrorModel second(noise_config);
+  const cv::Vec4d identity{0.0, 0.0, 0.0, 1.0};
+  const cv::Vec4d first_sample = first.apply(identity);
+  const cv::Vec4d repeated_sample = second.apply(identity);
+  require(cv::norm(first_sample - repeated_sample) < 1e-12,
+          "orientation noise is not reproducible for a fixed seed");
+  require(cv::norm(first_sample - first.apply(identity)) > 1e-6,
+          "orientation noise did not vary between frames");
 }
 
 void testOutputTag() {
@@ -268,6 +320,24 @@ void testOutputTag() {
           "an empty tag changed the output filenames");
 }
 
+void testSharedMemoryPoseSelection() {
+  flsloc::FrameResult tracking;
+  tracking.state = flsloc::LocalizerState::HyperGridTracking;
+  tracking.poses.shared_attitude.drone_position_world = {1.0, 2.0, 3.0};
+  tracking.poses.pnp.drone_position_world = {4.0, 5.0, 6.0};
+  require(tracking.sharedMemoryPose(flsloc::PoseTechnique::SharedAttitude)
+                  .drone_position_world[0] == 1.0,
+          "shared-memory selection ignored shared_attitude configuration");
+  require(tracking.sharedMemoryPose(flsloc::PoseTechnique::Pnp)
+                  .drone_position_world[0] == 4.0,
+          "shared-memory selection ignored pnp configuration");
+
+  tracking.state = flsloc::LocalizerState::InitialPoseReady;
+  require(tracking.sharedMemoryPose(flsloc::PoseTechnique::SharedAttitude)
+                  .drone_position_world[0] == 4.0,
+          "initial bootstrap pose was not selected from PnP");
+}
+
 } // namespace
 
 int main() try {
@@ -278,7 +348,9 @@ int main() try {
   testTakeoffAttitudeAcquisition(map);
   testHyperGrid(map);
   testTrajectory();
+  testOrientationErrorModel();
   testOutputTag();
+  testSharedMemoryPoseSelection();
   std::cout << "all high-rate localizer tests passed" << std::endl;
   return 0;
 } catch (const std::exception &error) {

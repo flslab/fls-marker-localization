@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <random>
 #include <vector>
 
 namespace flsloc {
@@ -14,6 +15,25 @@ struct TrajectorySample {
   double timestamp = 0.0;
   cv::Vec3d position_world_flu{};
   cv::Vec4d quaternion_xyzw{0.0, 0.0, 0.0, 1.0};
+};
+
+struct OrientationErrorConfig {
+  cv::Vec3d bias_rpy_rad{};
+  cv::Vec3d noise_stddev_rpy_rad{};
+  std::uint64_t seed = 0;
+};
+
+class OrientationErrorModel {
+public:
+  explicit OrientationErrorModel(OrientationErrorConfig config);
+
+  cv::Vec4d apply(const cv::Vec4d &quaternion_xyzw);
+
+private:
+  OrientationErrorConfig config_;
+  bool enabled_ = false;
+  std::mt19937_64 random_;
+  std::normal_distribution<double> standard_normal_{0.0, 1.0};
 };
 
 class GroundTruthTrajectory {

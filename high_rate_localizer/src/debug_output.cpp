@@ -31,14 +31,42 @@ std::string webGridType(PoseSource source) {
   return source == PoseSource::MyGrid ? "short_range" : "main";
 }
 
+json poseJson(const PoseSolution &pose, PoseTechnique technique,
+              PoseSource source, std::size_t markers_used,
+              const json &used_marker_ids) {
+  return {{"camera_pose", true},
+          {"source", "blob_grid"},
+          {"grid_type", webGridType(source)},
+          {"pose_technique", toString(technique)},
+          {"valid", pose.valid},
+          {"accepted", pose.accepted},
+          {"marker_position_camera_m", vec3(pose.tvec_world_to_camera)},
+          {"marker_orientation_camera_rpy_rad",
+           vec3(pose.marker_rpy_camera)},
+          {"camera_position_world_flu_m", vec3(pose.camera_position_world)},
+          {"camera_orientation_world_flu_rpy_rad", vec3(pose.camera_rpy)},
+          {"drone_position_world_flu_m", vec3(pose.drone_position_world)},
+          {"drone_orientation_world_flu_rpy_rad", vec3(pose.drone_rpy)},
+          {"drone_orientation_world_flu_quaternion_xyzw",
+           vec4(pose.drone_quaternion_xyzw)},
+          {"camera_to_marker_plane_distance_m",
+           rounded(pose.camera_to_plane_distance)},
+          {"solver", pose.solver},
+          {"markers_used", markers_used},
+          {"used_marker_ids", used_marker_ids},
+          {"reprojection_rms_px", rounded(pose.reprojection_rms)}};
+}
+
 } // namespace
 
-DebugOutput::DebugOutput(const ApplicationConfig &config, const GridMap &map,
-                         std::string input_description,
-                         std::string trajectory_description)
+DebugOutput::DebugOutput(
+    const ApplicationConfig &config, const GridMap &map,
+    std::string input_description, std::string trajectory_description,
+    std::optional<OrientationErrorConfig> orientation_error)
     : config_(config), map_(map),
       input_description_(std::move(input_description)),
-      trajectory_description_(std::move(trajectory_description)) {
+      trajectory_description_(std::move(trajectory_description)),
+      orientation_error_(orientation_error) {
   std::filesystem::create_directories(config_.output.directory);
   log_path_ = config_.output.directory / config_.output.json_name;
   temporary_log_path_ = log_path_;
@@ -98,13 +126,14 @@ cv::Mat DebugOutput::annotate(const cv::Mat &image,
       std::to_string(result.processing_ms).substr(0, 4) + " ms";
   cv::putText(annotated, line, {12, 24}, cv::FONT_HERSHEY_SIMPLEX, 0.5,
               cv::Scalar(80, 255, 80), 1, cv::LINE_AA);
-  if (result.pose.valid) {
+  const PoseSolution &tracking_pose = result.trackingPose();
+  if (tracking_pose.accepted) {
     std::ostringstream pose;
     pose << std::fixed << std::setprecision(3) << "FLU ["
-         << result.pose.drone_position_world[0] << ", "
-         << result.pose.drone_position_world[1] << ", "
-         << result.pose.drone_position_world[2]
-         << "]  rms=" << result.pose.reprojection_rms;
+         << tracking_pose.drone_position_world[0] << ", "
+         << tracking_pose.drone_position_world[1] << ", "
+         << tracking_pose.drone_position_world[2]
+         << "]  rms=" << tracking_pose.reprojection_rms;
     cv::putText(annotated, pose.str(), {12, 46}, cv::FONT_HERSHEY_SIMPLEX, 0.45,
                 cv::Scalar(80, 255, 80), 1, cv::LINE_AA);
   }
@@ -209,6 +238,14 @@ json DebugOutput::metadata() const {
   if (!trajectory_description_.empty()) {
     args["trajectory_input_path"] = trajectory_description_;
   }
+  if (orientation_error_) {
+    constexpr double radians_to_degrees = 180.0 / 3.14159265358979323846;
+    args["orientation_bias_rpy_deg"] =
+        vec3(orientation_error_->bias_rpy_rad * radians_to_degrees);
+    args["orientation_noise_stddev_rpy_deg"] =
+        vec3(orientation_error_->noise_stddev_rpy_rad * radians_to_degrees);
+    args["orientation_noise_seed"] = orientation_error_->seed;
+  }
   return {
       {"args", std::move(args)},
       {"config",
@@ -223,12 +260,14 @@ json DebugOutput::metadata() const {
           {"infinite", true},
           {"cell_spacing", map_.hypergridSpacing()},
           {"grid_origin", {map_.origin().x, map_.origin().y, map_.origin().z}},
-          {"pnp_solver", "ippe+shared_attitude"},
+          {"pose_techniques", {"shared_attitude", "pnp"}},
           {"camera_offset_drone",
            {config_.camera_position_drone_flu[0],
             config_.camera_position_drone_flu[1],
             config_.camera_position_drone_flu[2]}},
           {"shared_memory_position", "drone_position_world_FLU"},
+          {"shared_memory_pose_technique",
+           toString(config_.shared_memory_pose_technique)},
           {"maximum_pose_points", config_.tracking.maximum_pose_points},
           {"hypergrid_acquisition_height_m",
            2.0 * map_.hypergridSpacing() *
@@ -240,7 +279,7 @@ json DebugOutput::metadata() const {
           {"short_range", {{"tiles", short_range_tiles}}}}}}}};
 }
 
-json DebugOutput::frameJson(const FrameResult &result) {
+json DebugOutput::frameJson(const FrameResult &result) const {
   json blobs = json::array();
   for (const Blob &blob : result.blobs) {
     blobs.push_back({{"x", rounded(blob.center.x, 1000.0)},
@@ -269,6 +308,11 @@ json DebugOutput::frameJson(const FrameResult &result) {
     used_ids.push_back(point.id);
   }
 
+  const PoseSolution &tracking_pose = result.trackingPose();
+  const PoseTechnique shared_memory_technique =
+      result.sharedMemoryPoseTechnique(config_.shared_memory_pose_technique);
+  const PoseSolution &shared_memory_pose =
+      result.sharedMemoryPose(config_.shared_memory_pose_technique);
   json frame = {{"time", rounded(result.timestamp)},
                 {"frame_id", result.frame_id},
                 {"blobs", blobs},
@@ -277,7 +321,16 @@ json DebugOutput::frameJson(const FrameResult &result) {
                  {{"status", result.status},
                   {"state", toString(result.state)},
                   {"grid_type", webGridType(result.source)},
-                  {"pose_valid", result.pose.valid},
+                  {"pose_valid", tracking_pose.accepted},
+                  {"tracking_pose_technique",
+                   toString(result.tracking_pose_technique)},
+                  {"shared_memory_pose_technique",
+                   toString(shared_memory_technique)},
+                  {"shared_memory_pose_accepted",
+                   shared_memory_pose.accepted},
+                  {"pose_accepted_by_technique",
+                   {{"shared_attitude", result.poses.shared_attitude.accepted},
+                    {"pnp", result.poses.pnp.accepted}}},
                   {"accepted_marker_count", result.matched.size()},
                   {"required_marker_count", 4},
                   {"candidate_count", result.blobs.size()},
@@ -288,27 +341,19 @@ json DebugOutput::frameJson(const FrameResult &result) {
     frame["blob_grid_localization"]["tile"] = {{"i", result.tile_i},
                                                {"j", result.tile_j}};
   }
-  if (result.pose.valid) {
-    frame["blob_grid_localization"]["reprojection_error"] =
-        rounded(result.pose.reprojection_rms);
-    frame["blob_grid_localization"]["camera_to_plane_distance"] =
-        rounded(result.pose.camera_to_plane_distance);
-    frame["poses"].push_back(
-        {{"camera_pose", true},
-         {"source", "blob_grid"},
-         {"grid_type", webGridType(result.source)},
-         {"camera_position", vec3(result.pose.camera_position_world)},
-         {"camera_orientation", vec3(result.pose.camera_rpy)},
-         {"drone_position", vec3(result.pose.drone_position_world)},
-         {"drone_orientation", vec3(result.pose.drone_rpy)},
-         {"drone_quaternion_xyzw", vec4(result.pose.drone_quaternion_xyzw)},
-         {"marker_position", vec3(result.pose.tvec_world_to_camera)},
-         {"camera_to_plane_distance",
-          rounded(result.pose.camera_to_plane_distance)},
-         {"pnp_solver", result.pose.solver},
-         {"markers_used", result.matched.size()},
-         {"used_marker_ids", used_ids},
-         {"reprojection_error", rounded(result.pose.reprojection_rms)}});
+  if (tracking_pose.valid) {
+    frame["blob_grid_localization"]["reprojection_rms_px"] =
+        rounded(tracking_pose.reprojection_rms);
+    frame["blob_grid_localization"]["camera_to_marker_plane_distance_m"] =
+        rounded(tracking_pose.camera_to_plane_distance);
+  }
+  for (const PoseTechnique technique : {PoseTechnique::SharedAttitude,
+                                        PoseTechnique::Pnp}) {
+    const PoseSolution &pose = result.poses.forTechnique(technique);
+    if (pose.valid) {
+      frame["poses"].push_back(poseJson(pose, technique, result.source,
+                                        result.matched.size(), used_ids));
+    }
   }
   if (result.ground_truth.available) {
     json truth = {
@@ -316,6 +361,8 @@ json DebugOutput::frameJson(const FrameResult &result) {
         {"blender_frame", result.ground_truth.blender_frame},
         {"position", vec3(result.ground_truth.position_world_flu)},
         {"quaternion_xyzw", vec4(result.ground_truth.quaternion_xyzw)},
+        {"simulated_ekf_quaternion_xyzw",
+         vec4(result.ground_truth.simulated_ekf_quaternion_xyzw)},
         {"pose_evaluated", result.ground_truth.pose_evaluated},
         {"evaluated_pose_count", result.ground_truth.evaluated_pose_count}};
     if (result.ground_truth.pose_evaluated) {

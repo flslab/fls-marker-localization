@@ -1,5 +1,7 @@
 #pragma once
 
+#include "fls_localizer/types.hpp"
+
 #include <filesystem>
 #include <opencv2/core.hpp>
 #include <string>
@@ -62,6 +64,7 @@ struct ApplicationConfig {
   cv::Vec3d camera_position_drone_flu{0.0, 0.0, 0.0};
   std::filesystem::path grid_file;
   std::string shared_memory_name = "/fls_localizer_v2";
+  PoseTechnique shared_memory_pose_technique = PoseTechnique::SharedAttitude;
   int default_landing_tile_i = 0;
   int default_landing_tile_j = 0;
   double video_test_landing_time_s = 16.0;

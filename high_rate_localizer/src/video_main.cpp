@@ -8,8 +8,10 @@
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <numbers>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -22,7 +24,60 @@ struct Arguments {
   std::filesystem::path grid;
   std::filesystem::path trajectory;
   std::filesystem::path output;
+  flsloc::OrientationErrorConfig orientation_error;
 };
+
+double parseNumber(const std::string &value, const std::string &option) {
+  std::size_t parsed = 0;
+  double result = 0.0;
+  try {
+    result = std::stod(value, &parsed);
+  } catch (const std::exception &) {
+    throw std::runtime_error(option + " requires a numeric value");
+  }
+  if (parsed != value.size() || !std::isfinite(result)) {
+    throw std::runtime_error(option + " requires a finite numeric value");
+  }
+  return result;
+}
+
+cv::Vec3d parseRpyDegrees(const std::string &value, const std::string &option) {
+  std::stringstream input(value);
+  std::vector<double> values;
+  std::string component;
+  while (std::getline(input, component, ',')) {
+    values.push_back(parseNumber(component, option));
+  }
+  if (values.size() == 1) {
+    values.resize(3, values.front());
+  }
+  if (values.size() != 3) {
+    throw std::runtime_error(option + " requires DEG or ROLL,PITCH,YAW");
+  }
+  constexpr double degrees_to_radians = std::numbers::pi / 180.0;
+  return {values[0] * degrees_to_radians, values[1] * degrees_to_radians,
+          values[2] * degrees_to_radians};
+}
+
+std::uint64_t parseSeed(const std::string &value) {
+  if (value.empty() || value.front() == '-') {
+    throw std::runtime_error(
+        "--orientation-noise-seed requires an unsigned integer");
+  }
+  std::size_t parsed = 0;
+  unsigned long long seed = 0;
+  try {
+    seed = std::stoull(value, &parsed);
+  } catch (const std::exception &) {
+    throw std::runtime_error(
+        "--orientation-noise-seed requires an unsigned integer");
+  }
+  if (parsed != value.size()) {
+    throw std::runtime_error(
+        "--orientation-noise-seed requires an unsigned integer");
+  }
+  return static_cast<std::uint64_t>(seed);
+}
 
 Arguments parse(int argc, char **argv) {
   Arguments result;
@@ -41,6 +96,20 @@ Arguments parse(int argc, char **argv) {
       result.trajectory = argv[++index];
     } else if (option == "--output-dir") {
       result.output = argv[++index];
+    } else if (option == "--orientation-bias-deg") {
+      result.orientation_error.bias_rpy_rad =
+          parseRpyDegrees(argv[++index], option);
+    } else if (option == "--orientation-noise-stddev-deg") {
+      result.orientation_error.noise_stddev_rpy_rad =
+          parseRpyDegrees(argv[++index], option);
+      for (double standard_deviation :
+           result.orientation_error.noise_stddev_rpy_rad.val) {
+        if (standard_deviation < 0.0) {
+          throw std::runtime_error(option + " cannot be negative");
+        }
+      }
+    } else if (option == "--orientation-noise-seed") {
+      result.orientation_error.seed = parseSeed(argv[++index]);
     } else {
       throw std::runtime_error("unknown option: " + option);
     }
@@ -49,7 +118,10 @@ Arguments parse(int argc, char **argv) {
       result.trajectory.empty()) {
     throw std::runtime_error(
         "usage: fls_localizer_video --config FILE --video FILE "
-        "--trajectory FILE [--grid FILE] [--output-dir DIR]");
+        "--trajectory FILE [--grid FILE] [--output-dir DIR] "
+        "[--orientation-bias-deg ROLL,PITCH,YAW] "
+        "[--orientation-noise-stddev-deg ROLL,PITCH,YAW] "
+        "[--orientation-noise-seed N]");
   }
   return result;
 }
@@ -79,9 +151,11 @@ int main(int argc, char **argv) try {
   flsloc::GridMap map = flsloc::GridMap::load(config.grid_file);
   const flsloc::GroundTruthTrajectory trajectory =
       flsloc::GroundTruthTrajectory::load(arguments.trajectory);
+  flsloc::OrientationErrorModel orientation_error(arguments.orientation_error);
   flsloc::LocalizationPipeline pipeline(config, map);
   flsloc::DebugOutput output(config, map, arguments.video.string(),
-                             arguments.trajectory.string());
+                             arguments.trajectory.string(),
+                             arguments.orientation_error);
 
   cv::VideoCapture capture(arguments.video.string());
   if (!capture.isOpened()) {
@@ -117,12 +191,14 @@ int main(int argc, char **argv) try {
                                  : capture.get(cv::CAP_PROP_POS_MSEC) * 1e-3;
     controller.timestamp = timestamp;
     const flsloc::TrajectorySample &truth = trajectory.sample(frame_id);
-    controller.quaternion_xyzw = truth.quaternion_xyzw;
+    controller.quaternion_xyzw = orientation_error.apply(truth.quaternion_xyzw);
     controller.landing_requested =
         timestamp >= config.video_test_landing_time_s;
     flsloc::FrameResult result =
         pipeline.process(frame_id, timestamp, gray, controller);
     evaluator.evaluate(truth, result);
+    result.ground_truth.simulated_ekf_quaternion_xyzw =
+        controller.quaternion_xyzw;
     timings.push_back(result.processing_ms);
     initialized = initialized || result.initial_pose_generation > 0;
     hypergrid_locked =
@@ -131,7 +207,7 @@ int main(int argc, char **argv) try {
     landing_locked = landing_locked ||
                      result.state == flsloc::LocalizerState::LandingTracking;
     if (result.initial_pose_generation > controller.ekf_reset_generation &&
-        result.pose.valid) {
+        result.trackingPose().accepted) {
       controller.attitude_valid = true;
       controller.ekf_reset_generation = result.initial_pose_generation;
     }

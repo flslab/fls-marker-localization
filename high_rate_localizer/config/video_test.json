@@ -81,6 +81,7 @@
   },
   "grid_file": "hypergrid-mygrid-normal.json",
   "shared_memory_name": "/fls_localizer_v2",
+  "shared_memory_pose_technique": "pnp",
   "landing_tile": [
     0,
     0

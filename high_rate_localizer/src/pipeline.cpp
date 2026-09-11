@@ -58,6 +58,16 @@ const char *toString(MyGridRequest request) {
   return "blink";
 }
 
+const char *toString(PoseTechnique technique) {
+  switch (technique) {
+  case PoseTechnique::SharedAttitude:
+    return "shared_attitude";
+  case PoseTechnique::Pnp:
+    return "pnp";
+  }
+  return "pnp";
+}
+
 LocalizationPipeline::LocalizationPipeline(ApplicationConfig config,
                                            GridMap map)
     : config_(std::move(config)), map_(std::move(map)),
@@ -170,6 +180,18 @@ bool LocalizationPipeline::acceptable(const PoseSolution &pose) const {
                            config_.tracking.maximum_reprojection_error_px;
 }
 
+PoseEstimates LocalizationPipeline::solveTrackingPoses(
+    const std::vector<MatchedPoint> &matches,
+    const cv::Vec4d &drone_quaternion_xyzw) const {
+  PoseEstimates poses;
+  poses.shared_attitude = pose_solver_.solveWithAttitude(
+      matches, drone_quaternion_xyzw);
+  poses.shared_attitude.accepted = acceptable(poses.shared_attitude);
+  poses.pnp = pose_solver_.solveWithPnp(matches);
+  poses.pnp.accepted = acceptable(poses.pnp);
+  return poses;
+}
+
 cv::Vec3d
 LocalizationPipeline::predictedCameraPosition(double timestamp) const {
   if (!last_pose_.valid || last_pose_timestamp_ < 0.0) {
@@ -180,11 +202,13 @@ LocalizationPipeline::predictedCameraPosition(double timestamp) const {
   return last_pose_.camera_position_world + elapsed * camera_velocity_world_;
 }
 
-void LocalizationPipeline::usePose(FrameResult &result, PoseSource source,
-                                   std::vector<MatchedPoint> matches,
-                                   PoseSolution pose) {
+void LocalizationPipeline::usePoses(FrameResult &result, PoseSource source,
+                                    std::vector<MatchedPoint> matches,
+                                    PoseEstimates poses,
+                                    PoseTechnique tracking_technique) {
   result.source = source;
-  result.pose = std::move(pose);
+  result.poses = std::move(poses);
+  result.tracking_pose_technique = tracking_technique;
   result.matched = std::move(matches);
   result.status = "success";
   result.message = source == PoseSource::HyperGrid
@@ -198,10 +222,11 @@ void LocalizationPipeline::usePose(FrameResult &result, PoseSource source,
       blob.decoded_id = match.id;
     }
   }
+  const PoseSolution &tracking_pose = result.trackingPose();
   if (last_pose_.valid && last_pose_timestamp_ >= 0.0) {
     const double elapsed = result.timestamp - last_pose_timestamp_;
     if (elapsed > 1e-5 && elapsed < 0.5) {
-      cv::Vec3d measured_velocity = (result.pose.camera_position_world -
+      cv::Vec3d measured_velocity = (tracking_pose.camera_position_world -
                                      last_pose_.camera_position_world) /
                                     elapsed;
       const double speed = cv::norm(measured_velocity);
@@ -212,7 +237,7 @@ void LocalizationPipeline::usePose(FrameResult &result, PoseSource source,
           0.65 * camera_velocity_world_ + 0.35 * measured_velocity;
     }
   }
-  last_pose_ = result.pose;
+  last_pose_ = tracking_pose;
   last_pose_timestamp_ = result.timestamp;
   invalid_frames_ = 0;
 }
@@ -244,17 +269,19 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
       const auto signature = map_.matchSignature(decoded->ids);
       if (signature) {
         auto matches = initialMatches(*decoded, *signature, result.blobs);
-        PoseSolution pose = pose_solver_.solveInitial(
+        PoseEstimates poses;
+        poses.pnp = pose_solver_.solveInitial(
             matches, config_.tracking.initial_distance_m);
-        if (acceptable(pose)) {
+        poses.pnp.accepted = acceptable(poses.pnp);
+        if (poses.pnp.accepted) {
           start_tile_ = signature->tile;
           initial_pose_generation_ = session_generation_;
           state_ = LocalizerState::InitialPoseReady;
           mygrid_request_ = MyGridRequest::Static;
           result.tile_i = start_tile_->i;
           result.tile_j = start_tile_->j;
-          usePose(result, PoseSource::MyGrid, std::move(matches),
-                  std::move(pose));
+          usePoses(result, PoseSource::MyGrid, std::move(matches),
+                   std::move(poses), PoseTechnique::Pnp);
         } else {
           result.status = "pnp_failed";
           result.message = "decoded MyGrid ring but IPPE rejected the pose";
@@ -271,13 +298,15 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
     if (controller.attitude_valid &&
         controller.ekf_reset_generation == initial_pose_generation_) {
       state_ = LocalizerState::TakeoffTracking;
+    } else {
+      result.poses.pnp = last_pose_;
+      result.tracking_pose_technique = PoseTechnique::Pnp;
+      result.source = PoseSource::MyGrid;
+      result.tile_i = start_tile_ ? start_tile_->i : 0;
+      result.tile_j = start_tile_ ? start_tile_->j : 0;
+      result.status = "waiting_for_ekf_reset";
+      result.message = "initial yaw and position are ready for the controller";
     }
-    result.pose = last_pose_;
-    result.source = PoseSource::MyGrid;
-    result.tile_i = start_tile_ ? start_tile_->i : 0;
-    result.tile_j = start_tile_ ? start_tile_->j : 0;
-    result.status = "waiting_for_ekf_reset";
-    result.message = "initial yaw and position are ready for the controller";
   }
 
   if (state_ != LocalizerState::MyGridDecoding &&
@@ -294,7 +323,6 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
       const cv::Matx33d world_to_camera =
           pose_solver_.worldToCameraFromDrone(controller.quaternion_xyzw);
       const cv::Vec3d predicted_camera = predictedCameraPosition(timestamp);
-      const double predicted_distance = predicted_camera[2] - map_.origin().z;
       const MyGridTile *landing_tile =
           map_.findTile(controller.landing_tile_i, controller.landing_tile_j);
       if (!landing_tile) {
@@ -316,15 +344,15 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
               *landing_tile, result.blobs, predicted_camera, world_to_camera,
               config_.tracking.projection_gate_px * 4.0);
           if (matches.size() >= 4) {
-            PoseSolution pose = pose_solver_.solveWithAttitude(
-                matches, controller.quaternion_xyzw, predicted_distance);
-            if (acceptable(pose)) {
+            PoseEstimates poses =
+                solveTrackingPoses(matches, controller.quaternion_xyzw);
+            if (poses.shared_attitude.accepted) {
               shared_attitude_pose_ready_ = true;
               state_ = LocalizerState::LandingTracking;
               result.tile_i = landing_tile->i;
               result.tile_j = landing_tile->j;
-              usePose(result, PoseSource::MyGrid, std::move(matches),
-                      std::move(pose));
+              usePoses(result, PoseSource::MyGrid, std::move(matches),
+                       std::move(poses), PoseTechnique::SharedAttitude);
               pose_used = true;
             }
           }
@@ -335,9 +363,9 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
         auto hyper_matches = hypergrid_matcher_.match(
             result.blobs, predicted_camera, world_to_camera);
         if (hyper_matches.size() >= 4) {
-          PoseSolution pose = pose_solver_.solveWithAttitude(
-              hyper_matches, controller.quaternion_xyzw, predicted_distance);
-          if (acceptable(pose)) {
+          PoseEstimates poses =
+              solveTrackingPoses(hyper_matches, controller.quaternion_xyzw);
+          if (poses.shared_attitude.accepted) {
             shared_attitude_pose_ready_ = true;
             if (state_ == LocalizerState::Lost &&
                 !controller.landing_requested) {
@@ -354,8 +382,9 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
             if (state_ == LocalizerState::HyperGridTracking) {
               mygrid_request_ = MyGridRequest::Off;
             }
-            usePose(result, PoseSource::HyperGrid, std::move(hyper_matches),
-                    std::move(pose));
+            usePoses(result, PoseSource::HyperGrid,
+                     std::move(hyper_matches), std::move(poses),
+                     PoseTechnique::SharedAttitude);
             pose_used = true;
           }
         }
@@ -373,12 +402,12 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
         auto matches = matchKnownTile(*start_tile_, result.blobs,
                                       predicted_camera, world_to_camera, gate);
         if (matches.size() >= 2) {
-          PoseSolution pose = pose_solver_.solveWithAttitude(
-              matches, controller.quaternion_xyzw, predicted_distance);
-          if (acceptable(pose)) {
+          PoseEstimates poses =
+              solveTrackingPoses(matches, controller.quaternion_xyzw);
+          if (poses.shared_attitude.accepted) {
             shared_attitude_pose_ready_ = true;
-            usePose(result, PoseSource::MyGrid, std::move(matches),
-                    std::move(pose));
+            usePoses(result, PoseSource::MyGrid, std::move(matches),
+                     std::move(poses), PoseTechnique::SharedAttitude);
             pose_used = true;
           }
         }

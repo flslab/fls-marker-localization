@@ -24,10 +24,12 @@ enum class LocalizerState : std::uint8_t {
 
 enum class PoseSource : std::uint8_t { None = 0, MyGrid, HyperGrid };
 enum class MyGridRequest : std::uint8_t { Blink = 0, Static, Off };
+enum class PoseTechnique : std::uint8_t { SharedAttitude = 0, Pnp };
 
 const char *toString(LocalizerState state);
 const char *toString(PoseSource source);
 const char *toString(MyGridRequest request);
+const char *toString(PoseTechnique technique);
 
 struct Blob {
   cv::Point2f center{};
@@ -65,9 +67,11 @@ struct ControllerInput {
 
 struct PoseSolution {
   bool valid = false;
+  bool accepted = false;
   std::string solver;
   cv::Vec3d tvec_world_to_camera{};
   cv::Matx33d world_to_camera_rotation = cv::Matx33d::eye();
+  cv::Vec3d marker_rpy_camera{};
   cv::Vec3d camera_position_world{};
   cv::Vec3d drone_position_world{};
   cv::Vec3d camera_rpy{};
@@ -77,6 +81,18 @@ struct PoseSolution {
   double reprojection_rms = std::numeric_limits<double>::infinity();
 };
 
+struct PoseEstimates {
+  PoseSolution shared_attitude;
+  PoseSolution pnp;
+
+  PoseSolution &forTechnique(PoseTechnique technique) {
+    return technique == PoseTechnique::SharedAttitude ? shared_attitude : pnp;
+  }
+  const PoseSolution &forTechnique(PoseTechnique technique) const {
+    return technique == PoseTechnique::SharedAttitude ? shared_attitude : pnp;
+  }
+};
+
 struct GroundTruthEvaluation {
   bool available = false;
   bool pose_evaluated = false;
@@ -84,6 +100,7 @@ struct GroundTruthEvaluation {
   std::int64_t blender_frame = 0;
   cv::Vec3d position_world_flu{};
   cv::Vec4d quaternion_xyzw{0.0, 0.0, 0.0, 1.0};
+  cv::Vec4d simulated_ekf_quaternion_xyzw{0.0, 0.0, 0.0, 1.0};
   cv::Vec3d position_error_xyz{};
   double position_rmse_frame_m = std::numeric_limits<double>::quiet_NaN();
   double position_rmse_cumulative_m = std::numeric_limits<double>::quiet_NaN();
@@ -105,8 +122,28 @@ struct FrameResult {
   int tile_j = 0;
   std::vector<Blob> blobs;
   std::vector<MatchedPoint> matched;
-  PoseSolution pose;
+  PoseEstimates poses;
+  PoseTechnique tracking_pose_technique = PoseTechnique::Pnp;
   GroundTruthEvaluation ground_truth;
+
+  PoseSolution &trackingPose() {
+    return poses.forTechnique(tracking_pose_technique);
+  }
+  const PoseSolution &trackingPose() const {
+    return poses.forTechnique(tracking_pose_technique);
+  }
+
+  // The initial PnP pose must be published before shared attitude exists so
+  // that the controller can reset and acknowledge its EKF.
+  PoseTechnique
+  sharedMemoryPoseTechnique(PoseTechnique configured_technique) const {
+    return state == LocalizerState::InitialPoseReady ? PoseTechnique::Pnp
+                                                     : configured_technique;
+  }
+  const PoseSolution &
+  sharedMemoryPose(PoseTechnique configured_technique) const {
+    return poses.forTechnique(sharedMemoryPoseTechnique(configured_technique));
+  }
 };
 
 } // namespace flsloc

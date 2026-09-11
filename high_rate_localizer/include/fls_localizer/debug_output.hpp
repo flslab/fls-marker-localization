@@ -2,6 +2,7 @@
 
 #include "fls_localizer/config.hpp"
 #include "fls_localizer/grid_map.hpp"
+#include "fls_localizer/trajectory.hpp"
 #include "fls_localizer/types.hpp"
 
 #include <condition_variable>
@@ -10,6 +11,7 @@
 #include <mutex>
 #include <nlohmann/json_fwd.hpp>
 #include <opencv2/core.hpp>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -17,9 +19,10 @@ namespace flsloc {
 
 class DebugOutput {
 public:
-  DebugOutput(const ApplicationConfig &config, const GridMap &map,
-              std::string input_description,
-              std::string trajectory_description = {});
+  DebugOutput(
+      const ApplicationConfig &config, const GridMap &map,
+      std::string input_description, std::string trajectory_description = {},
+      std::optional<OrientationErrorConfig> orientation_error = std::nullopt);
   ~DebugOutput();
   DebugOutput(const DebugOutput &) = delete;
   DebugOutput &operator=(const DebugOutput &) = delete;
@@ -38,7 +41,7 @@ private:
     cv::Mat annotated;
   };
 
-  static nlohmann::json frameJson(const FrameResult &result);
+  nlohmann::json frameJson(const FrameResult &result) const;
   nlohmann::json metadata() const;
   void worker();
 
@@ -46,6 +49,7 @@ private:
   const GridMap &map_;
   std::string input_description_;
   std::string trajectory_description_;
+  std::optional<OrientationErrorConfig> orientation_error_;
   std::filesystem::path log_path_;
   std::filesystem::path temporary_log_path_;
   std::filesystem::path video_path_;

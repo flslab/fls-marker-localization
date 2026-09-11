@@ -20,9 +20,10 @@ public:
 
   PoseSolution solveInitial(const std::vector<MatchedPoint> &matches,
                             double expected_distance) const;
+  PoseSolution solveWithPnp(const std::vector<MatchedPoint> &matches,
+                            double expected_distance = -1.0) const;
   PoseSolution solveWithAttitude(const std::vector<MatchedPoint> &matches,
-                                 const cv::Vec4d &drone_quaternion_xyzw,
-                                 double expected_distance = -1.0) const;
+                                 const cv::Vec4d &drone_quaternion_xyzw) const;
 
   cv::Matx33d
   worldToCameraFromDrone(const cv::Vec4d &drone_quaternion_xyzw) const;
@@ -42,8 +43,7 @@ private:
   std::optional<IppeCandidate>
   selectIppe(const std::vector<cv::Point3f> &object_points,
              const std::vector<cv::Point2f> &image_points,
-             const std::optional<cv::Matx33d> &expected_rotation,
-             double expected_distance, bool ignore_yaw) const;
+             double expected_distance) const;
   bool translationForRotation(const std::vector<cv::Point3f> &object_points,
                               const std::vector<cv::Point2f> &image_points,
                               const cv::Matx33d &rotation,

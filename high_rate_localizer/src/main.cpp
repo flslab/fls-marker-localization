@@ -54,7 +54,8 @@ int main(int argc, char **argv) try {
   flsloc::GridMap map = flsloc::GridMap::load(config.grid_file);
   flsloc::LocalizationPipeline pipeline(config, map);
   flsloc::LibcameraSource camera(config.camera);
-  flsloc::SharedMemory shared_memory(config.shared_memory_name);
+  flsloc::SharedMemory shared_memory(config.shared_memory_name,
+                                     config.shared_memory_pose_technique);
   flsloc::DebugOutput output(config, map, "libcamera");
   std::signal(SIGINT, stop);
   std::signal(SIGTERM, stop);

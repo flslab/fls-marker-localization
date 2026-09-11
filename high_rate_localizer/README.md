@@ -46,6 +46,26 @@ The MP4 fixture runner accepts a grid override and output directory:
   --output-dir logs/normal
 ```
 
+It can also perturb the exact Blender attitude before passing it to the
+localizer as simulated EKF data:
+
+```sh
+./build/fls_localizer_video \
+  --config config/video_test.json \
+  --video render_lb_normal.mp4 \
+  --trajectory render_lb_normal_trajectory.json \
+  --orientation-bias-deg 1.0,-0.5,2.0 \
+  --orientation-noise-stddev-deg 0.3,0.3,1.0 \
+  --orientation-noise-seed 42
+```
+
+Bias and per-frame independent Gaussian-noise standard deviations use
+roll,pitch,yaw order. A single value applies to all three axes. Errors are
+composed onto the drone-to-world attitude in the drone/body frame. The seed
+defaults to `0`, so repeated runs are reproducible; changing it generates
+another noise realization. Omit the arguments (or pass zero values) to retain
+the exact trajectory attitude.
+
 `localizer.json` contains the calibrated physical-camera distortion.
 `video_test.json` intentionally has zero distortion because the Blender
 fixtures use an ideal pinhole camera.
@@ -59,8 +79,32 @@ The production runner also accepts `--tag TAG`. When present, it writes
 `log_TAG.json` and `video_TAG.mp4`, matching the filenames collected by the
 LightBender orchestrator.
 
-The JSON retains the established `args`, `config`, and `frames` structure and
-can be opened directly in the repository's web log viewer.
+The JSON retains the `args`, `config`, and `frames` structure and can be opened
+directly in the repository's web log viewer. Each successful tracking frame
+contains separate `poses` entries with `pose_technique` set to `pnp` and
+`shared_attitude`. Each entry logs these explicitly framed quantities:
+
+- `marker_position_camera_m` and `marker_orientation_camera_rpy_rad`;
+- `camera_position_world_flu_m` and
+  `camera_orientation_world_flu_rpy_rad`;
+- `drone_position_world_flu_m` and
+  `drone_orientation_world_flu_rpy_rad`.
+
+The PnP entry estimates rotation and translation from image/world
+correspondences alone. The shared-attitude entry uses the controller's
+drone-to-world quaternion for rotation and solves translation from the same
+correspondences. Both use the configured camera mount to derive the drone pose.
+
+Set which accepted tracking pose is published to the controller in the JSON
+configuration:
+
+```json
+"shared_memory_pose_technique": "shared_attitude"
+```
+
+The allowed values are `shared_attitude` and `pnp`. The initial bootstrap pose
+is necessarily published from PnP because the shared attitude becomes valid
+only after the controller resets and acknowledges its EKF.
 
 ## Ground-truth trajectory
 
@@ -71,9 +115,9 @@ evaluated global transform. Positions are world FLU metres and quaternions are
 drone-to-world in `x,y,z,w` order.
 
 The fixture runner requires the matching trajectory. It checks frame rate and
-frame count before processing, then supplies each trajectory quaternion as the
-simulated shared-memory EKF attitude. For every valid localized pose it records
-the 3D position RMSE
+frame count before processing, then supplies each exact or configured-perturbed
+trajectory quaternion as the simulated shared-memory EKF attitude. For every
+valid localized pose it records the 3D position RMSE
 
 ```text
 frame_rmse = sqrt(dx^2 + dy^2 + dz^2)
@@ -83,6 +127,9 @@ cumulative_rmse = sqrt(sum(dx^2 + dy^2 + dz^2) / valid_pose_count)
 Both values are drawn on the annotated video and stored in each frame's
 `ground_truth` JSON object. Frames without a localization result use `null` for
 the per-frame value; cumulative RMSE continues over previously valid poses.
+The log metadata records the bias, noise standard deviations, and seed, while
+each ground-truth entry records both the exact Blender quaternion and the
+`simulated_ekf_quaternion_xyzw` supplied to the localizer.
 
 ## State handshake
 
@@ -116,8 +163,8 @@ hold until `hypergrid_tracking`, and then continue takeoff.
 - Detection is hard-capped at 64 blobs.
 - IPPE input is spatially selected and hard-capped at 16 points.
 - Full-frame undistortion is avoided.
-- IPPE resolves planar ambiguity; translation is then solved with the shared
-  EKF attitude and the camera pose in the drone FLU frame.
+- IPPE produces the PnP-only pose. A second translation is solved against the
+  shared EKF attitude, using the same matched marker correspondences.
 - Absolute HyperGrid indices use the most recent anchored pose plus a bounded
   constant-velocity prediction. A cold start on an unlabelled lattice is never
   treated as an absolute position.
