@@ -137,13 +137,19 @@ PoseSolver::selectIppe(const std::vector<cv::Point3f> &object_points,
 
   std::optional<IppeCandidate> best;
   for (int index = 0; index < count; ++index) {
+    cv::Mat refined_rvec;
+    cv::Mat refined_tvec;
+    rvecs[index].convertTo(refined_rvec, CV_64F);
+    tvecs[index].convertTo(refined_tvec, CV_64F);
+    cv::solvePnPRefineLM(object_points, image_points, camera_matrix_,
+                         distortion_, refined_rvec, refined_tvec);
+
     cv::Mat rotation_mat;
-    cv::Rodrigues(rvecs[index], rotation_mat);
+    cv::Rodrigues(refined_rvec, rotation_mat);
     const cv::Matx33d rotation = matx(rotation_mat);
-    cv::Vec3d translation;
-    cv::Mat t64;
-    tvecs[index].convertTo(t64, CV_64F);
-    translation = {t64.at<double>(0), t64.at<double>(1), t64.at<double>(2)};
+    const cv::Vec3d translation{refined_tvec.at<double>(0),
+                                refined_tvec.at<double>(1),
+                                refined_tvec.at<double>(2)};
     const cv::Vec3d camera_position = -(rotation.t() * translation);
     if (!std::isfinite(camera_position[2]) ||
         camera_position[2] <= object_points.front().z) {
@@ -163,9 +169,9 @@ PoseSolver::selectIppe(const std::vector<cv::Point3f> &object_points,
     candidate.rotation = rotation;
     candidate.camera_position = camera_position;
     candidate.tvec = translation;
-    cv::Mat r64;
-    rvecs[index].convertTo(r64, CV_64F);
-    candidate.rvec = {r64.at<double>(0), r64.at<double>(1), r64.at<double>(2)};
+    candidate.rvec = {refined_rvec.at<double>(0),
+                      refined_rvec.at<double>(1),
+                      refined_rvec.at<double>(2)};
     candidate.reprojection_rms =
         reprojectionRms(object_points, image_points, rotation, translation);
     candidate.cost = candidate.reprojection_rms;
@@ -282,8 +288,8 @@ PoseSolver::solveWithPnp(const std::vector<MatchedPoint> &matches,
   if (ippe) {
     const cv::Matx33d camera_to_world = ippe->rotation.t();
     const cv::Matx33d drone_to_world = camera_to_world * camera_to_drone_.t();
-    return makeSolution(ippe->rotation, ippe->tvec, drone_to_world, "ippe",
-                        ippe->reprojection_rms);
+    return makeSolution(ippe->rotation, ippe->tvec, drone_to_world,
+                        "ippe_refined_lm", ippe->reprojection_rms);
   }
 
   // IPPE is singular for a perfectly fronto-parallel plane. Preserve the

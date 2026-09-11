@@ -126,6 +126,42 @@ void testPose(const flsloc::GridMap &map) {
           "marker orientation in the camera frame is incorrect");
 }
 
+void testPnpRefinement() {
+  flsloc::ApplicationConfig config = testConfig();
+  config.calibration.camera_matrix =
+      (cv::Mat_<double>(3, 3) << 478.11017984, 0.0, 322.59805209, 0.0,
+       478.29786406, 195.78709198, 0.0, 0.0, 1.0);
+  config.calibration.distortion =
+      (cv::Mat_<double>(5, 1) << 0.159361045, 0.00175631861, -0.000966795628,
+       0.001165244, -1.18066737);
+  flsloc::PoseSolver solver(config);
+
+  // A decoded marker observation from the 16:09 experiment. Raw IPPE has a
+  // 6.76 px RMS for these points, despite being a good PnP observation.
+  const std::array<cv::Point3f, 4> world{
+      cv::Point3f(0.012F, 0.012F, 0.0F),
+      cv::Point3f(0.012F, -0.012F, 0.0F),
+      cv::Point3f(-0.012F, -0.012F, 0.0F),
+      cv::Point3f(-0.012F, 0.012F, 0.0F)};
+  const std::array<cv::Point2f, 4> image{
+      cv::Point2f(209.673F, 45.615F), cv::Point2f(477.814F, 42.020F),
+      cv::Point2f(476.259F, 319.967F), cv::Point2f(206.002F, 315.155F)};
+  std::vector<flsloc::MatchedPoint> matches;
+  for (std::size_t index = 0; index < world.size(); ++index) {
+    flsloc::MatchedPoint match;
+    match.world = world[index];
+    match.image = image[index];
+    matches.push_back(match);
+  }
+
+  const flsloc::PoseSolution pose = solver.solveWithPnp(matches, 0.045);
+  require(pose.valid, "refined PnP pose failed");
+  require(pose.solver == "ippe_refined_lm",
+          "PnP pose did not use refined IPPE");
+  require(pose.reprojection_rms < 2.1,
+          "refined PnP pose still exceeds the expected reprojection error");
+}
+
 void testTakeoffAttitudeAcquisition(const flsloc::GridMap &map) {
   flsloc::ApplicationConfig config = testConfig();
   config.calibration.camera_matrix =
@@ -345,6 +381,7 @@ int main() try {
   testGrid(map);
   testBlink(map);
   testPose(map);
+  testPnpRefinement();
   testTakeoffAttitudeAcquisition(map);
   testHyperGrid(map);
   testTrajectory();

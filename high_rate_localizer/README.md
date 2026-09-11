@@ -163,8 +163,9 @@ hold until `hypergrid_tracking`, and then continue takeoff.
 - Detection is hard-capped at 64 blobs.
 - IPPE input is spatially selected and hard-capped at 16 points.
 - Full-frame undistortion is avoided.
-- IPPE produces the PnP-only pose. A second translation is solved against the
-  shared EKF attitude, using the same matched marker correspondences.
+- Each IPPE candidate is refined with Levenberg-Marquardt before selection and
+  reprojection gating to produce the PnP-only pose. A second translation is
+  solved against the shared EKF attitude using the same marker correspondences.
 - Absolute HyperGrid indices use the most recent anchored pose plus a bounded
   constant-velocity prediction. A cold start on an unlabelled lattice is never
   treated as an absolute position.
