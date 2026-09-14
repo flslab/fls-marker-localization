@@ -83,7 +83,7 @@
     "annotated_video_name": "video.mp4",
     "json_name": "log.json"
   },
-  "grid_file": "hypergrid-mygrid-4.json",
+  "grid_file": "hypergrid-mygrid-1x3.json",
   "shared_memory_name": "/fls_localizer_v2",
   "shared_memory_pose_technique": "shared_attitude",
   "landing_tile": [
