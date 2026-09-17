@@ -27,9 +27,14 @@ std::uint32_t checksum(const Block &block, std::size_t payload_begin,
 }
 
 std::uint32_t controllerChecksum(const shared::ControllerBlock &block) {
-  return checksum(block,
-                  offsetof(shared::ControllerBlock, ekf_reset_generation),
+  return checksum(block, offsetof(shared::ControllerBlock, attitude_sequence),
                   offsetof(shared::ControllerBlock, sequence_end));
+}
+
+std::uint32_t attitudeChecksum(const shared::AttitudeSample &sample) {
+  return checksum(sample,
+                  offsetof(shared::AttitudeSample, sample_sequence),
+                  offsetof(shared::AttitudeSample, sequence_end));
 }
 
 std::uint32_t localizerChecksum(const shared::LocalizerBlock &block) {
@@ -76,7 +81,7 @@ public:
     }
   }
 
-  ControllerInput readController() const {
+  ControllerInput readController(double camera_timestamp) const {
     ControllerInput result;
     shared::ControllerBlock snapshot{};
     bool stable = false;
@@ -100,15 +105,59 @@ public:
     if (!stable) {
       return result;
     }
-    result.timestamp = snapshot.timestamp;
-    result.ekf_reset_generation = snapshot.ekf_reset_generation;
     result.landing_requested = snapshot.landing_requested != 0;
     result.landing_tile_i = snapshot.landing_tile_i;
     result.landing_tile_j = snapshot.landing_tile_j;
+
+    shared::AttitudeSample closest{};
+    bool found = false;
+    double closest_distance = 0.0;
+    for (const shared::AttitudeSample &slot : layout_->attitudes) {
+      shared::AttitudeSample sample{};
+      bool sample_stable = false;
+      for (int attempt = 0; attempt < 4; ++attempt) {
+        const std::uint32_t begin =
+            __atomic_load_n(&slot.sequence_begin, __ATOMIC_ACQUIRE);
+        if (begin == 0 || (begin & 1U) != 0U) {
+          continue;
+        }
+        std::memcpy(&sample, &slot, sizeof(sample));
+        std::atomic_thread_fence(std::memory_order_acquire);
+        const std::uint32_t after =
+            __atomic_load_n(&slot.sequence_begin, __ATOMIC_ACQUIRE);
+        sample_stable =
+            begin == after && begin == sample.sequence_end &&
+            sample.checksum == attitudeChecksum(sample);
+        if (sample_stable) {
+          break;
+        }
+      }
+      if (!sample_stable || sample.sample_sequence == 0 ||
+          !std::isfinite(sample.timestamp)) {
+        continue;
+      }
+      const double distance = std::isfinite(camera_timestamp)
+                                  ? std::abs(camera_timestamp - sample.timestamp)
+                                  : 0.0;
+      if (!found || distance < closest_distance ||
+          (distance == closest_distance &&
+           sample.timestamp > closest.timestamp)) {
+        closest = sample;
+        closest_distance = distance;
+        found = true;
+      }
+    }
+    if (!found) {
+      return result;
+    }
+
+    result.attitude_sequence = closest.sample_sequence;
+    result.timestamp = closest.timestamp;
+    result.ekf_reset_generation = closest.ekf_reset_generation;
     const auto quaternion = normalizeQuaternion(
-        {snapshot.qx, snapshot.qy, snapshot.qz, snapshot.qw});
+        {closest.qx, closest.qy, closest.qz, closest.qw});
     result.attitude_valid =
-        snapshot.attitude_valid != 0 && quaternion.has_value();
+        closest.attitude_valid != 0 && quaternion.has_value();
     if (quaternion) {
       result.quaternion_xyzw = *quaternion;
     }
@@ -178,8 +227,8 @@ SharedMemory::SharedMemory(const std::string &name,
                            PoseTechnique pose_technique)
     : impl_(std::make_unique<Impl>(name, pose_technique)) {}
 SharedMemory::~SharedMemory() = default;
-ControllerInput SharedMemory::readController() const {
-  return impl_->readController();
+ControllerInput SharedMemory::readController(double camera_timestamp) const {
+  return impl_->readController(camera_timestamp);
 }
 void SharedMemory::publish(const FrameResult &result) {
   impl_->publish(result);

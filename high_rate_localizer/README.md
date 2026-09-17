@@ -9,6 +9,9 @@ controller-specified MyGrid tile without decoding its IDs again.
 The production path uses libcamera. There is no preview, streaming, ArUco,
 networking, or internal position filter.
 
+The complete mathematical pipeline, frame conventions, projection and pose
+equations are specified in [FORMULATION.md](FORMULATION.md).
+
 ## Build
 
 On the Linux deployment machine, install libcamera, OpenCV 4, and
@@ -159,6 +162,9 @@ hold until `hypergrid_tracking`, and then continue takeoff.
 
 - Libcamera uses a four-buffer YUV420 stream and processes only its luma plane.
 - Completed requests are latest-only; stale frames are returned immediately.
+- The controller publishes a 16-sample attitude ring at 100 Hz. For each
+  libcamera capture timestamp, the localizer uses the closest committed sample
+  without interpolation and applies the configured age gate afterward.
 - Connected-component storage is reused between frames.
 - Detection is hard-capped at 64 blobs.
 - IPPE input is spatially selected and hard-capped at 16 points.

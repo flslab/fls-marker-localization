@@ -260,6 +260,11 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
   result.state = state_;
   result.mygrid_request = mygrid_request_;
   result.initial_pose_generation = initial_pose_generation_;
+  result.attitude_sequence = controller.attitude_sequence;
+  result.attitude_valid = controller.attitude_valid;
+  result.attitude_timestamp = controller.timestamp;
+  result.attitude_time_offset_s =
+      controller.timestamp > 0.0 ? controller.timestamp - timestamp : 0.0;
   result.hypergrid_acquisition_height_m = hypergrid_acquisition_height_m_;
   result.blobs = detector_.detect(gray);
 

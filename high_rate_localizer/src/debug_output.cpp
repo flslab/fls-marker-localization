@@ -336,6 +336,12 @@ json DebugOutput::frameJson(const FrameResult &result) const {
                   {"candidate_count", result.blobs.size()},
                   {"matched_markers", matched},
                   {"mygrid_request", toString(result.mygrid_request)},
+                  {"shared_attitude",
+                   {{"valid", result.attitude_valid},
+                    {"sequence", result.attitude_sequence},
+                    {"timestamp", rounded(result.attitude_timestamp)},
+                    {"attitude_minus_camera_s",
+                     rounded(result.attitude_time_offset_s)}}},
                   {"processing_ms", rounded(result.processing_ms, 1000.0)}}}};
   if (result.source == PoseSource::MyGrid) {
     frame["blob_grid_localization"]["tile"] = {{"i", result.tile_i},

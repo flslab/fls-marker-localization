@@ -4,13 +4,21 @@
 #include "fls_localizer/hypergrid.hpp"
 #include "fls_localizer/pipeline.hpp"
 #include "fls_localizer/pose_solver.hpp"
+#include "fls_localizer/shared_memory.hpp"
 #include "fls_localizer/trajectory.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <cmath>
+#include <cstring>
+#include <fcntl.h>
 #include <iostream>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
 #include <stdexcept>
+#include <string>
+#include <sys/mman.h>
+#include <unistd.h>
 
 namespace {
 
@@ -374,6 +382,91 @@ void testSharedMemoryPoseSelection() {
           "initial bootstrap pose was not selected from PnP");
 }
 
+template <typename Block>
+std::uint32_t sharedChecksum(const Block &block, std::size_t begin,
+                             std::size_t end) {
+  const auto *bytes = reinterpret_cast<const std::uint8_t *>(&block);
+  std::uint32_t value = 2166136261U;
+  for (std::size_t index = begin; index < end; ++index) {
+    value = (value ^ bytes[index]) * 16777619U;
+  }
+  return value;
+}
+
+void testClosestSharedAttitude() {
+  const std::string name = "/flsloc_att_" +
+                           std::to_string(static_cast<long long>(getpid()));
+  shm_unlink(name.c_str());
+  const int probe = shm_open(name.c_str(), O_CREAT | O_EXCL | O_RDWR, 0600);
+  if (probe < 0 ||
+      ftruncate(probe, sizeof(flsloc::shared::Layout)) != 0) {
+    if (probe >= 0) {
+      close(probe);
+      shm_unlink(name.c_str());
+    }
+    std::cout << "[SKIP] POSIX shared memory unavailable" << std::endl;
+    return;
+  }
+  close(probe);
+  shm_unlink(name.c_str());
+  flsloc::SharedMemory memory(name, flsloc::PoseTechnique::SharedAttitude);
+  const int descriptor = shm_open(name.c_str(), O_RDWR, 0600);
+  require(descriptor >= 0, "could not open test shared memory");
+  void *raw = mmap(nullptr, sizeof(flsloc::shared::Layout),
+                   PROT_READ | PROT_WRITE, MAP_SHARED, descriptor, 0);
+  require(raw != MAP_FAILED, "could not map test shared memory");
+  auto &layout = *static_cast<flsloc::shared::Layout *>(raw);
+
+  flsloc::shared::ControllerBlock controller{};
+  controller.sequence_begin = 2;
+  controller.attitude_sequence = 2;
+  controller.landing_tile_i = 3;
+  controller.landing_tile_j = 4;
+  controller.landing_requested = 1;
+  controller.sequence_end = 2;
+  controller.checksum = sharedChecksum(
+      controller,
+      offsetof(flsloc::shared::ControllerBlock, attitude_sequence),
+      offsetof(flsloc::shared::ControllerBlock, sequence_end));
+  layout.controller = controller;
+
+  auto writeAttitude = [&](std::size_t index, std::uint32_t sequence,
+                           double timestamp, float qz, float qw) {
+    flsloc::shared::AttitudeSample sample{};
+    sample.sequence_begin = 2;
+    sample.sample_sequence = sequence;
+    sample.ekf_reset_generation = sequence + 40;
+    sample.attitude_valid = 1;
+    sample.timestamp = timestamp;
+    sample.qz = qz;
+    sample.qw = qw;
+    sample.sequence_end = 2;
+    sample.checksum = sharedChecksum(
+        sample, offsetof(flsloc::shared::AttitudeSample, sample_sequence),
+        offsetof(flsloc::shared::AttitudeSample, sequence_end));
+    layout.attitudes[index] = sample;
+  };
+  writeAttitude(0, 1, 10.0, 0.0F, 1.0F);
+  writeAttitude(1, 2, 10.02, 1.0F, 0.0F);
+
+  const flsloc::ControllerInput closest = memory.readController(10.015);
+  require(closest.attitude_valid && closest.attitude_sequence == 2 &&
+              closest.ekf_reset_generation == 42 &&
+              std::abs(closest.timestamp - 10.02) < 1e-12 &&
+              std::abs(closest.quaternion_xyzw[2] - 1.0) < 1e-12,
+          "shared memory did not select the closest attitude");
+  const flsloc::ControllerInput tie = memory.readController(10.01);
+  require(tie.attitude_sequence == 2,
+          "equidistant shared attitudes did not select the later sample");
+  require(tie.landing_requested && tie.landing_tile_i == 3 &&
+              tie.landing_tile_j == 4,
+          "controller metadata was not read with the attitude history");
+
+  munmap(raw, sizeof(flsloc::shared::Layout));
+  close(descriptor);
+  shm_unlink(name.c_str());
+}
+
 } // namespace
 
 int main() try {
@@ -388,6 +481,7 @@ int main() try {
   testOrientationErrorModel();
   testOutputTag();
   testSharedMemoryPoseSelection();
+  testClosestSharedAttitude();
   std::cout << "all high-rate localizer tests passed" << std::endl;
   return 0;
 } catch (const std::exception &error) {

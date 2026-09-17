@@ -58,6 +58,7 @@ struct MatchedPoint {
 struct ControllerInput {
   bool attitude_valid = false;
   bool landing_requested = false;
+  std::uint32_t attitude_sequence = 0;
   std::uint32_t ekf_reset_generation = 0;
   double timestamp = 0.0;
   cv::Vec4d quaternion_xyzw{0.0, 0.0, 0.0, 1.0};
@@ -115,6 +116,10 @@ struct FrameResult {
   PoseSource source = PoseSource::None;
   MyGridRequest mygrid_request = MyGridRequest::Blink;
   std::uint32_t initial_pose_generation = 0;
+  std::uint32_t attitude_sequence = 0;
+  bool attitude_valid = false;
+  double attitude_timestamp = 0.0;
+  double attitude_time_offset_s = 0.0;
   float hypergrid_acquisition_height_m = 0.0F;
   std::string status = "starting";
   std::string message;

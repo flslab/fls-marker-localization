@@ -64,7 +64,8 @@ int main(int argc, char **argv) try {
   double timestamp = 0.0;
   std::uint64_t frame_id = 0;
   while (running.load() && camera.read(gray, timestamp)) {
-    const flsloc::ControllerInput controller = shared_memory.readController();
+    const flsloc::ControllerInput controller =
+        shared_memory.readController(timestamp);
     flsloc::FrameResult result =
         pipeline.process(frame_id, timestamp, gray, controller);
     shared_memory.publish(result);
