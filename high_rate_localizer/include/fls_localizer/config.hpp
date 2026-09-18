@@ -63,7 +63,7 @@ struct ApplicationConfig {
                                        0.0, 0.0,  0.0, -1.0};
   cv::Vec3d camera_position_drone_flu{0.0, 0.0, 0.0};
   std::filesystem::path grid_file;
-  std::string shared_memory_name = "/fls_localizer_v2";
+  std::string shared_memory_name = "/fls_localizer_v3";
   PoseTechnique shared_memory_pose_technique = PoseTechnique::SharedAttitude;
   int default_landing_tile_i = 0;
   int default_landing_tile_j = 0;

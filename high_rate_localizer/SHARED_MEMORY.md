@@ -1,13 +1,13 @@
 # Shared-memory ABI
 
-The POSIX shared-memory name defaults to `/fls_localizer_v2`. The ABI is the
+The POSIX shared-memory name defaults to `/fls_localizer_v3`. The ABI is the
 1280-byte `flsloc::shared::Layout` declared in
 `include/fls_localizer/shared_memory.hpp`.
 
 The first cache line is an immutable header:
 
-- magic: `0x324c5346`
-- ABI version: `2`
+- magic: `0x334c5346`
+- ABI version: `3`
 - layout size: `1280`
 
 The second cache line is controller metadata. The next 16 cache lines are the
@@ -55,6 +55,11 @@ The localizer writes:
 - initial yaw in radians;
 - selected tile, feature count, reprojection RMS, and processing time.
 - conservative HyperGrid acquisition height in metres.
+- a yaw-correction candidate containing synchronized `FC EKF yaw - PnP yaw`,
+  independent-PnP reprojection RMS, minimum image span, and validity. The sign
+  matches Crazyflie firmware's `yawErrorMeasurement_t` convention. It is valid
+  only for accepted HyperGrid PnP solutions paired with a synchronized FC
+  attitude; the controller applies the final quality and temporal gates.
 
 `shared_memory_pose_technique` in the localizer JSON chooses whether normal
 tracking samples contain the accepted `shared_attitude` or `pnp` pose. The

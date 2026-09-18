@@ -9,8 +9,8 @@
 
 namespace flsloc::shared {
 
-inline constexpr std::uint32_t kMagic = 0x324C5346U; // "FSL2"
-inline constexpr std::uint32_t kAbiVersion = 2;
+inline constexpr std::uint32_t kMagic = 0x334C5346U; // "FSL3"
+inline constexpr std::uint32_t kAbiVersion = 3;
 inline constexpr std::size_t kAttitudeHistorySize = 16;
 
 struct alignas(64) Header {
@@ -65,9 +65,16 @@ struct alignas(64) LocalizerBlock {
   std::uint8_t pose_valid;
   std::int32_t tile_i;
   std::int32_t tile_j;
+  // Synchronized FC EKF yaw minus the independent PnP yaw. This sign matches
+  // yawErrorMeasurement_t in the Crazyflie firmware.
+  float yaw_error;
+  float pnp_reprojection_rms;
+  float pnp_image_span_px;
+  std::uint8_t yaw_error_valid;
+  std::uint8_t yaw_error_padding[3];
   std::uint32_t sequence_end;
   std::uint32_t checksum;
-  std::uint8_t reserved[32];
+  std::uint8_t reserved[16];
 };
 
 struct alignas(64) Layout {
@@ -93,6 +100,10 @@ static_assert(offsetof(AttitudeSample, qx) == 24);
 static_assert(offsetof(AttitudeSample, sequence_end) == 40);
 static_assert(offsetof(AttitudeSample, checksum) == 44);
 static_assert(sizeof(LocalizerBlock) == 128);
+static_assert(offsetof(LocalizerBlock, yaw_error) == 88);
+static_assert(offsetof(LocalizerBlock, yaw_error_valid) == 100);
+static_assert(offsetof(LocalizerBlock, sequence_end) == 104);
+static_assert(offsetof(LocalizerBlock, checksum) == 108);
 static_assert(offsetof(Layout, attitudes) == 128);
 static_assert(offsetof(Layout, localizer) == 1152);
 static_assert(sizeof(Layout) == 1280);

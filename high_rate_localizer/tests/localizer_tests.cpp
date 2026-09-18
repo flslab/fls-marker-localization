@@ -382,6 +382,19 @@ void testSharedMemoryPoseSelection() {
           "initial bootstrap pose was not selected from PnP");
 }
 
+void testSharedMemoryAbiForYawCorrection() {
+  require(flsloc::shared::kMagic == 0x334C5346U,
+          "shared-memory magic is not FSL3");
+  require(flsloc::shared::kAbiVersion == 3,
+          "shared-memory ABI was not bumped for yaw correction");
+  require(sizeof(flsloc::shared::Layout) == 1280,
+          "yaw correction changed the shared-memory layout size");
+  require(offsetof(flsloc::shared::LocalizerBlock, yaw_error) == 88,
+          "yaw correction has the wrong localizer-block offset");
+  require(offsetof(flsloc::shared::LocalizerBlock, sequence_end) == 104,
+          "yaw correction is outside the checksummed payload");
+}
+
 template <typename Block>
 std::uint32_t sharedChecksum(const Block &block, std::size_t begin,
                              std::size_t end) {
@@ -462,6 +475,43 @@ void testClosestSharedAttitude() {
               tie.landing_tile_j == 4,
           "controller metadata was not read with the attitude history");
 
+  flsloc::FrameResult frame;
+  frame.frame_id = 12;
+  frame.timestamp = 100.0;
+  frame.state = flsloc::LocalizerState::HyperGridTracking;
+  frame.source = flsloc::PoseSource::HyperGrid;
+  frame.attitude_valid = true;
+  frame.poses.shared_attitude.valid = true;
+  frame.poses.shared_attitude.accepted = true;
+  frame.poses.shared_attitude.drone_rpy[2] = 0.2;
+  frame.poses.pnp.valid = true;
+  frame.poses.pnp.accepted = true;
+  frame.poses.pnp.drone_rpy[2] = 0.1;
+  frame.poses.pnp.reprojection_rms = 0.3;
+  frame.matched.resize(2);
+  frame.matched[0].image = {10.0F, 20.0F};
+  frame.matched[1].image = {110.0F, 100.0F};
+  memory.publish(frame);
+  const flsloc::shared::LocalizerBlock published = layout.localizer;
+  require(published.yaw_error_valid == 1,
+          "valid synchronized PnP yaw was not published");
+  require(std::abs(published.yaw_error - 0.1F) < 1e-6F,
+          "published yaw error has the wrong sign");
+  require(std::abs(published.pnp_reprojection_rms - 0.3F) < 1e-6F,
+          "published PnP reprojection RMS is wrong");
+  require(std::abs(published.pnp_image_span_px - 80.0F) < 1e-6F,
+          "published PnP image span is wrong");
+  require(published.checksum == sharedChecksum(
+              published,
+              offsetof(flsloc::shared::LocalizerBlock, pose_sequence),
+              offsetof(flsloc::shared::LocalizerBlock, sequence_end)),
+          "yaw correction is not covered by the localizer checksum");
+
+  frame.state = flsloc::LocalizerState::LandingTracking;
+  memory.publish(frame);
+  require(layout.localizer.yaw_error_valid == 0,
+          "yaw correction remained enabled outside HyperGrid tracking");
+
   munmap(raw, sizeof(flsloc::shared::Layout));
   close(descriptor);
   shm_unlink(name.c_str());
@@ -481,6 +531,7 @@ int main() try {
   testOrientationErrorModel();
   testOutputTag();
   testSharedMemoryPoseSelection();
+  testSharedMemoryAbiForYawCorrection();
   testClosestSharedAttitude();
   std::cout << "all high-rate localizer tests passed" << std::endl;
   return 0;

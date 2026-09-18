@@ -80,7 +80,7 @@
     "json_name": "log.json"
   },
   "grid_file": "hypergrid-mygrid-normal.json",
-  "shared_memory_name": "/fls_localizer_v2",
+  "shared_memory_name": "/fls_localizer_v3",
   "shared_memory_pose_technique": "pnp",
   "landing_tile": [
     0,

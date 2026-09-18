@@ -1,6 +1,7 @@
 #include "fls_localizer/shared_memory.hpp"
 #include "fls_localizer/pose_solver.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -40,6 +41,27 @@ std::uint32_t attitudeChecksum(const shared::AttitudeSample &sample) {
 std::uint32_t localizerChecksum(const shared::LocalizerBlock &block) {
   return checksum(block, offsetof(shared::LocalizerBlock, pose_sequence),
                   offsetof(shared::LocalizerBlock, sequence_end));
+}
+
+double wrapAngle(double angle) {
+  return std::remainder(angle, 2.0 * CV_PI);
+}
+
+float imageSpan(const std::vector<MatchedPoint> &matched) {
+  if (matched.size() < 2) {
+    return 0.0F;
+  }
+  float minimum_x = matched.front().image.x;
+  float maximum_x = minimum_x;
+  float minimum_y = matched.front().image.y;
+  float maximum_y = minimum_y;
+  for (const MatchedPoint &point : matched) {
+    minimum_x = std::min(minimum_x, point.image.x);
+    maximum_x = std::max(maximum_x, point.image.x);
+    minimum_y = std::min(minimum_y, point.image.y);
+    maximum_y = std::max(maximum_y, point.image.y);
+  }
+  return std::min(maximum_x - minimum_x, maximum_y - minimum_y);
 }
 
 } // namespace
@@ -181,6 +203,23 @@ public:
     block.processing_ms = static_cast<float>(result.processing_ms);
     block.hypergrid_acquisition_height_m =
         result.hypergrid_acquisition_height_m;
+
+    const PoseSolution &shared_attitude = result.poses.shared_attitude;
+    const PoseSolution &pnp = result.poses.pnp;
+    const double yaw_error = wrapAngle(shared_attitude.drone_rpy[2] -
+                                       pnp.drone_rpy[2]);
+    const bool yaw_error_valid =
+        result.state == LocalizerState::HyperGridTracking &&
+        result.source == PoseSource::HyperGrid && result.attitude_valid &&
+        shared_attitude.valid && pnp.accepted && std::isfinite(yaw_error) &&
+        std::isfinite(pnp.reprojection_rms);
+    if (yaw_error_valid) {
+      block.yaw_error = static_cast<float>(yaw_error);
+      block.pnp_reprojection_rms =
+          static_cast<float>(pnp.reprojection_rms);
+      block.pnp_image_span_px = imageSpan(result.matched);
+      block.yaw_error_valid = 1;
+    }
     if (pose.accepted) {
       ++pose_sequence_;
       block.pose_sequence = pose_sequence_;
