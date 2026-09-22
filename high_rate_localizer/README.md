@@ -73,6 +73,24 @@ the exact trajectory attitude.
 `video_test.json` intentionally has zero distortion because the Blender
 fixtures use an ideal pinhole camera.
 
+Production marker detection is limited to the configured processing crop:
+
+```json
+"processing_crop": {
+  "enabled": true,
+  "x": 120,
+  "y": 0,
+  "width": 400,
+  "height": 400
+}
+```
+
+The bundled `640x400` production configuration therefore processes the largest
+centered square. Detected points are translated back to full-frame pixel
+coordinates, so the original camera calibration, projection, pose solving,
+logs, and annotated video remain unchanged. Disable the crop to process the
+entire image.
+
 Each session writes `log.json` and a 30 fps annotated `video.mp4`. Vision and
 shared-memory publication continue at the camera rate. JSON serialization and
 video encoding run on a background thread; video frames are dropped first if

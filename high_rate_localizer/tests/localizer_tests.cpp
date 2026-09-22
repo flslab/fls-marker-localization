@@ -245,6 +245,25 @@ void testTakeoffAttitudeAcquisition(const flsloc::GridMap &map) {
           "normal projection gate did not retain the acquired takeoff pose");
 }
 
+void testProcessingCrop(const flsloc::GridMap &map) {
+  flsloc::ApplicationConfig config = testConfig();
+  config.processing_crop = {true, 120, 0, 400, 400};
+  flsloc::LocalizationPipeline pipeline(config, map);
+  cv::Mat gray = cv::Mat::zeros(400, 640, CV_8UC1);
+  cv::circle(gray, {60, 200}, 8, cv::Scalar(255), -1);
+  cv::circle(gray, {200, 200}, 8, cv::Scalar(255), -1);
+  cv::circle(gray, {580, 200}, 8, cv::Scalar(255), -1);
+
+  const flsloc::FrameResult result = pipeline.process(0, 0.0, gray, {});
+  require(result.blobs.size() == 1,
+          "processing crop did not exclude detections in the side margins");
+  require(cv::norm(result.blobs.front().center - cv::Point2f(200.0F, 200.0F)) <
+              1e-3,
+          "processing crop did not restore full-frame blob coordinates");
+  require(result.blobs.front().bounds.x > 120,
+          "processing crop did not restore full-frame blob bounds");
+}
+
 void testHyperGrid(const flsloc::GridMap &map) {
   flsloc::ApplicationConfig config = testConfig();
   flsloc::PoseSolver solver(config);
@@ -526,6 +545,7 @@ int main() try {
   testPose(map);
   testPnpRefinement();
   testTakeoffAttitudeAcquisition(map);
+  testProcessingCrop(map);
   testHyperGrid(map);
   testTrajectory();
   testOrientationErrorModel();

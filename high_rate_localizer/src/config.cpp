@@ -110,6 +110,18 @@ ApplicationConfig loadApplicationConfig(const std::filesystem::path &path) {
         "maximum_candidates", config.detector.maximum_candidates);
   }
 
+  if (root.contains("processing_crop")) {
+    const auto &crop = root["processing_crop"];
+    config.processing_crop.enabled =
+        crop.value("enabled", config.processing_crop.enabled);
+    config.processing_crop.x = crop.value("x", config.processing_crop.x);
+    config.processing_crop.y = crop.value("y", config.processing_crop.y);
+    config.processing_crop.width =
+        crop.value("width", config.processing_crop.width);
+    config.processing_crop.height =
+        crop.value("height", config.processing_crop.height);
+  }
+
   if (root.contains("tracking")) {
     const auto &tracking = root["tracking"];
     config.tracking.maximum_pose_points = tracking.value(
@@ -173,6 +185,19 @@ ApplicationConfig loadApplicationConfig(const std::filesystem::path &path) {
       config.tracking.maximum_pose_points < 4 ||
       config.tracking.maximum_pose_points > 16) {
     throw std::runtime_error("configuration contains an invalid bound");
+  }
+  if (config.processing_crop.enabled &&
+      (config.processing_crop.x < 0 || config.processing_crop.y < 0 ||
+       config.processing_crop.width <= 0 ||
+       config.processing_crop.height <= 0 ||
+       config.processing_crop.width > config.camera.width ||
+       config.processing_crop.height > config.camera.height ||
+       config.processing_crop.x >
+           config.camera.width - config.processing_crop.width ||
+       config.processing_crop.y >
+           config.camera.height - config.processing_crop.height)) {
+    throw std::runtime_error(
+        "processing_crop must fit within the configured camera image");
   }
   return config;
 }

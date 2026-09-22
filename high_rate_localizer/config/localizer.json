@@ -67,6 +67,13 @@
     "minimum_fill_ratio": 0.45,
     "maximum_candidates": 64
   },
+  "processing_crop": {
+    "enabled": false,
+    "x": 120,
+    "y": 0,
+    "width": 400,
+    "height": 400
+  },
   "tracking": {
     "maximum_pose_points": 16,
     "initial_distance_m": 0.045,

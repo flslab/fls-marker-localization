@@ -33,6 +33,14 @@ struct DetectorConfig {
   std::size_t maximum_candidates = 64;
 };
 
+struct ProcessingCropConfig {
+  bool enabled = false;
+  int x = 0;
+  int y = 0;
+  int width = 0;
+  int height = 0;
+};
+
 struct TrackingConfig {
   std::size_t maximum_pose_points = 16;
   double initial_distance_m = 0.045;
@@ -57,6 +65,7 @@ struct ApplicationConfig {
   CameraConfig camera;
   CalibrationConfig calibration;
   DetectorConfig detector;
+  ProcessingCropConfig processing_crop;
   TrackingConfig tracking;
   OutputConfig output;
   cv::Matx33d camera_to_drone_rotation{0.0, -1.0, 0.0, -1.0, 0.0,

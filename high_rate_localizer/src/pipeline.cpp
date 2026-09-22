@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 #include <opencv2/calib3d.hpp>
+#include <stdexcept>
 
 namespace flsloc {
 
@@ -266,7 +267,28 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
   result.attitude_time_offset_s =
       controller.timestamp > 0.0 ? controller.timestamp - timestamp : 0.0;
   result.hypergrid_acquisition_height_m = hypergrid_acquisition_height_m_;
-  result.blobs = detector_.detect(gray);
+  cv::Rect processing_crop(0, 0, gray.cols, gray.rows);
+  if (config_.processing_crop.enabled) {
+    processing_crop = {config_.processing_crop.x, config_.processing_crop.y,
+                       config_.processing_crop.width,
+                       config_.processing_crop.height};
+    if (processing_crop.x < 0 || processing_crop.y < 0 ||
+        processing_crop.width <= 0 || processing_crop.height <= 0 ||
+        processing_crop.x > gray.cols - processing_crop.width ||
+        processing_crop.y > gray.rows - processing_crop.height) {
+      throw std::invalid_argument(
+          "processing_crop does not fit within the input frame");
+    }
+  }
+  result.blobs = detector_.detect(gray(processing_crop));
+  if (processing_crop.x != 0 || processing_crop.y != 0) {
+    for (Blob &blob : result.blobs) {
+      blob.center.x += static_cast<float>(processing_crop.x);
+      blob.center.y += static_cast<float>(processing_crop.y);
+      blob.bounds.x += processing_crop.x;
+      blob.bounds.y += processing_crop.y;
+    }
+  }
 
   if (state_ == LocalizerState::MyGridDecoding) {
     const auto decoded = blink_decoder_.update(timestamp, gray, result.blobs);
