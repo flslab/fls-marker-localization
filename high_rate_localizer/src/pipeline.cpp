@@ -182,11 +182,12 @@ bool LocalizationPipeline::acceptable(const PoseSolution &pose) const {
 }
 
 PoseEstimates LocalizationPipeline::solveTrackingPoses(
-    const std::vector<MatchedPoint> &matches,
+    std::vector<MatchedPoint> &matches,
     const cv::Vec4d &drone_quaternion_xyzw) const {
+  matches = pose_solver_.selectMatchesForPnp(matches);
   PoseEstimates poses;
-  poses.shared_attitude = pose_solver_.solveWithAttitude(
-      matches, drone_quaternion_xyzw);
+  poses.shared_attitude =
+      pose_solver_.solveWithAttitude(matches, drone_quaternion_xyzw);
   poses.shared_attitude.accepted = acceptable(poses.shared_attitude);
   poses.pnp = pose_solver_.solveWithPnp(matches);
   poses.pnp.accepted = acceptable(poses.pnp);
@@ -295,7 +296,8 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
     if (decoded) {
       const auto signature = map_.matchSignature(decoded->ids);
       if (signature) {
-        auto matches = initialMatches(*decoded, *signature, result.blobs);
+        auto matches = pose_solver_.selectMatchesForPnp(
+            initialMatches(*decoded, *signature, result.blobs));
         PoseEstimates poses;
         poses.pnp = pose_solver_.solveInitial(
             matches, config_.tracking.initial_distance_m);
@@ -311,7 +313,9 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
                    std::move(poses), PoseTechnique::Pnp);
         } else {
           result.status = "pnp_failed";
-          result.message = "decoded MyGrid ring but IPPE rejected the pose";
+          result.message =
+              "decoded MyGrid ring but the configured PnP solver rejected "
+              "the pose";
         }
       } else {
         result.status = "signature_not_unique";
@@ -409,9 +413,8 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
             if (state_ == LocalizerState::HyperGridTracking) {
               mygrid_request_ = MyGridRequest::Off;
             }
-            usePoses(result, PoseSource::HyperGrid,
-                     std::move(hyper_matches), std::move(poses),
-                     PoseTechnique::SharedAttitude);
+            usePoses(result, PoseSource::HyperGrid, std::move(hyper_matches),
+                     std::move(poses), PoseTechnique::SharedAttitude);
             pose_used = true;
           }
         }

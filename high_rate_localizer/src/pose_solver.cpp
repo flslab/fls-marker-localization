@@ -8,6 +8,28 @@
 namespace flsloc {
 namespace {
 
+struct PnpSolverDefinition {
+  int opencv_method;
+  std::size_t minimum_correspondences;
+  std::size_t maximum_correspondences;
+};
+
+PnpSolverDefinition definitionFor(PnpSolver solver) {
+  switch (solver) {
+  case PnpSolver::Ippe:
+    return {cv::SOLVEPNP_IPPE, 4, 0};
+  case PnpSolver::Sqpnp:
+    return {cv::SOLVEPNP_SQPNP, 3, 0};
+  case PnpSolver::Iterative:
+    return {cv::SOLVEPNP_ITERATIVE, 4, 0};
+  case PnpSolver::Epnp:
+    return {cv::SOLVEPNP_EPNP, 4, 0};
+  case PnpSolver::Ap3p:
+    return {cv::SOLVEPNP_AP3P, 4, 4};
+  }
+  return {cv::SOLVEPNP_SQPNP, 3, 0};
+}
+
 cv::Matx33d matx(const cv::Mat &value) {
   cv::Mat converted;
   value.convertTo(converted, CV_64F);
@@ -110,6 +132,9 @@ cv::Vec3d rpyFromRotation(const cv::Matx33d &rotation) {
 PoseSolver::PoseSolver(const ApplicationConfig &config)
     : camera_matrix_(config.calibration.camera_matrix.clone()),
       distortion_(config.calibration.distortion.clone()),
+      pnp_solver_(config.tracking.pnp_solver),
+      frame_center_((static_cast<float>(config.camera.width) - 1.0F) * 0.5F,
+                    (static_cast<float>(config.camera.height) - 1.0F) * 0.5F),
       camera_to_drone_(config.camera_to_drone_rotation),
       camera_position_drone_(config.camera_position_drone_flu) {}
 
@@ -119,30 +144,112 @@ cv::Matx33d PoseSolver::worldToCameraFromDrone(
   return camera_to_drone_.t() * drone_to_world->t();
 }
 
-std::optional<PoseSolver::IppeCandidate>
-PoseSolver::selectIppe(const std::vector<cv::Point3f> &object_points,
-                       const std::vector<cv::Point2f> &image_points,
-                       double expected_distance) const {
-  if (object_points.size() < 4 || object_points.size() != image_points.size()) {
+std::vector<MatchedPoint> PoseSolver::selectMatchesForPnp(
+    const std::vector<MatchedPoint> &matches) const {
+  const PnpSolverDefinition definition = definitionFor(pnp_solver_);
+  if (definition.maximum_correspondences == 0) {
+    return matches;
+  }
+
+  std::vector<MatchedPoint> selected;
+  if (matches.size() <= definition.maximum_correspondences) {
+    selected = matches;
+  } else {
+    std::vector<std::size_t> indices(matches.size());
+    for (std::size_t index = 0; index < indices.size(); ++index) {
+      indices[index] = index;
+    }
+    const auto distanceFromCenter = [this, &matches](std::size_t index) {
+      const cv::Point2f delta = matches[index].image - frame_center_;
+      return delta.dot(delta);
+    };
+    const auto middle =
+        indices.begin() +
+        static_cast<std::ptrdiff_t>(definition.maximum_correspondences);
+    std::partial_sort(
+        indices.begin(), middle, indices.end(),
+        [&distanceFromCenter](std::size_t left, std::size_t right) {
+          const float left_distance = distanceFromCenter(left);
+          const float right_distance = distanceFromCenter(right);
+          return left_distance == right_distance
+                     ? left < right
+                     : left_distance < right_distance;
+        });
+    selected.reserve(definition.maximum_correspondences);
+    for (auto index = indices.begin(); index != middle; ++index) {
+      selected.push_back(matches[*index]);
+    }
+  }
+
+  // AP3P uses the first three points as its minimal control set. Keep the four
+  // closest markers, but order a non-collinear triplet first when possible.
+  if (pnp_solver_ == PnpSolver::Ap3p) {
+    for (std::size_t first = 0; first < selected.size(); ++first) {
+      for (std::size_t second = first + 1; second < selected.size(); ++second) {
+        for (std::size_t third = second + 1; third < selected.size(); ++third) {
+          const cv::Point3f &origin = selected[first].world;
+          const cv::Point3f &point_a = selected[second].world;
+          const cv::Point3f &point_b = selected[third].world;
+          const cv::Vec3d a(point_a.x - origin.x, point_a.y - origin.y,
+                            point_a.z - origin.z);
+          const cv::Vec3d b(point_b.x - origin.x, point_b.y - origin.y,
+                            point_b.z - origin.z);
+          if (cv::norm(a.cross(b)) <= 1e-12) {
+            continue;
+          }
+          std::vector<MatchedPoint> ordered{selected[first], selected[second],
+                                            selected[third]};
+          for (std::size_t index = 0; index < selected.size(); ++index) {
+            if (index != first && index != second && index != third) {
+              ordered.push_back(selected[index]);
+              return ordered;
+            }
+          }
+        }
+      }
+    }
+  }
+  return selected;
+}
+
+std::optional<PoseSolver::PnpCandidate>
+PoseSolver::selectPnpCandidate(const std::vector<cv::Point3f> &object_points,
+                               const std::vector<cv::Point2f> &image_points,
+                               double expected_distance) const {
+  const PnpSolverDefinition definition = definitionFor(pnp_solver_);
+  if (object_points.size() < definition.minimum_correspondences ||
+      (definition.maximum_correspondences != 0 &&
+       object_points.size() != definition.maximum_correspondences) ||
+      object_points.size() != image_points.size()) {
     return std::nullopt;
   }
   std::vector<cv::Mat> rvecs;
   std::vector<cv::Mat> tvecs;
-  const int count =
-      cv::solvePnPGeneric(object_points, image_points, camera_matrix_,
-                          distortion_, rvecs, tvecs, false, cv::SOLVEPNP_IPPE);
+  int count = 0;
+  try {
+    count = cv::solvePnPGeneric(
+        object_points, image_points, camera_matrix_, distortion_, rvecs, tvecs,
+        false, static_cast<cv::SolvePnPMethod>(definition.opencv_method));
+  } catch (const cv::Exception &) {
+    return std::nullopt;
+  }
   if (count <= 0) {
     return std::nullopt;
   }
 
-  std::optional<IppeCandidate> best;
-  for (int index = 0; index < count; ++index) {
+  std::optional<PnpCandidate> best;
+  const std::size_t candidate_count = std::min(rvecs.size(), tvecs.size());
+  for (std::size_t index = 0; index < candidate_count; ++index) {
     cv::Mat refined_rvec;
     cv::Mat refined_tvec;
     rvecs[index].convertTo(refined_rvec, CV_64F);
     tvecs[index].convertTo(refined_tvec, CV_64F);
-    cv::solvePnPRefineLM(object_points, image_points, camera_matrix_,
-                         distortion_, refined_rvec, refined_tvec);
+    try {
+      cv::solvePnPRefineLM(object_points, image_points, camera_matrix_,
+                           distortion_, refined_rvec, refined_tvec);
+    } catch (const cv::Exception &) {
+      continue;
+    }
 
     cv::Mat rotation_mat;
     cv::Rodrigues(refined_rvec, rotation_mat);
@@ -164,14 +271,9 @@ PoseSolver::selectIppe(const std::vector<cv::Point3f> &object_points,
     if (!positive_depth) {
       continue;
     }
-    IppeCandidate candidate;
-    candidate.valid = true;
+    PnpCandidate candidate;
     candidate.rotation = rotation;
-    candidate.camera_position = camera_position;
     candidate.tvec = translation;
-    candidate.rvec = {refined_rvec.at<double>(0),
-                      refined_rvec.at<double>(1),
-                      refined_rvec.at<double>(2)};
     candidate.reprojection_rms =
         reprojectionRms(object_points, image_points, rotation, translation);
     candidate.cost = candidate.reprojection_rms;
@@ -274,44 +376,22 @@ PoseSolution PoseSolver::solveInitial(const std::vector<MatchedPoint> &matches,
   return solveWithPnp(matches, expected_distance);
 }
 
-PoseSolution
-PoseSolver::solveWithPnp(const std::vector<MatchedPoint> &matches,
-                         double expected_distance) const {
+PoseSolution PoseSolver::solveWithPnp(const std::vector<MatchedPoint> &matches,
+                                      double expected_distance) const {
+  const std::vector<MatchedPoint> selected = selectMatchesForPnp(matches);
   std::vector<cv::Point3f> object_points;
   std::vector<cv::Point2f> image_points;
-  correspondences(matches, object_points, image_points);
-  if (object_points.size() < 4) {
-    return {};
-  }
-  const auto ippe =
-      selectIppe(object_points, image_points, expected_distance);
-  if (ippe) {
-    const cv::Matx33d camera_to_world = ippe->rotation.t();
+  correspondences(selected, object_points, image_points);
+  const auto candidate =
+      selectPnpCandidate(object_points, image_points, expected_distance);
+  if (candidate) {
+    const cv::Matx33d camera_to_world = candidate->rotation.t();
     const cv::Matx33d drone_to_world = camera_to_world * camera_to_drone_.t();
-    return makeSolution(ippe->rotation, ippe->tvec, drone_to_world,
-                        "ippe_refined_lm", ippe->reprojection_rms);
+    return makeSolution(candidate->rotation, candidate->tvec, drone_to_world,
+                        std::string(toString(pnp_solver_)) + "_refined_lm",
+                        candidate->reprojection_rms);
   }
-
-  // IPPE is singular for a perfectly fronto-parallel plane. Preserve the
-  // IPPE path above, but recover that exact geometry with OpenCV's planar
-  // homography initialization instead of losing the initial pose.
-  cv::Vec3d rvec;
-  cv::Vec3d translation;
-  if (!cv::solvePnP(object_points, image_points, camera_matrix_, distortion_,
-                    rvec, translation, false, cv::SOLVEPNP_ITERATIVE)) {
-    return {};
-  }
-  cv::Matx33d rotation;
-  cv::Rodrigues(rvec, rotation);
-  const cv::Vec3d camera_position = -(rotation.t() * translation);
-  if (camera_position[2] <= object_points.front().z) {
-    return {};
-  }
-  const cv::Matx33d camera_to_world = rotation.t();
-  const cv::Matx33d drone_to_world = camera_to_world * camera_to_drone_.t();
-  return makeSolution(
-      rotation, translation, drone_to_world, "ippe_iterative_degeneracy",
-      reprojectionRms(object_points, image_points, rotation, translation));
+  return {};
 }
 
 PoseSolution

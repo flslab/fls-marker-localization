@@ -8,6 +8,10 @@
 
 namespace flsloc {
 
+enum class PnpSolver { Ippe, Sqpnp, Iterative, Epnp, Ap3p };
+
+const char *toString(PnpSolver solver);
+
 struct CameraConfig {
   int width = 640;
   int height = 400;
@@ -42,6 +46,7 @@ struct ProcessingCropConfig {
 };
 
 struct TrackingConfig {
+  PnpSolver pnp_solver = PnpSolver::Sqpnp;
   std::size_t maximum_pose_points = 16;
   double initial_distance_m = 0.045;
   double maximum_reprojection_error_px = 5.0;

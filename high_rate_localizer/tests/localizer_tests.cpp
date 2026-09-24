@@ -7,9 +7,9 @@
 #include "fls_localizer/shared_memory.hpp"
 #include "fls_localizer/trajectory.hpp"
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cmath>
 #include <cstring>
 #include <fcntl.h>
 #include <iostream>
@@ -120,7 +120,7 @@ void testPose(const flsloc::GridMap &map) {
   }
   const flsloc::PoseSolution pose =
       solver.solveWithAttitude(matches, {0.0, 0.0, 0.0, 1.0});
-  require(pose.valid, "IPPE/shared-attitude pose failed");
+  require(pose.valid, "PnP/shared-attitude pose failed");
   require(cv::norm(pose.camera_position_world - expected_camera) < 1e-6,
           "FLU position transform is incorrect");
   const flsloc::PoseSolution pnp_pose = solver.solveWithPnp(matches);
@@ -147,10 +147,8 @@ void testPnpRefinement() {
   // A decoded marker observation from the 16:09 experiment. Raw IPPE has a
   // 6.76 px RMS for these points, despite being a good PnP observation.
   const std::array<cv::Point3f, 4> world{
-      cv::Point3f(0.012F, 0.012F, 0.0F),
-      cv::Point3f(0.012F, -0.012F, 0.0F),
-      cv::Point3f(-0.012F, -0.012F, 0.0F),
-      cv::Point3f(-0.012F, 0.012F, 0.0F)};
+      cv::Point3f(0.012F, 0.012F, 0.0F), cv::Point3f(0.012F, -0.012F, 0.0F),
+      cv::Point3f(-0.012F, -0.012F, 0.0F), cv::Point3f(-0.012F, 0.012F, 0.0F)};
   const std::array<cv::Point2f, 4> image{
       cv::Point2f(209.673F, 45.615F), cv::Point2f(477.814F, 42.020F),
       cv::Point2f(476.259F, 319.967F), cv::Point2f(206.002F, 315.155F)};
@@ -164,10 +162,95 @@ void testPnpRefinement() {
 
   const flsloc::PoseSolution pose = solver.solveWithPnp(matches, 0.045);
   require(pose.valid, "refined PnP pose failed");
-  require(pose.solver == "ippe_refined_lm",
-          "PnP pose did not use refined IPPE");
+  require(pose.solver == "sqpnp_refined_lm",
+          "PnP pose did not use configured SQPnP");
   require(pose.reprojection_rms < 2.1,
           "refined PnP pose still exceeds the expected reprojection error");
+}
+
+void testPnpSolverChoices() {
+  flsloc::ApplicationConfig config = testConfig();
+  const std::array<cv::Point3f, 4> world{
+      cv::Point3f(-0.04F, -0.03F, 0.0F), cv::Point3f(0.04F, -0.03F, 0.0F),
+      cv::Point3f(0.04F, 0.03F, 0.0F), cv::Point3f(-0.04F, 0.03F, 0.0F)};
+  const double roll = 0.08;
+  const flsloc::PoseSolver projector(config);
+  const cv::Matx33d rotation = projector.worldToCameraFromDrone(
+      {std::sin(roll * 0.5), 0.0, 0.0, std::cos(roll * 0.5)});
+  const cv::Vec3d expected_camera(0.01, -0.015, 0.30);
+  const cv::Vec3d translation = -(rotation * expected_camera);
+  cv::Vec3d rvec;
+  cv::Rodrigues(rotation, rvec);
+  std::vector<cv::Point2f> image;
+  cv::projectPoints(world, rvec, translation, config.calibration.camera_matrix,
+                    config.calibration.distortion, image);
+  std::vector<flsloc::MatchedPoint> matches;
+  for (std::size_t index = 0; index < world.size(); ++index) {
+    flsloc::MatchedPoint match;
+    match.world = world[index];
+    match.image = image[index];
+    matches.push_back(match);
+  }
+
+  for (const flsloc::PnpSolver method :
+       {flsloc::PnpSolver::Ippe, flsloc::PnpSolver::Sqpnp,
+        flsloc::PnpSolver::Iterative, flsloc::PnpSolver::Epnp,
+        flsloc::PnpSolver::Ap3p}) {
+    config.tracking.pnp_solver = method;
+    const flsloc::PoseSolver solver(config);
+    const flsloc::PoseSolution pose = solver.solveWithPnp(matches, 0.30);
+    require(pose.valid, "a configured PnP solver failed");
+    require(pose.solver ==
+                std::string(flsloc::toString(method)) + "_refined_lm",
+            "PnP result did not identify the configured solver");
+    require(cv::norm(pose.camera_position_world - expected_camera) < 1e-4,
+            "a configured PnP solver returned the wrong camera position");
+  }
+}
+
+void testPnpCorrespondenceLimit() {
+  flsloc::ApplicationConfig config = testConfig();
+  std::vector<flsloc::MatchedPoint> matches(6);
+  const std::array<cv::Point2f, 6> image{
+      cv::Point2f(320.0F, 200.0F), cv::Point2f(300.0F, 200.0F),
+      cv::Point2f(320.0F, 230.0F), cv::Point2f(280.0F, 200.0F),
+      cv::Point2f(320.0F, 250.0F), cv::Point2f(500.0F, 200.0F)};
+  for (std::size_t index = 0; index < matches.size(); ++index) {
+    matches[index].id = static_cast<int>(index);
+    matches[index].image = image[index];
+  }
+  matches[0].world = {0.0F, 0.0F, 0.0F};
+  matches[1].world = {1.0F, 0.0F, 0.0F};
+  matches[2].world = {2.0F, 0.0F, 0.0F};
+  matches[3].world = {0.0F, 1.0F, 0.0F};
+
+  config.tracking.pnp_solver = flsloc::PnpSolver::Ap3p;
+  flsloc::PoseSolver ap3p(config);
+  const auto selected = ap3p.selectMatchesForPnp(matches);
+  require(selected.size() == 4,
+          "AP3P correspondence selection did not enforce four points");
+  std::array<bool, 4> closest{};
+  for (const flsloc::MatchedPoint &match : selected) {
+    if (match.id >= 0 && match.id < static_cast<int>(closest.size())) {
+      closest[match.id] = true;
+    }
+  }
+  for (bool present : closest) {
+    require(present, "AP3P did not select the four center-nearest markers");
+  }
+  const cv::Vec3d first_edge(selected[1].world.x - selected[0].world.x,
+                             selected[1].world.y - selected[0].world.y,
+                             selected[1].world.z - selected[0].world.z);
+  const cv::Vec3d second_edge(selected[2].world.x - selected[0].world.x,
+                              selected[2].world.y - selected[0].world.y,
+                              selected[2].world.z - selected[0].world.z);
+  require(cv::norm(first_edge.cross(second_edge)) > 1e-12,
+          "AP3P control-point triplet remained collinear");
+
+  config.tracking.pnp_solver = flsloc::PnpSolver::Epnp;
+  flsloc::PoseSolver epnp(config);
+  require(epnp.selectMatchesForPnp(matches).size() == matches.size(),
+          "an unlimited PnP solver discarded correspondences");
 }
 
 void testTakeoffAttitudeAcquisition(const flsloc::GridMap &map) {
@@ -426,12 +509,11 @@ std::uint32_t sharedChecksum(const Block &block, std::size_t begin,
 }
 
 void testClosestSharedAttitude() {
-  const std::string name = "/flsloc_att_" +
-                           std::to_string(static_cast<long long>(getpid()));
+  const std::string name =
+      "/flsloc_att_" + std::to_string(static_cast<long long>(getpid()));
   shm_unlink(name.c_str());
   const int probe = shm_open(name.c_str(), O_CREAT | O_EXCL | O_RDWR, 0600);
-  if (probe < 0 ||
-      ftruncate(probe, sizeof(flsloc::shared::Layout)) != 0) {
+  if (probe < 0 || ftruncate(probe, sizeof(flsloc::shared::Layout)) != 0) {
     if (probe >= 0) {
       close(probe);
       shm_unlink(name.c_str());
@@ -457,8 +539,7 @@ void testClosestSharedAttitude() {
   controller.landing_requested = 1;
   controller.sequence_end = 2;
   controller.checksum = sharedChecksum(
-      controller,
-      offsetof(flsloc::shared::ControllerBlock, attitude_sequence),
+      controller, offsetof(flsloc::shared::ControllerBlock, attitude_sequence),
       offsetof(flsloc::shared::ControllerBlock, sequence_end));
   layout.controller = controller;
 
@@ -520,10 +601,11 @@ void testClosestSharedAttitude() {
           "published PnP reprojection RMS is wrong");
   require(std::abs(published.pnp_image_span_px - 80.0F) < 1e-6F,
           "published PnP image span is wrong");
-  require(published.checksum == sharedChecksum(
-              published,
-              offsetof(flsloc::shared::LocalizerBlock, pose_sequence),
-              offsetof(flsloc::shared::LocalizerBlock, sequence_end)),
+  require(published.checksum ==
+              sharedChecksum(
+                  published,
+                  offsetof(flsloc::shared::LocalizerBlock, pose_sequence),
+                  offsetof(flsloc::shared::LocalizerBlock, sequence_end)),
           "yaw correction is not covered by the localizer checksum");
 
   frame.state = flsloc::LocalizerState::LandingTracking;
@@ -544,6 +626,8 @@ int main() try {
   testBlink(map);
   testPose(map);
   testPnpRefinement();
+  testPnpSolverChoices();
+  testPnpCorrespondenceLimit();
   testTakeoffAttitudeAcquisition(map);
   testProcessingCrop(map);
   testHyperGrid(map);

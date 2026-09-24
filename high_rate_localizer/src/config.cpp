@@ -48,7 +48,44 @@ PoseTechnique readPoseTechnique(const json &root) {
       "shared_memory_pose_technique must be shared_attitude or pnp");
 }
 
+PnpSolver readPnpSolver(const json &tracking) {
+  const std::string value = tracking.value("pnp_solver", "sqpnp");
+  if (value == "ippe") {
+    return PnpSolver::Ippe;
+  }
+  if (value == "sqpnp") {
+    return PnpSolver::Sqpnp;
+  }
+  if (value == "iterative") {
+    return PnpSolver::Iterative;
+  }
+  if (value == "epnp") {
+    return PnpSolver::Epnp;
+  }
+  if (value == "ap3p") {
+    return PnpSolver::Ap3p;
+  }
+  throw std::runtime_error(
+      "tracking.pnp_solver must be ippe, sqpnp, iterative, epnp, or ap3p");
+}
+
 } // namespace
+
+const char *toString(PnpSolver solver) {
+  switch (solver) {
+  case PnpSolver::Ippe:
+    return "ippe";
+  case PnpSolver::Sqpnp:
+    return "sqpnp";
+  case PnpSolver::Iterative:
+    return "iterative";
+  case PnpSolver::Epnp:
+    return "epnp";
+  case PnpSolver::Ap3p:
+    return "ap3p";
+  }
+  return "sqpnp";
+}
 
 void applyOutputTag(OutputConfig &output, const std::string &tag) {
   if (tag.empty()) {
@@ -124,6 +161,7 @@ ApplicationConfig loadApplicationConfig(const std::filesystem::path &path) {
 
   if (root.contains("tracking")) {
     const auto &tracking = root["tracking"];
+    config.tracking.pnp_solver = readPnpSolver(tracking);
     config.tracking.maximum_pose_points = tracking.value(
         "maximum_pose_points", config.tracking.maximum_pose_points);
     config.tracking.initial_distance_m = tracking.value(

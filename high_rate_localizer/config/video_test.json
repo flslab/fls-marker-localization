@@ -63,7 +63,15 @@
     "minimum_fill_ratio": 0.45,
     "maximum_candidates": 64
   },
+  "processing_crop": {
+    "enabled": false,
+    "x": 120,
+    "y": 0,
+    "width": 400,
+    "height": 400
+  },
   "tracking": {
+    "pnp_solver": "ippe",
     "maximum_pose_points": 16,
     "initial_distance_m": 0.045,
     "maximum_reprojection_error_px": 5.0,
@@ -86,5 +94,5 @@
     0,
     0
   ],
-  "video_test_landing_time_s": 16.0
+  "video_test_landing_time_s": 28.0
 }

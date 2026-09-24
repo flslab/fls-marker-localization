@@ -116,6 +116,28 @@ correspondences alone. The shared-attitude entry uses the controller's
 drone-to-world quaternion for rotation and solves translation from the same
 correspondences. Both use the configured camera mount to derive the drone pose.
 
+Select the PnP initializer independently of the two pose techniques under
+`tracking`:
+
+```json
+"pnp_solver": "sqpnp"
+```
+
+The supported values are:
+
+| Value | Correspondence requirements |
+| --- | --- |
+| `ippe` | At least 4 coplanar points; all available selected markers are used. |
+| `sqpnp` | At least 3; all available selected markers are used. |
+| `iterative` | At least 4 coplanar points; all available selected markers are used. |
+| `epnp` | At least 4; all available selected markers are used. |
+| `ap3p` | Exactly 4; when more are available, the four closest to the full-frame center are used. |
+
+Every initializer result goes through the same positive-depth and
+above-marker-plane checks and Levenberg–Marquardt refinement. The selected
+correspondence set is shared by the PnP and shared-attitude tracks, so their
+logging and downstream comparison remain aligned.
+
 Set which accepted tracking pose is published to the controller in the JSON
 configuration:
 
@@ -125,7 +147,9 @@ configuration:
 
 The allowed values are `shared_attitude` and `pnp`. The initial bootstrap pose
 is necessarily published from PnP because the shared attitude becomes valid
-only after the controller resets and acknowledges its EKF.
+only after the controller resets and acknowledges its EKF. The annotated-video
+position follows this same effective shared-memory technique, which is labeled
+after the state on every frame.
 
 ## Ground-truth trajectory
 
@@ -168,7 +192,7 @@ each ground-truth entry records both the exact Blender quaternion and the
 
 An OFF or STATIC request is advisory. HyperGrid correspondences are selected
 only from predicted lattice nodes, and all known MyGrid locations are excluded.
-Consequently an always-on MyGrid cannot enter the HyperGrid IPPE point set.
+Consequently an always-on MyGrid cannot enter the HyperGrid PnP point set.
 
 Along with the initial pose, shared memory contains a conservative HyperGrid
 acquisition height computed from the calibrated focal lengths, sensor size,
@@ -185,11 +209,13 @@ hold until `hypergrid_tracking`, and then continue takeoff.
   without interpolation and applies the configured age gate afterward.
 - Connected-component storage is reused between frames.
 - Detection is hard-capped at 64 blobs.
-- IPPE input is spatially selected and hard-capped at 16 points.
+- PnP input is spatially selected and hard-capped at 16 points. Solvers with a
+  lower hard limit apply their solver-specific selection afterward.
 - Full-frame undistortion is avoided.
-- Each IPPE candidate is refined with Levenberg-Marquardt before selection and
-  reprojection gating to produce the PnP-only pose. A second translation is
-  solved against the shared EKF attitude using the same marker correspondences.
+- Each configured PnP candidate is refined with Levenberg-Marquardt before
+  selection and reprojection gating to produce the PnP-only pose. A second
+  translation is solved against the shared EKF attitude using the same marker
+  correspondences.
 - Absolute HyperGrid indices use the most recent anchored pose plus a bounded
   constant-velocity prediction. A cold start on an unlabelled lattice is never
   treated as an absolute position.

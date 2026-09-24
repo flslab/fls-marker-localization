@@ -120,20 +120,24 @@ cv::Mat DebugOutput::annotate(const cv::Mat &image,
                cv::LINE_AA);
     }
   }
+  const PoseTechnique output_technique =
+      result.sharedMemoryPoseTechnique(config_.shared_memory_pose_technique);
+  const PoseSolution &output_pose =
+      result.sharedMemoryPose(config_.shared_memory_pose_technique);
   const std::string line =
-      std::string(toString(result.state)) + "  " + toString(result.source) +
+      std::string(toString(result.state)) +
+      "  pose=" + toString(output_technique) + "  " + toString(result.source) +
       "  points=" + std::to_string(result.matched.size()) + "  " +
       std::to_string(result.processing_ms).substr(0, 4) + " ms";
   cv::putText(annotated, line, {12, 24}, cv::FONT_HERSHEY_SIMPLEX, 0.5,
               cv::Scalar(80, 255, 80), 1, cv::LINE_AA);
-  const PoseSolution &tracking_pose = result.trackingPose();
-  if (tracking_pose.accepted) {
+  if (output_pose.accepted) {
     std::ostringstream pose;
     pose << std::fixed << std::setprecision(3) << "FLU ["
-         << tracking_pose.drone_position_world[0] << ", "
-         << tracking_pose.drone_position_world[1] << ", "
-         << tracking_pose.drone_position_world[2]
-         << "]  rms=" << tracking_pose.reprojection_rms;
+         << output_pose.drone_position_world[0] << ", "
+         << output_pose.drone_position_world[1] << ", "
+         << output_pose.drone_position_world[2]
+         << "]  rms=" << output_pose.reprojection_rms;
     cv::putText(annotated, pose.str(), {12, 46}, cv::FONT_HERSHEY_SIMPLEX, 0.45,
                 cv::Scalar(80, 255, 80), 1, cv::LINE_AA);
   }
@@ -274,6 +278,7 @@ json DebugOutput::metadata() const {
           {"shared_memory_position", "drone_position_world_FLU"},
           {"shared_memory_pose_technique",
            toString(config_.shared_memory_pose_technique)},
+          {"pnp_solver", toString(config_.tracking.pnp_solver)},
           {"maximum_pose_points", config_.tracking.maximum_pose_points},
           {"hypergrid_acquisition_height_m",
            2.0 * map_.hypergridSpacing() *
