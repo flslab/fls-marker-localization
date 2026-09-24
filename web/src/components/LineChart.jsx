@@ -18,7 +18,7 @@ function contiguousPaths(values, toX, toY) {
   return paths.map((points) => points.map(([x, y], index) => `${index ? 'L' : 'M'} ${x.toFixed(2)} ${y.toFixed(2)}`).join(' '));
 }
 
-export default function LineChart({ title, subtitle, frames, series, selectedIndex, onSelect, height = 220 }) {
+export default function LineChart({ title, subtitle, frames, series, selectedIndex, onSelect, height = 220, valueDomain = null }) {
   const [hoverIndex, setHoverIndex] = useState(null);
   const svgRef = useRef(null);
   const width = 720;
@@ -30,8 +30,9 @@ export default function LineChart({ title, subtitle, frames, series, selectedInd
     const tMax = times.length ? Math.max(...times) : 0;
     const duration = Math.max(0.0001, tMax - tMin);
     const values = series.flatMap((entry) => frames.map((frame) => entry.get(frame)).filter(isFiniteNumber));
-    let min = values.length ? Math.min(...values) : 0;
-    let max = values.length ? Math.max(...values) : 1;
+    const hasValueDomain = valueDomain?.length === 2 && valueDomain.every(isFiniteNumber);
+    let min = hasValueDomain ? valueDomain[0] : (values.length ? Math.min(...values) : 0);
+    let max = hasValueDomain ? valueDomain[1] : (values.length ? Math.max(...values) : 1);
     if (min === max) { min -= 0.5; max += 0.5; }
     const margin = (max - min) * 0.08;
     min -= margin;
@@ -45,7 +46,7 @@ export default function LineChart({ title, subtitle, frames, series, selectedInd
       contiguousPaths(frames.map((frame) => ({ t: frame.t, value: entry.get(frame) })), toX, toY),
     ]));
     return { tMin, tMax, duration, min, max, toX, toY, yTicks, xTicks, paths };
-  }, [frames, series, chartWidth, chartHeight]);
+  }, [frames, series, chartWidth, chartHeight, valueDomain]);
   const { tMin, tMax, duration, toX, toY, yTicks, xTicks, paths } = geometry;
   const activeIndex = hoverIndex ?? selectedIndex;
   const activeFrame = frames[activeIndex];

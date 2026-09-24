@@ -24,7 +24,12 @@ test('models current blob-grid camera records without losing diagnostics', () =>
       time: 4,
       frame_id: 7,
       blobs: [{ id: 3, x: 12, y: 14 }],
-      poses: [{ camera_pose: true, source: 'blob_grid', camera_position: [1, 2, -3], camera_orientation: [0.1, 0.2, 0.3], markers_used: 4 }],
+      poses: [{
+        camera_pose: true, source: 'blob_grid',
+        camera_position: [1, 2, -3], camera_orientation: [0.1, 0.2, 0.3],
+        drone_position: [1.1, 2.1, -2.9], drone_position_filtered: [1.2, 2.2, -2.8],
+        drone_orientation: [0.4, 0.5, 0.6], marker_position: [-1, -2, 3], markers_used: 4,
+      }],
       blob_grid_localization: { status: 'success', pose_valid: true, accepted_marker_count: 4, matched_markers: [] },
     }],
   };
@@ -32,8 +37,40 @@ test('models current blob-grid camera records without losing diagnostics', () =>
   assert.equal(model.mode, 'Blob grid');
   assert.equal(model.frames[0].frameId, 7);
   assert.deepEqual(model.frames[0].primary.position, [1, 2, -3]);
+  assert.deepEqual(model.frames[0].primary.dronePosition, [1.1, 2.1, -2.9]);
+  assert.deepEqual(model.frames[0].primary.filteredDronePosition, [1.2, 2.2, -2.8]);
+  assert.deepEqual(model.frames[0].primary.droneOrientation, [0.4, 0.5, 0.6]);
+  assert.deepEqual(model.frames[0].primary.markerPosition, [-1, -2, 3]);
+  assert.equal(model.hasFiltered, true);
   assert.equal(model.frames[0].status, 'success');
   assert.equal(model.frames[0].counts.accepted, 4);
+});
+
+test('selects and exposes the configured high-rate pose technique', () => {
+  const base = {
+    camera_pose: true, source: 'blob_grid', accepted: true,
+    marker_position_camera_m: [0, 0, 0.4],
+    marker_orientation_camera_rpy_rad: [Math.PI, 0, 0],
+    camera_orientation_world_flu_rpy_rad: [0, 0, 0],
+    drone_orientation_world_flu_rpy_rad: [0, 0, 0],
+    reprojection_rms_px: 0.25,
+  };
+  const model = createLogModel({
+    args: {}, config: { blob_grid_localization_enabled: true },
+    frames: [{
+      poses: [
+        { ...base, pose_technique: 'shared_attitude', camera_position_world_flu_m: [1, 2, 3], drone_position_world_flu_m: [1, 2, 3] },
+        { ...base, pose_technique: 'pnp', camera_position_world_flu_m: [4, 5, 6], drone_position_world_flu_m: [4, 5, 6] },
+      ],
+      blob_grid_localization: { status: 'success', shared_memory_pose_technique: 'pnp', shared_memory_pose_accepted: true },
+    }],
+  });
+  assert.equal(model.frames[0].primary.poseTechnique, 'pnp');
+  assert.deepEqual(model.frames[0].primary.position, [4, 5, 6]);
+  assert.deepEqual(model.frames[0].primary.markerPosition, [0, 0, 0.4]);
+  assert.deepEqual(model.frames[0].primary.markerOrientation, [Math.PI, 0, 0]);
+  assert.equal(model.frames[0].reprojectionError, 0.25);
+  assert.equal(model.frames[0].poseValid, true);
 });
 
 test('keeps short-range tiles distinct from main-grid markers and exposes the active phase', () => {

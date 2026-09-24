@@ -14,6 +14,7 @@ import ImagePlane from './components/ImagePlane.jsx';
 import LineChart, { StatusLane } from './components/LineChart.jsx';
 import FrameInspector from './components/FrameInspector.jsx';
 import MarkerGenerator from './components/MarkerGenerator.jsx';
+import PoseTechniqueComparison from './components/PoseTechniqueComparison.jsx';
 import { KeyValueView, RawJsonView } from './components/DataViews.jsx';
 
 const tabs = [
@@ -85,17 +86,6 @@ function ExploreView({ model, selectedIndex, setSelectedIndex, playing, setPlayi
       ? frame.primary
       : (frame.poses.find((pose) => (pose.kind === 'legacy' || pose.kind === 'historical-marker') && pose.markerId === markerId) || null);
   }, [markerId]);
-  const positionKey = useFiltered ? 'filteredPosition' : 'position';
-  const positionSeries = useMemo(() => [
-    { key: 'x', label: 'X', color: '#ff7777', get: (frame) => poseForFrame(frame)?.[positionKey]?.[0] },
-    { key: 'y', label: 'Y', color: '#9df7c7', get: (frame) => poseForFrame(frame)?.[positionKey]?.[1] },
-    { key: 'z', label: 'Z', color: '#61d9f4', get: (frame) => poseForFrame(frame)?.[positionKey]?.[2] },
-  ], [poseForFrame, positionKey]);
-  const orientationSeries = useMemo(() => [
-    { key: 'roll', label: 'Roll', color: '#ff9f66', get: (frame) => poseForFrame(frame)?.orientation?.[0] },
-    { key: 'pitch', label: 'Pitch', color: '#a889d8', get: (frame) => poseForFrame(frame)?.orientation?.[1] },
-    { key: 'yaw', label: 'Yaw', color: '#61d9f4', get: (frame) => poseForFrame(frame)?.orientation?.[2] },
-  ], [poseForFrame]);
   const qualitySeries = useMemo(() => [
     { key: 'error', label: 'Reproj. px', color: '#ff9f66', get: (frame) => frame.reprojectionError },
     { key: 'used', label: 'Markers used', color: '#9df7c7', dash: '5 4', get: (frame) => frame.counts.markersUsed },
@@ -110,8 +100,6 @@ function ExploreView({ model, selectedIndex, setSelectedIndex, playing, setPlayi
   ], []);
   const representativePose = poseForFrame(model.frames.find((frame) => poseForFrame(frame)?.position) || model.frames[0]);
   const positionTitle = representativePose?.entity === 'marker' || representativePose?.kind === 'historical-marker' ? 'Marker position' : 'Camera position';
-  const orientationTitle = representativePose?.entity === 'marker' || representativePose?.kind === 'historical-marker' ? 'Marker orientation' : 'Camera orientation';
-  const positionFrame = `${representativePose?.frameLabel || 'unknown frame'} · metres`;
   const spatialTitle = !model.hasPoseData
     ? 'No recoverable spatial pose'
     : (representativePose?.frameLabel === 'world frame' ? 'Camera + marker world' : `${positionTitle} · ${representativePose?.frameLabel || 'unknown frame'}`);
@@ -145,8 +133,7 @@ function ExploreView({ model, selectedIndex, setSelectedIndex, playing, setPlayi
         </div>
         <StatusLane frames={model.frames} selectedIndex={selectedIndex} onSelect={setSelectedIndex} />
         <div className="charts-grid">
-          <LineChart title={positionTitle} subtitle={`${useFiltered ? 'Kalman-filtered · ' : 'raw · '}${positionFrame}`} frames={model.frames} series={positionSeries} selectedIndex={selectedIndex} onSelect={setSelectedIndex} />
-          <LineChart title={orientationTitle} subtitle="roll / pitch / yaw · radians" frames={model.frames} series={orientationSeries} selectedIndex={selectedIndex} onSelect={setSelectedIndex} />
+          <PoseTechniqueComparison frames={model.frames} selectedIndex={selectedIndex} onSelect={setSelectedIndex} />
           <LineChart title="Pose quality" subtitle="pixels and marker count" frames={model.frames} series={qualitySeries} selectedIndex={selectedIndex} onSelect={setSelectedIndex} />
           <LineChart title="Detection pipeline" subtitle="records per frame" frames={model.frames} series={countSeries} selectedIndex={selectedIndex} onSelect={setSelectedIndex} />
         </div>

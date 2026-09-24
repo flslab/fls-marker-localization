@@ -26,12 +26,22 @@ export function makeDemoLog() {
       Math.cos(time * 1.25) * 0.027,
       1.01 + Math.sin(time * 2.1) * 0.012,
     ];
-    const cameraOrientation = [
+    const sharedCameraOrientation = [
       Math.PI + Math.sin(time * 1.4) * 0.011,
       Math.cos(time * 1.1) * 0.015,
       -Math.PI / 2 + Math.sin(time * 0.8) * 0.008,
     ];
+    const pnpCameraPosition = cameraPosition.map((value, axis) => value + Math.sin(frameIndex * 0.09 + axis) * 0.0024);
+    const pnpCameraOrientation = sharedCameraOrientation.map((value, axis) => value + Math.cos(frameIndex * 0.075 + axis) * 0.006);
+    const sharedDroneOrientation = [
+      Math.sin(time * 1.1) * 0.012,
+      Math.cos(time * 1.3) * 0.009,
+      Math.sin(time * 0.7) * 0.006,
+    ];
+    const pnpDroneOrientation = sharedDroneOrientation.map((value, axis) => value + Math.sin(frameIndex * 0.08 + axis) * 0.007);
     const error = 0.42 + Math.abs(Math.sin(time * 3.2)) * 0.24;
+    const markerPosition = [-cameraPosition[0], -cameraPosition[1], cameraPosition[2]];
+    const pnpMarkerPosition = markerPosition.map((value, axis) => value + Math.sin(frameIndex * 0.1 + axis) * 0.0018);
 
     const blobs = markers.map((marker) => ({ id: decoded ? marker.id : -1, x: marker.imageX, y: marker.imageY }));
     const decodedTracks = decoded ? markers.map((marker) => ({
@@ -70,24 +80,46 @@ export function makeDemoLog() {
     return {
       time,
       frame_id: frameIndex,
-      poses: poseValid ? [{
-        camera_pose: true,
-        source: 'blob_grid',
-        camera_position: cameraPosition,
-        camera_orientation: cameraOrientation,
-        drone_position: cameraPosition,
-        drone_position_filtered: cameraPosition.map((value, axis) => value + Math.sin(frameIndex * 0.03 + axis) * 0.0007),
-        drone_orientation: [0, 0, 0],
-        camera_to_plane_distance: cameraPosition[2],
-        markers_used: matchedMarkers.length,
-        used_marker_ids: matchedMarkers.map((marker) => marker.id),
-        used_map_cells: matchedMarkers.map((marker) => ({ row: marker.map_row, col: marker.map_col })),
-        reprojection_error: error,
-      }] : [],
+      poses: poseValid ? [
+        {
+          camera_pose: true,
+          source: 'blob_grid',
+          pose_technique: 'shared_attitude',
+          valid: true,
+          accepted: true,
+          marker_position_camera_m: markerPosition,
+          marker_orientation_camera_rpy_rad: sharedCameraOrientation,
+          camera_position_world_flu_m: cameraPosition,
+          camera_orientation_world_flu_rpy_rad: sharedCameraOrientation,
+          drone_position_world_flu_m: cameraPosition,
+          drone_orientation_world_flu_rpy_rad: sharedDroneOrientation,
+          camera_to_marker_plane_distance_m: cameraPosition[2],
+          markers_used: matchedMarkers.length,
+          used_marker_ids: matchedMarkers.map((marker) => marker.id),
+          reprojection_rms_px: error,
+        },
+        {
+          camera_pose: true,
+          source: 'blob_grid',
+          pose_technique: 'pnp',
+          valid: true,
+          accepted: true,
+          marker_position_camera_m: pnpMarkerPosition,
+          marker_orientation_camera_rpy_rad: pnpCameraOrientation,
+          camera_position_world_flu_m: pnpCameraPosition,
+          camera_orientation_world_flu_rpy_rad: pnpCameraOrientation,
+          drone_position_world_flu_m: pnpCameraPosition,
+          drone_orientation_world_flu_rpy_rad: pnpDroneOrientation,
+          camera_to_marker_plane_distance_m: pnpCameraPosition[2],
+          markers_used: matchedMarkers.length,
+          used_marker_ids: matchedMarkers.map((marker) => marker.id),
+          reprojection_rms_px: error + 0.035,
+        },
+      ] : [],
       blobs,
       blob_grid_localization: {
         status: !decoded ? 'no_detections' : (poseValid ? 'success' : 'pnp_failed'),
-        message: !decoded ? 'no decoded marker detections' : (poseValid ? 'global camera and drone positions solved from marker grid' : 'PnP pose solve failed for this sample'),
+        message: !decoded ? 'no decoded marker detections' : (poseValid ? 'PnP and shared-attitude poses solved from marker grid' : 'PnP pose solve failed for this sample'),
         tracked_decoded_marker_count: decodedTracks.length,
         decoded_marker_count: decodedTracks.length,
         decoded_tracks: decodedTracks,
@@ -100,6 +132,8 @@ export function makeDemoLog() {
         lookup_attempted: decoded,
         lookup_status: decoded ? 'unique' : 'not_attempted',
         pose_valid: poseValid,
+        shared_memory_pose_technique: 'shared_attitude',
+        shared_memory_pose_accepted: poseValid,
         distance_used: 1,
         relative_markers: relativeMarkers,
         matched_markers: matchedMarkers,
@@ -191,7 +225,9 @@ export function makeDemoLog() {
         latest_distance: 1,
         attitude_source: 'shared_memory',
         camera_offset_drone: [0, 0, 0],
+        pose_techniques: ['shared_attitude', 'pnp'],
         shared_memory_position: 'drone_position_world',
+        shared_memory_pose_technique: 'shared_attitude',
         orientation_convention: 'R_c_g=R_d_c^T*R_w_d(q)^T from shared attitude',
         rounding_tolerance_cells: 0.3,
         max_marker_age_seconds: 0,

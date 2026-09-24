@@ -27,6 +27,10 @@ function PoseCard({ pose, index }) {
       {pose.position && <><h4>Position <em>m · {pose.frameLabel}</em></h4><Vector value={pose.position} /></>}
       {pose.filteredPosition && <><h4>Filtered position <em>m</em></h4><Vector value={pose.filteredPosition} /></>}
       {pose.orientation && <><h4>Orientation <em>rad · roll/pitch/yaw</em></h4><Vector value={pose.orientation} labels={['R', 'P', 'Y']} /></>}
+      {pose.kind === 'camera-world' && pose.dronePosition && <><h4>Drone position <em>m · world frame</em></h4><Vector value={pose.dronePosition} /></>}
+      {pose.kind === 'camera-world' && pose.droneOrientation && <><h4>Drone orientation <em>rad · world frame · roll/pitch/yaw</em></h4><Vector value={pose.droneOrientation} labels={['R', 'P', 'Y']} /></>}
+      {pose.kind === 'camera-world' && pose.markerPosition && <><h4>Marker position <em>m · camera frame</em></h4><Vector value={pose.markerPosition} /></>}
+      {pose.kind === 'camera-world' && pose.markerOrientation && <><h4>Marker orientation <em>rad · camera frame · roll/pitch/yaw</em></h4><Vector value={pose.markerOrientation} labels={['R', 'P', 'Y']} /></>}
       {pose.kind === 'legacy' && pose.entity === 'marker' && pose.cameraPosition && <><h4>Camera in marker frame <em>m</em></h4><Vector value={pose.cameraPosition} /></>}
       {pose.kind === 'legacy' && pose.entity === 'camera' && pose.markerPosition && <><h4>Marker in camera frame <em>m</em></h4><Vector value={pose.markerPosition} /></>}
       <Detail title={`Complete pose ${index + 1} JSON`}><pre className="mini-json">{JSON.stringify(raw, null, 2)}</pre></Detail>
@@ -69,7 +73,7 @@ export default function FrameInspector({ model, frameIndex }) {
           <div className="lookup-row"><span>grid</span><b>{frame.gridType || 'unknown'}{frame.tile ? ` · tile ${frame.tile.i},${frame.tile.j}` : ''}</b><span>lookup</span><b>{grid.lookup_status || 'unknown'}</b></div>
           <div className="counter-grid">{gridCounters.map(([label, value]) => <div key={label}><span>{label}</span><b>{valueToText(value)}</b></div>)}</div>
           {grid.window_match && <><h4>Window match</h4><KeyValueView data={grid.window_match} /></>}
-          {grid.reprojection_error !== undefined && <div className="diagnostic-foot"><span>Grid RMS reprojection error</span><b>{valueToText(grid.reprojection_error)} px</b></div>}
+          {(grid.reprojection_rms_px ?? grid.reprojection_error) !== undefined && <div className="diagnostic-foot"><span>Grid RMS reprojection error</span><b>{valueToText(grid.reprojection_rms_px ?? grid.reprojection_error)} px</b></div>}
         </Detail>}
 
         <Detail title="Blob detections" count={frame.blobs.length}>

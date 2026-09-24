@@ -36,13 +36,15 @@ export function classifyPose(record) {
   if (!isObject(record)) return null;
 
   if (record.marker_pose === true) {
+    const markerPosition = asVector(record.marker_position);
     return {
       kind: 'marker-world',
       label: `Marker ${record.marker_id ?? '?'}`,
       frameLabel: 'world frame',
-      position: asVector(record.marker_position),
+      position: markerPosition,
       filteredPosition: null,
       orientation: asVector(record.marker_orientation),
+      markerPosition,
       markerId: record.marker_id,
       source: 'aruco-marker',
       raw: record,
@@ -52,12 +54,18 @@ export function classifyPose(record) {
   if (record.camera_pose === true) {
     return {
       kind: 'camera-world',
-      label: 'Camera',
+      label: record.pose_technique ? `Camera · ${record.pose_technique}` : 'Camera',
       frameLabel: 'world frame',
-      position: asVector(record.camera_position) || asVector(record.tvec),
+      position: asVector(record.camera_position_world_flu_m) || asVector(record.camera_position) || asVector(record.tvec),
       filteredPosition: asVector(record.camera_position_filtered) || asVector(record.tvec_filtered),
-      orientation: orientationFrom(record, 'camera-world'),
+      orientation: asVector(record.camera_orientation_world_flu_rpy_rad) || orientationFrom(record, 'camera-world'),
+      dronePosition: asVector(record.drone_position_world_flu_m) || asVector(record.drone_position),
+      filteredDronePosition: asVector(record.drone_position_filtered),
+      droneOrientation: asVector(record.drone_orientation_world_flu_rpy_rad) || asVector(record.drone_orientation),
+      markerPosition: asVector(record.marker_position_camera_m) || asVector(record.marker_position),
+      markerOrientation: asVector(record.marker_orientation_camera_rpy_rad),
       markerId: null,
+      poseTechnique: record.pose_technique || null,
       source: record.source === 'blob_grid' ? 'blob-grid' : ('tvec' in record ? 'historical-aruco' : 'aruco'),
       gridType: record.grid_type || null,
       tile: isObject(record.tile) ? record.tile : null,
@@ -97,14 +105,16 @@ export function classifyPose(record) {
   }
 
   if ('tvec' in record) {
+    const markerPosition = asVector(record.tvec);
     return {
       kind: 'historical-marker',
       entity: 'marker',
       label: 'Marker',
       frameLabel: 'camera frame',
-      position: asVector(record.tvec),
+      position: markerPosition,
       filteredPosition: asVector(record.tvec_filtered),
       orientation: orientationFrom(record, 'historical'),
+      markerPosition,
       markerId: record.marker_id,
       source: 'historical',
       raw: record,
@@ -271,15 +281,23 @@ export function createLogModel(raw, fileName = 'log.json') {
       ? safeFrame.poses
       : ('tvec' in safeFrame ? [safeFrame] : []);
     const poses = poseRecords.map(classifyPose).filter(Boolean);
-    const primary = poses.find((pose) => pose.kind === 'camera-world')
+    const grid = isObject(safeFrame.blob_grid_localization) ? safeFrame.blob_grid_localization : null;
+    const publishedTechnique = grid?.shared_memory_pose_technique || null;
+    const primary = poses.find((pose) => pose.kind === 'camera-world'
+      && pose.poseTechnique === publishedTechnique)
+      || poses.find((pose) => pose.kind === 'camera-world' && pose.raw.accepted !== false)
+      || poses.find((pose) => pose.kind === 'camera-world')
       || poses.find((pose) => pose.kind === 'legacy' || pose.kind === 'historical-marker')
       || poses.find((pose) => pose.position)
       || null;
     const seconds = timeToSeconds(safeFrame.time);
-    const grid = isObject(safeFrame.blob_grid_localization) ? safeFrame.blob_grid_localization : null;
-    const reprojectionError = isFiniteNumber(primary?.raw?.reprojection_error)
-      ? primary.raw.reprojection_error
-      : (isFiniteNumber(grid?.reprojection_error) ? grid.reprojection_error : null);
+    const reprojectionError = isFiniteNumber(primary?.raw?.reprojection_rms_px)
+      ? primary.raw.reprojection_rms_px
+      : (isFiniteNumber(primary?.raw?.reprojection_error)
+        ? primary.raw.reprojection_error
+        : (isFiniteNumber(grid?.reprojection_rms_px)
+          ? grid.reprojection_rms_px
+          : (isFiniteNumber(grid?.reprojection_error) ? grid.reprojection_error : null)));
     const status = frameStatus(safeFrame, primary);
     return {
       index,
@@ -297,7 +315,9 @@ export function createLogModel(raw, fileName = 'log.json') {
       gridType: grid?.grid_type || primary?.gridType || null,
       tile: isObject(grid?.tile) ? grid.tile : (primary?.tile || null),
       status,
-      poseValid: grid ? grid.pose_valid === true : Boolean(primary?.position),
+      poseValid: grid
+        ? (grid.shared_memory_pose_accepted ?? grid.pose_valid) === true
+        : Boolean(primary?.position),
       reprojectionError,
       counts: {
         poses: poseRecords.length,
@@ -331,7 +351,7 @@ export function createLogModel(raw, fileName = 'log.json') {
   const duration = Math.max(0, timeMax - timeMin);
   const validPoseCount = frames.filter((frame) => frame.poseValid).length;
   const positionFrames = frames.filter((frame) => frame.primary?.position);
-  const hasFiltered = frames.some((frame) => frame.primary?.filteredPosition);
+  const hasFiltered = frames.some((frame) => frame.primary?.filteredPosition || frame.primary?.filteredDronePosition);
   const worldCameraPath = frames
     .filter((frame) => frame.primary?.kind === 'camera-world' && frame.primary.position)
     .map((frame) => ({ frameIndex: frame.index, position: frame.primary.position, filteredPosition: frame.primary.filteredPosition }));
