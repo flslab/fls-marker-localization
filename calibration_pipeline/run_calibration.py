@@ -46,6 +46,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Detect and save calibration observations without fitting models",
     )
+    parser.add_argument(
+        "--skip-operational-validation",
+        action="store_true",
+        help=(
+            "Run model selection, crop selection, final refit, and export without loading "
+            "or requiring the independent operational pose dataset"
+        ),
+    )
     parser.add_argument("--no-plots", action="store_true", help="Skip optional matplotlib plots")
     return parser.parse_args()
 
@@ -116,10 +124,11 @@ def main() -> int:
     training, validation, assignments = split_observations(observations, config.get("split", {}))
     write_json(output_dir / "split_assignments.json", assignments)
 
-    operational_frames = None
-    operational_path = resolve_path(
+    configured_operational_path = resolve_path(
         config.get("operational_validation", {}).get("dataset"), config_dir
     )
+    operational_path = None if args.skip_operational_validation else configured_operational_path
+    operational_frames = None
     if operational_path is not None:
         operational_frames = load_operational_validation(operational_path, expected_size)
 
@@ -158,6 +167,7 @@ def main() -> int:
                 reference_poses,
                 config,
                 operational_frames,
+                require_operational_validation=not args.skip_operational_validation,
             )
             model_results.append(model_result)
         except (cv2.error, ValueError, ArithmeticError) as error:
@@ -213,7 +223,9 @@ def main() -> int:
                 "operational_pose": final_operational,
             }
             final_passed, final_failures = passes_thresholds(
-                final_candidate, config.get("crop_sweep", {}).get("thresholds", {})
+                final_candidate,
+                config.get("crop_sweep", {}).get("thresholds", {}),
+                require_operational_validation=not args.skip_operational_validation,
             )
             final_refit = {
                 "status": "ok" if final_passed else "rejected",
@@ -260,9 +272,23 @@ def main() -> int:
             "validation_groups": len({item.group for item in validation}),
         },
         "operational_validation": {
+            "mode": "skipped" if args.skip_operational_validation else "enabled",
+            "required_for_acceptance": not args.skip_operational_validation,
+            "configured_dataset": (
+                str(configured_operational_path) if configured_operational_path else None
+            ),
             "dataset": str(operational_path) if operational_path else None,
             "frames": len(operational_frames) if operational_frames is not None else 0,
             "independent_pose_reference_available": operational_frames is not None,
+            "skipped_operational_thresholds": (
+                ["maximum_p95_absolute_z_error_mm"]
+                if args.skip_operational_validation
+                and config.get("crop_sweep", {})
+                .get("thresholds", {})
+                .get("maximum_p95_absolute_z_error_mm")
+                is not None
+                else []
+            ),
         },
         "models": model_results,
         "model_recommendation": model_recommendation,
@@ -293,6 +319,10 @@ def main() -> int:
             "provenance": {
                 "pipeline_result": str(output_dir / "results.json"),
                 "model": fit.name,
+                "operational_validation_used": operational_frames is not None,
+                "operational_validation_mode": (
+                    "skipped" if args.skip_operational_validation else "enabled"
+                ),
             },
         }
         write_json(export_path, deployment)

@@ -22,6 +22,7 @@ from calibration_lib import (  # noqa: E402
     detect_observations,
     evaluate_model,
     mapping_validity,
+    passes_thresholds,
     save_observations,
     split_observations,
 )
@@ -89,6 +90,29 @@ def synthetic_observations() -> tuple[list[Observation], np.ndarray]:
 
 
 class CalibrationPipelineTests(unittest.TestCase):
+    def test_operational_threshold_is_only_bypassed_in_explicit_skip_mode(self) -> None:
+        candidate = {
+            "mapping_validity": {"valid": True},
+            "validation_residual_px": {"p95": 0.1},
+            "validation_residual_p95_bootstrap": None,
+            "validation_spatial_coverage": {"eligible_bin_fraction": 1.0},
+            "calibration_pose_consistency": {"availability_fraction": 1.0},
+            "operational_pose": None,
+        }
+        thresholds = {"maximum_p95_absolute_z_error_mm": 2.0}
+
+        passed, failures = passes_thresholds(candidate, thresholds)
+        self.assertFalse(passed)
+        self.assertEqual(failures, ["missing_operational_pose_validation"])
+
+        passed, failures = passes_thresholds(
+            candidate,
+            thresholds,
+            require_operational_validation=False,
+        )
+        self.assertTrue(passed)
+        self.assertEqual(failures, [])
+
     def test_capture_policy_prefers_uncovered_regions_then_rejects_duplicates(self) -> None:
         policy = CapturePolicy(
             {
@@ -290,7 +314,7 @@ class CalibrationPipelineTests(unittest.TestCase):
                         "require_mapping_valid": True,
                         "maximum_validation_p95_px": 0.5,
                         "minimum_availability_fraction": 0.5,
-                        "maximum_p95_absolute_z_error_mm": None,
+                        "maximum_p95_absolute_z_error_mm": 2.0,
                     },
                 },
                 "operational_validation": {"dataset": None},
@@ -304,6 +328,7 @@ class CalibrationPipelineTests(unittest.TestCase):
                     "--config",
                     str(config_path),
                     "--no-plots",
+                    "--skip-operational-validation",
                 ],
                 check=False,
                 capture_output=True,
@@ -313,7 +338,16 @@ class CalibrationPipelineTests(unittest.TestCase):
             result = json.loads((output_path / "results.json").read_text())
             self.assertEqual(result["final_refit"]["status"], "ok")
             self.assertEqual(result["deployment_recommendation"]["model"], "opencv5")
+            self.assertEqual(result["operational_validation"]["mode"], "skipped")
+            self.assertFalse(result["operational_validation"]["required_for_acceptance"])
+            self.assertEqual(
+                result["operational_validation"]["skipped_operational_thresholds"],
+                ["maximum_p95_absolute_z_error_mm"],
+            )
             self.assertTrue((output_path / "localizer_calibration_patch.json").exists())
+            patch = json.loads((output_path / "localizer_calibration_patch.json").read_text())
+            self.assertFalse(patch["provenance"]["operational_validation_used"])
+            self.assertEqual(patch["provenance"]["operational_validation_mode"], "skipped")
 
     def test_observation_round_trip(self) -> None:
         observation = Observation(

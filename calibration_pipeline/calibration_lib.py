@@ -1330,7 +1330,11 @@ def _residual_bootstrap(
     )
 
 
-def passes_thresholds(candidate: dict[str, Any], thresholds: dict[str, Any]) -> tuple[bool, list[str]]:
+def passes_thresholds(
+    candidate: dict[str, Any],
+    thresholds: dict[str, Any],
+    require_operational_validation: bool = True,
+) -> tuple[bool, list[str]]:
     failures: list[str] = []
     if thresholds.get("require_mapping_valid", True) and not candidate["mapping_validity"]["valid"]:
         failures.append("mapping_invalid")
@@ -1355,7 +1359,7 @@ def passes_thresholds(candidate: dict[str, Any], thresholds: dict[str, Any]) -> 
             failures.append("availability_fraction")
 
     z_limit = thresholds.get("maximum_p95_absolute_z_error_mm")
-    if z_limit is not None:
+    if z_limit is not None and require_operational_validation:
         if candidate.get("operational_pose") is None:
             failures.append("missing_operational_pose_validation")
         else:
@@ -1389,6 +1393,7 @@ def sweep_crops(
     reference_poses: dict[str, tuple[np.ndarray, np.ndarray]],
     config: dict[str, Any],
     operational_frames: Sequence[dict[str, Any]] | None,
+    require_operational_validation: bool = True,
 ) -> list[dict[str, Any]]:
     image_size = observations[0].image_size
     crop_config = config.get("crop_sweep", {})
@@ -1439,7 +1444,11 @@ def sweep_crops(
             candidate["operational_pose"] = summarize_pose_records(
                 operational_records, confidence
             )
-        passed, failures = passes_thresholds(candidate, thresholds)
+        passed, failures = passes_thresholds(
+            candidate,
+            thresholds,
+            require_operational_validation=require_operational_validation,
+        )
         candidate["passes_thresholds"] = passed
         candidate["threshold_failures"] = failures
         results.append(candidate)
@@ -1633,6 +1642,7 @@ def write_plots(
 
 
 def markdown_report(result: dict[str, Any]) -> str:
+    operational = result["operational_validation"]
     lines = [
         "# Camera calibration report",
         "",
@@ -1644,6 +1654,7 @@ def markdown_report(result: dict[str, Any]) -> str:
         f"- Training observations: {result['dataset']['training_views']}",
         f"- Held-out observations: {result['dataset']['validation_views']}",
         f"- Image size: `{result['dataset']['image_size'][0]} x {result['dataset']['image_size'][1]}`",
+        f"- Operational validation: {operational.get('mode', 'enabled')}",
         "",
         "## Model comparison",
         "",
@@ -1700,4 +1711,13 @@ def markdown_report(result: dict[str, Any]) -> str:
             "",
         ]
     )
+    if operational.get("mode") == "skipped":
+        lines.extend(
+            [
+                "**Operational validation was explicitly skipped.** The exported calibration passed the "
+                "remaining geometric and held-out calibration-target checks, but its absolute task-space "
+                "pose accuracy was not independently measured.",
+                "",
+            ]
+        )
     return "\n".join(lines)

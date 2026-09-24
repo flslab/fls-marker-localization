@@ -383,6 +383,23 @@ If `maximum_p95_absolute_z_error_mm` is configured but no independent
 operational dataset is supplied, every crop fails with
 `missing_operational_pose_validation`.
 
+To run the complete model comparison, crop sweep, final all-observation refit,
+and patch export without an operational dataset, use the explicit opt-out mode:
+
+```sh
+python3 calibration_pipeline/run_calibration.py \
+  --config calibration_pipeline/config.production.json \
+  --skip-operational-validation
+```
+
+This mode does not load `operational_validation.dataset` and bypasses only the
+`maximum_p95_absolute_z_error_mm` acceptance threshold. Mapping validity,
+held-out residual, calibration-pose availability, spatial coverage, and any
+configured conditioning threshold remain active. `results.json`, `report.md`,
+and the exported patch provenance record that operational validation was
+skipped. The resulting calibration has not established independent absolute
+task-space pose or `z` accuracy.
+
 ### 95 — Review and deploy the generated patch
 
 If a candidate passes, the pipeline writes
