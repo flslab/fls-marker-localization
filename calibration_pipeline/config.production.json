@@ -4,7 +4,7 @@
     "camera_serial": "lb8",
     "lens": "6.5 x 6.5 mm, f/1.4, fixed focus",
     "focus_setting": "fixed",
-    "sensor_mode": "640x400 at 120 Hz",
+    "sensor_mode": "640x400",
     "exposure_time_us": 3000,
     "analogue_gain": 1.0,
     "target_id": "ArUco Charuco board, 10x7 squares, 30 mm square length, 22 mm marker length",
