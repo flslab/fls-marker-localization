@@ -100,10 +100,10 @@ class Picamera2Source:
         frame_duration_us = int(round(1_000_000.0 / settings.frame_rate))
         controls = {
             "FrameDurationLimits": (frame_duration_us, frame_duration_us),
-            "ExposureTime": settings.exposure_time_us,
-            "AnalogueGain": settings.analogue_gain,
-            "Brightness": settings.brightness,
-            "Contrast": settings.contrast,
+            # "ExposureTime": settings.exposure_time_us,
+            # "AnalogueGain": settings.analogue_gain,
+            # "Brightness": settings.brightness,
+            # "Contrast": settings.contrast,
         }
         # The C++ production source requests libcamera::StreamRole::Viewfinder;
         # Picamera2's preview configuration is the corresponding use case.
