@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "image_size": [
+    640,
+    400
+  ],
+  "reference_pose_convention": "object_to_camera: X_camera = R(reference_rvec) * X_object + reference_tvec_m",
+  "frames": [
+    {
+      "frame_id": "flight_01_frame_000123",
+      "group": "flight_01_cycle_01",
+      "object_points_m": [
+        [
+          -0.05,
+          -0.05,
+          0.0
+        ],
+        [
+          0.05,
+          -0.05,
+          0.0
+        ],
+        [
+          0.05,
+          0.05,
+          0.0
+        ],
+        [
+          -0.05,
+          0.05,
+          0.0
+        ]
+      ],
+      "image_points_px": [
+        [
+          250.0,
+          130.0
+        ],
+        [
+          390.0,
+          130.0
+        ],
+        [
+          390.0,
+          270.0
+        ],
+        [
+          250.0,
+          270.0
+        ]
+      ],
+      "reference_rvec": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reference_tvec_m": [
+        0.0,
+        0.0,
+        0.5
+      ]
+    }
+  ]
+}
+

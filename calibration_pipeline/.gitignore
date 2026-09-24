@@ -1,0 +1,6 @@
+.venv/
+data/
+generated_board/
+output/
+__pycache__/
+tests/__pycache__/

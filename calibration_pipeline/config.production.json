@@ -1,0 +1,167 @@
+{
+  "capture_metadata": {
+    "camera_model": "DFRobot global-shutter camera",
+    "camera_serial": "lb8",
+    "lens": "6.5 x 6.5 mm, f/1.4, fixed focus",
+    "focus_setting": "fixed",
+    "sensor_mode": "640x400 at 120 Hz",
+    "exposure_time_us": 3000,
+    "analogue_gain": 1.0,
+    "target_id": "ArUco Charuco board, 10x7 squares, 30 mm square length, 22 mm marker length",
+    "target_mount": "mounted on a glass window",
+    "capture_notes": "73 F"
+  },
+  "image_size": [
+    640,
+    400
+  ],
+  "dataset": {
+    "images": "data/images/session_*/frame_*.png",
+    "observations_file": null,
+    "group_regex": "(session_[^/]+)"
+  },
+  "target": {
+    "type": "charuco",
+    "dictionary": "DICT_5X5_100",
+    "squares_x": 10,
+    "squares_y": 7,
+    "square_length_m": 0.030,
+    "marker_length_m": 0.022,
+    "minimum_points": 12
+  },
+  "detection": {
+    "minimum_laplacian_variance": 40.0,
+    "aruco_parameters": {}
+  },
+  "capture": {
+    "coverage_bins": [
+      4,
+      3
+    ],
+    "minimum_captures_per_bin": 2,
+    "stable_frames": 6,
+    "maximum_stable_motion_px": 1.5,
+    "minimum_seconds_between_captures": 1.0,
+    "minimum_descriptor_distance": 0.35,
+    "settings_settled_frames": 5,
+    "preview_scale": 1.5,
+    "headless_preview_interval_s": 0.5
+  },
+  "split": {
+    "validation_fraction": 0.25,
+    "seed": 20260923,
+    "spatial_bins": [
+      4,
+      3
+    ]
+  },
+  "models": [
+    {
+      "name": "opencv5",
+      "type": "opencv",
+      "flags": [],
+      "minimum_views": 12,
+      "deployment_compatible": true
+    },
+    {
+      "name": "rational8",
+      "type": "opencv",
+      "flags": [
+        "rational"
+      ],
+      "minimum_views": 15,
+      "deployment_compatible": true
+    },
+    {
+      "name": "thin_prism12",
+      "type": "opencv",
+      "flags": [
+        "rational",
+        "thin_prism"
+      ],
+      "minimum_views": 20,
+      "deployment_compatible": true
+    },
+    {
+      "name": "fisheye4_diagnostic",
+      "type": "fisheye",
+      "minimum_views": 15,
+      "deployment_compatible": false
+    }
+  ],
+  "validation": {
+    "pose_solver": "sqpnp",
+    "refine_lm": true,
+    "pose_anchor": {
+      "mode": "central_radius",
+      "maximum_normalized_radius": 0.45,
+      "minimum_points": 6,
+      "fallback": "all"
+    },
+    "spatial_bins": [
+      8,
+      5
+    ],
+    "minimum_points_per_spatial_bin": 20,
+    "horizontal_edge_fraction": 0.2
+  },
+  "model_analysis": {
+    "mapping_grid": [
+      41,
+      27
+    ],
+    "maximum_round_trip_error_px": 0.05,
+    "minimum_inverse_jacobian_determinant": 1e-12,
+    "radial_test_limit": 5.0
+  },
+  "bootstrap": {
+    "iterations": 50,
+    "seed": 20260924
+  },
+  "selection": {
+    "metric": "worst_spatial_bin_p95_px",
+    "simpler_model_tolerance_px": 0.02,
+    "require_full_frame_mapping_valid": true,
+    "minimum_eligible_spatial_bin_fraction": 0.75
+  },
+  "crop_sweep": {
+    "pose_solver": "sqpnp",
+    "refine_lm": true,
+    "horizontal_trims_px": [
+      0,
+      16,
+      32,
+      48,
+      64,
+      80,
+      96,
+      112,
+      120,
+      128,
+      144,
+      160
+    ],
+    "minimum_points_per_pose": 4,
+    "spatial_bins": [
+      8,
+      5
+    ],
+    "minimum_points_per_spatial_bin": 10,
+    "confidence": {
+      "iterations": 1000,
+      "seed": 20260925
+    },
+    "thresholds": {
+      "require_mapping_valid": true,
+      "maximum_validation_p95_px": 0.5,
+      "minimum_availability_fraction": 0.99,
+      "minimum_spatial_bin_coverage_fraction": 0.75,
+      "maximum_p95_absolute_z_error_mm": 2.0,
+      "maximum_median_normal_matrix_condition": null
+    }
+  },
+  "operational_validation": {
+    "dataset": "data/operational_validation.json"
+  },
+  "output_dir": "output"
+}
