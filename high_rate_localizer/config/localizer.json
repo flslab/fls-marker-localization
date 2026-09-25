@@ -68,7 +68,7 @@
     "maximum_candidates": 64
   },
   "processing_crop": {
-    "enabled": true,
+    "enabled": false,
     "x": 120,
     "y": 0,
     "width": 400,
