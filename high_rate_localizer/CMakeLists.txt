@@ -75,6 +75,7 @@ if(FLS_LOCALIZER_BUILD_TESTS)
   add_executable(fls_localizer_tests tests/localizer_tests.cpp)
   target_link_libraries(fls_localizer_tests PRIVATE fls_localizer_core)
   target_compile_definitions(fls_localizer_tests PRIVATE
+    FLS_TEST_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/video_test.json"
     FLS_TEST_GRID_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/hypergrid-mygrid-normal.json"
     FLS_TEST_TRAJECTORY_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/trajectory.json")
   add_test(NAME fls_localizer_tests COMMAND fls_localizer_tests)

@@ -221,7 +221,8 @@ ApplicationConfig loadApplicationConfig(const std::filesystem::path &path) {
       config.detector.maximum_candidates < 4 ||
       config.detector.maximum_candidates > 64 ||
       config.tracking.maximum_pose_points < 4 ||
-      config.tracking.maximum_pose_points > 16) {
+      config.tracking.maximum_pose_points >
+          config.detector.maximum_candidates) {
     throw std::runtime_error("configuration contains an invalid bound");
   }
   if (config.processing_crop.enabled &&

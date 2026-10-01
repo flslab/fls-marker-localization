@@ -470,6 +470,41 @@ void testOutputTag() {
           "an empty tag changed the output filenames");
 }
 
+void testMaximumPosePointsBound() {
+  std::ifstream input(FLS_TEST_CONFIG_PATH);
+  require(input.good(), "test configuration could not be opened");
+  nlohmann::json config = nlohmann::json::parse(input);
+  config["detector"]["maximum_candidates"] = 64;
+  config["tracking"]["maximum_pose_points"] = 64;
+
+  const std::filesystem::path path =
+      std::filesystem::temp_directory_path() /
+      ("fls_localizer_config_" +
+       std::to_string(static_cast<long long>(getpid())) + ".json");
+  {
+    std::ofstream output(path);
+    output << config;
+  }
+  const flsloc::ApplicationConfig loaded = flsloc::loadApplicationConfig(path);
+  require(loaded.tracking.maximum_pose_points ==
+              loaded.detector.maximum_candidates,
+          "maximum_pose_points could not equal maximum_candidates");
+
+  config["tracking"]["maximum_pose_points"] = 65;
+  {
+    std::ofstream output(path);
+    output << config;
+  }
+  bool rejected = false;
+  try {
+    static_cast<void>(flsloc::loadApplicationConfig(path));
+  } catch (const std::runtime_error &) {
+    rejected = true;
+  }
+  std::filesystem::remove(path);
+  require(rejected, "maximum_pose_points exceeded maximum_candidates");
+}
+
 void testLogIncludesGitVersion(const flsloc::GridMap &map) {
   flsloc::ApplicationConfig config = testConfig();
   config.output.annotated_video_fps = 0.0;
@@ -661,6 +696,7 @@ int main() try {
   testTrajectory();
   testOrientationErrorModel();
   testOutputTag();
+  testMaximumPosePointsBound();
   testLogIncludesGitVersion(map);
   testSharedMemoryPoseSelection();
   testSharedMemoryAbiForYawCorrection();
