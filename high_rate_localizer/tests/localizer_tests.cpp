@@ -1,5 +1,6 @@
 #include "fls_localizer/blink_decoder.hpp"
 #include "fls_localizer/config.hpp"
+#include "fls_localizer/debug_output.hpp"
 #include "fls_localizer/grid_map.hpp"
 #include "fls_localizer/hypergrid.hpp"
 #include "fls_localizer/pipeline.hpp"
@@ -12,7 +13,10 @@
 #include <cstdint>
 #include <cstring>
 #include <fcntl.h>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <nlohmann/json.hpp>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
 #include <stdexcept>
@@ -466,6 +470,29 @@ void testOutputTag() {
           "an empty tag changed the output filenames");
 }
 
+void testLogIncludesGitVersion(const flsloc::GridMap &map) {
+  flsloc::ApplicationConfig config = testConfig();
+  config.output.annotated_video_fps = 0.0;
+  config.output.directory =
+      std::filesystem::temp_directory_path() /
+      ("fls_localizer_git_version_" +
+       std::to_string(static_cast<long long>(getpid())));
+  std::filesystem::remove_all(config.output.directory);
+
+  {
+    flsloc::DebugOutput output(config, map, "unit-test");
+    output.finish();
+  }
+
+  std::ifstream input(config.output.directory / config.output.json_name);
+  require(input.good(), "debug JSON log was not written");
+  const nlohmann::json log = nlohmann::json::parse(input);
+  require(log.at("config").at("git_ver").is_string() &&
+              !log.at("config").at("git_ver").get<std::string>().empty(),
+          "debug JSON log is missing git_ver");
+  std::filesystem::remove_all(config.output.directory);
+}
+
 void testSharedMemoryPoseSelection() {
   flsloc::FrameResult tracking;
   tracking.state = flsloc::LocalizerState::HyperGridTracking;
@@ -634,6 +661,7 @@ int main() try {
   testTrajectory();
   testOrientationErrorModel();
   testOutputTag();
+  testLogIncludesGitVersion(map);
   testSharedMemoryPoseSelection();
   testSharedMemoryAbiForYawCorrection();
   testClosestSharedAttitude();

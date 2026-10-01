@@ -15,6 +15,10 @@ namespace {
 
 using json = nlohmann::json;
 
+#ifndef FLS_GIT_VERSION
+#define FLS_GIT_VERSION "unknown"
+#endif
+
 double rounded(double value, double scale = 1'000'000.0) {
   return std::round(value * scale) / scale;
 }
@@ -253,7 +257,8 @@ json DebugOutput::metadata() const {
   return {
       {"args", std::move(args)},
       {"config",
-       {{"initial_distance", config_.tracking.initial_distance_m},
+       {{"git_ver", FLS_GIT_VERSION},
+        {"initial_distance", config_.tracking.initial_distance_m},
         {"aruco_mode", false},
         {"blob_grid_localization_enabled", true},
         {"processing_crop",

@@ -11,6 +11,21 @@ option(FLS_LOCALIZER_ENABLE_LIBCAMERA "Build the production libcamera executable
 find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc calib3d videoio)
 find_package(nlohmann_json 3.2.0 REQUIRED)
 find_package(Threads REQUIRED)
+find_package(Git QUIET)
+
+set(FLS_GIT_VERSION "unknown")
+if(Git_FOUND)
+  execute_process(
+    COMMAND "${GIT_EXECUTABLE}" rev-parse HEAD
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    RESULT_VARIABLE FLS_GIT_RESULT
+    OUTPUT_VARIABLE FLS_GIT_REVISION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+  if(FLS_GIT_RESULT EQUAL 0 AND NOT FLS_GIT_REVISION STREQUAL "")
+    set(FLS_GIT_VERSION "${FLS_GIT_REVISION}")
+  endif()
+endif()
 
 add_library(fls_localizer_core
   src/config.cpp
@@ -34,6 +49,8 @@ target_link_libraries(fls_localizer_core
     opencv_videoio
     Threads::Threads)
 target_compile_options(fls_localizer_core PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(fls_localizer_core PRIVATE
+  FLS_GIT_VERSION="${FLS_GIT_VERSION}")
 
 add_executable(fls_localizer_video src/video_main.cpp)
 target_link_libraries(fls_localizer_video PRIVATE fls_localizer_core opencv_videoio)

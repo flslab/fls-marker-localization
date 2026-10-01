@@ -101,7 +101,9 @@ The production runner also accepts `--tag TAG`. When present, it writes
 LightBender orchestrator.
 
 The JSON retains the `args`, `config`, and `frames` structure and can be opened
-directly in the repository's web log viewer. Each successful tracking frame
+directly in the repository's web log viewer. The `config.git_ver` field records
+the Git commit used for the build (or `unknown` when Git metadata is not
+available). Each successful tracking frame
 contains separate `poses` entries with `pose_technique` set to `pnp` and
 `shared_attitude`. Each entry logs these explicitly framed quantities:
 
