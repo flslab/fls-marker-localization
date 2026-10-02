@@ -27,7 +27,9 @@ python3 -m marker_grid_controller \
   high_rate_localizer/config/hypergrid-mygrid.json --gpio 10 --test
 ```
 
-Each row-major tile uses two WS2811 values:
+Tiles are wired in serpentine row-major order: the first row runs from its
+lowest to highest `i`, the next row runs back from highest to lowest `i`, and
+so on. Each tile uses two WS2811 values:
 
 - chip 1 R/G/B: the first three MyGrid patterns
 - chip 2 R: the fourth MyGrid pattern

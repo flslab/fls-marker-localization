@@ -48,7 +48,19 @@ def load_grid(path):
             patterns.append(payload + delimiter)
         tiles.append((coordinate, patterns))
 
-    tiles.sort(key=lambda tile: tile[0])
+    # Follow the physical daisy chain across each row, then enter the next
+    # row from the same side.  Alternating the column direction avoids a
+    # long wire from the end of one row back to the start of the next.
+    rows = sorted({coordinate[1] for coordinate, _ in tiles})
+    row_number = {row: index for index, row in enumerate(rows)}
+    tiles.sort(
+        key=lambda tile: (
+            tile[0][1],
+            tile[0][0]
+            if row_number[tile[0][1]] % 2 == 0
+            else -tile[0][0],
+        )
+    )
     return tiles, bit_time, payload_bits + len(delimiter)
 
 
