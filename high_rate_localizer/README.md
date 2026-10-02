@@ -15,7 +15,14 @@ equations are specified in [FORMULATION.md](FORMULATION.md).
 ## Build
 
 On the Linux deployment machine, install libcamera, OpenCV 4, and
-nlohmann-json development packages, then run:
+nlohmann-json development packages, then run the release build script:
+
+```sh
+./build.sh
+```
+
+The script configures an incremental release build in `build/` and builds the
+production `fls_localizer` target. To build the video runner and tests too, run:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
