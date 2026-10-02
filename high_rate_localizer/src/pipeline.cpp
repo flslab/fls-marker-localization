@@ -306,6 +306,7 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
         poses.pnp.accepted = acceptable(poses.pnp);
         if (poses.pnp.accepted) {
           start_tile_ = signature->tile;
+          start_tile_recovery_enabled_ = true;
           initial_pose_generation_ = session_generation_;
           state_ = LocalizerState::InitialPoseReady;
           mygrid_request_ = MyGridRequest::Static;
@@ -365,6 +366,7 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
 
       if (controller.landing_requested &&
           state_ != LocalizerState::LandingTracking) {
+        start_tile_recovery_enabled_ = false;
         state_ = LocalizerState::LandingAcquire;
         mygrid_request_ = MyGridRequest::Static;
       }
@@ -413,6 +415,7 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
                            : LocalizerState::HyperGridAcquire;
             }
             if (state_ == LocalizerState::HyperGridTracking) {
+              start_tile_recovery_enabled_ = false;
               mygrid_request_ = MyGridRequest::Off;
             }
             usePoses(result, PoseSource::HyperGrid, std::move(hyper_matches),
@@ -422,22 +425,38 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
         }
       }
 
-      if (!pose_used && state_ == LocalizerState::TakeoffTracking &&
+      const bool tracking_start_tile =
+          state_ == LocalizerState::TakeoffTracking;
+      const bool recovering_start_tile =
+          state_ == LocalizerState::Lost && start_tile_recovery_enabled_ &&
+          !controller.landing_requested;
+      if (!pose_used && (tracking_start_tile || recovering_start_tile) &&
           start_tile_) {
         // The unconstrained initial PnP pose and the EKF attitude can imply
         // different camera positions even when both explain the same image.
         // Allow one conservative acquisition before enforcing the normal
         // per-frame association gate.
+        // Do not extrapolate a stale velocity while reacquiring from Lost.
+        // Holding the last accepted position keeps the normal association gate
+        // centered on the known ground tile and avoids accepting a neighbour.
+        const cv::Vec3d association_camera =
+            recovering_start_tile ? last_pose_.camera_position_world
+                                  : predicted_camera;
         const double gate = shared_attitude_pose_ready_
                                 ? config_.tracking.projection_gate_px
                                 : config_.tracking.projection_gate_px * 4.0;
         auto matches = matchKnownTile(*start_tile_, result.blobs,
-                                      predicted_camera, world_to_camera, gate);
-        if (matches.size() >= 2) {
+                                      association_camera, world_to_camera, gate);
+        const std::size_t minimum_matches = recovering_start_tile ? 4 : 2;
+        if (matches.size() >= minimum_matches) {
           PoseEstimates poses =
               solveTrackingPoses(matches, controller.quaternion_xyzw);
           if (poses.shared_attitude.accepted) {
             shared_attitude_pose_ready_ = true;
+            if (recovering_start_tile) {
+              state_ = LocalizerState::TakeoffTracking;
+              hypergrid_confirmations_ = 0;
+            }
             usePoses(result, PoseSource::MyGrid, std::move(matches),
                      std::move(poses), PoseTechnique::SharedAttitude);
             pose_used = true;

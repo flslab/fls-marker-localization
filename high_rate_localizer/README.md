@@ -213,6 +213,11 @@ each ground-truth entry records both the exact Blender quaternion and the
 | `lost` | No valid measurement within the configured loss window | Unchanged |
 | `fault` | Unrecoverable configuration or runtime error | Unchanged |
 
+During the takeoff phase, `lost` can reacquire the decoded start tile when all
+four MyGrid markers match the last accepted ground pose through the normal
+projection gate. This recovery path is permanently disabled after confirmed
+HyperGrid tracking or once landing begins.
+
 An OFF or STATIC request is advisory. HyperGrid correspondences are selected
 only from predicted lattice nodes, and all known MyGrid locations are excluded.
 Consequently an always-on MyGrid cannot enter the HyperGrid PnP point set.

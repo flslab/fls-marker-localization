@@ -268,6 +268,7 @@ void testTakeoffAttitudeAcquisition(const flsloc::GridMap &map) {
   config.tracking.initial_distance_m = 0.045;
   config.tracking.maximum_reprojection_error_px = 5.0;
   config.tracking.projection_gate_px = 35.0;
+  config.tracking.lost_after_frames = 2;
 
   const flsloc::MyGridTile *tile = map.findTile(0, 0);
   require(tile != nullptr, "takeoff test tile missing");
@@ -330,6 +331,43 @@ void testTakeoffAttitudeAcquisition(const flsloc::GridMap &map) {
       ++frame, controller.timestamp, static_markers, controller);
   require(tracked.trackingPose().accepted && tracked.matched.size() == 4,
           "normal projection gate did not retain the acquired takeoff pose");
+
+  const double stale_attitude_timestamp = controller.timestamp;
+  double camera_timestamp = stale_attitude_timestamp;
+  flsloc::FrameResult lost;
+  for (int invalid = 0; invalid <= config.tracking.lost_after_frames;
+       ++invalid) {
+    camera_timestamp = stale_attitude_timestamp +
+                       config.tracking.maximum_attitude_age_s +
+                       (invalid + 1) / 120.0;
+    lost = pipeline.process(++frame, camera_timestamp, static_markers,
+                            controller);
+  }
+  require(lost.state == flsloc::LocalizerState::Lost,
+          "stale attitude did not drive the takeoff tracker to lost");
+  require(lost.blobs.size() == 4,
+          "takeoff recovery fixture lost its visible MyGrid markers");
+
+  cv::Mat partial_markers = cv::Mat::zeros(400, 640, CV_8UC1);
+  for (int marker = 0; marker < 3; ++marker) {
+    cv::circle(partial_markers, centers[marker], 8, cv::Scalar(255), -1);
+  }
+  controller.timestamp = camera_timestamp + 1.0 / 120.0;
+  const flsloc::FrameResult partial = pipeline.process(
+      ++frame, controller.timestamp, partial_markers, controller);
+  require(partial.state == flsloc::LocalizerState::Lost &&
+              !partial.trackingPose().accepted,
+          "partial start tile incorrectly recovered tracking from lost");
+
+  controller.timestamp += 1.0 / 120.0;
+  const flsloc::FrameResult recovered = pipeline.process(
+      ++frame, controller.timestamp, static_markers, controller);
+  require(recovered.state == flsloc::LocalizerState::TakeoffTracking,
+          "visible start tile did not recover takeoff tracking from lost");
+  require(recovered.source == flsloc::PoseSource::MyGrid &&
+              recovered.trackingPose().accepted &&
+              recovered.matched.size() == 4,
+          "takeoff recovery did not solve the visible start tile pose");
 }
 
 void testProcessingCrop(const flsloc::GridMap &map) {
