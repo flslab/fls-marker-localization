@@ -82,7 +82,6 @@ def main():
     parser.add_argument("grid")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=5558)
-    parser.add_argument("--allow-host")
     parser.add_argument("--gpio", type=int, default=10)
     parser.add_argument(
         "--initial-mode", choices=("off", "static", "blink"), default="blink"
@@ -149,8 +148,6 @@ def main():
             )
         pixels.show()
 
-    allowed_ip = socket.gethostbyname(args.allow_host) if args.allow_host else None
-
     running = True
 
     def stop(_signal, _frame):
@@ -173,8 +170,6 @@ def main():
                 data, address = udp.recvfrom(4096)
                 request = {}
                 try:
-                    if allowed_ip and address[0] != allowed_ip:
-                        continue
                     request = json.loads(data)
                     changed = 0
                     if request["command"] == "set_mode":
