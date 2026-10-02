@@ -1,5 +1,6 @@
 #include "fls_localizer/config.hpp"
 
+#include <cmath>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
@@ -180,6 +181,12 @@ ApplicationConfig loadApplicationConfig(const std::filesystem::path &path) {
         tracking.value("lost_after_frames", config.tracking.lost_after_frames);
     config.tracking.maximum_attitude_age_s = tracking.value(
         "maximum_attitude_age_s", config.tracking.maximum_attitude_age_s);
+    config.tracking.attitude_prediction_enabled = tracking.value(
+        "attitude_prediction_enabled",
+        config.tracking.attitude_prediction_enabled);
+    config.tracking.maximum_attitude_prediction_s = tracking.value(
+        "maximum_attitude_prediction_s",
+        config.tracking.maximum_attitude_prediction_s);
   }
 
   if (root.contains("output")) {
@@ -222,7 +229,14 @@ ApplicationConfig loadApplicationConfig(const std::filesystem::path &path) {
       config.detector.maximum_candidates > 64 ||
       config.tracking.maximum_pose_points < 4 ||
       config.tracking.maximum_pose_points >
-          config.detector.maximum_candidates) {
+          config.detector.maximum_candidates ||
+      !std::isfinite(config.tracking.maximum_attitude_prediction_s) ||
+      config.tracking.maximum_attitude_prediction_s < 0.0 ||
+      (config.tracking.attitude_prediction_enabled &&
+       (!std::isfinite(config.tracking.maximum_attitude_age_s) ||
+        config.tracking.maximum_attitude_age_s <= 0.0 ||
+        config.tracking.maximum_attitude_prediction_s >
+            config.tracking.maximum_attitude_age_s))) {
     throw std::runtime_error("configuration contains an invalid bound");
   }
   if (config.processing_crop.enabled &&

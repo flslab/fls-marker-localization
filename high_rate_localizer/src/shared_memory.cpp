@@ -2,14 +2,17 @@
 #include "fls_localizer/pose_solver.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstring>
 #include <fcntl.h>
+#include <optional>
 #include <stdexcept>
 #include <sys/mman.h>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 namespace flsloc {
 namespace {
@@ -64,12 +67,46 @@ float imageSpan(const std::vector<MatchedPoint> &matched) {
   return std::min(maximum_x - minimum_x, maximum_y - minimum_y);
 }
 
+std::optional<cv::Vec4d> slerp(const cv::Vec4d &first,
+                               const cv::Vec4d &second, double alpha) {
+  const auto normalized_first = normalizeQuaternion(first);
+  auto normalized_second = normalizeQuaternion(second);
+  if (!normalized_first || !normalized_second || !std::isfinite(alpha)) {
+    return std::nullopt;
+  }
+
+  double dot = normalized_first->dot(*normalized_second);
+  if (dot < 0.0) {
+    *normalized_second = -*normalized_second;
+    dot = -dot;
+  }
+  dot = std::clamp(dot, -1.0, 1.0);
+  if (dot > 0.9995) {
+    return normalizeQuaternion(*normalized_first +
+                               alpha * (*normalized_second -
+                                        *normalized_first));
+  }
+
+  const double angle = std::acos(dot);
+  const double denominator = std::sin(angle);
+  if (!std::isfinite(denominator) || std::abs(denominator) < 1e-12) {
+    return std::nullopt;
+  }
+  return normalizeQuaternion(
+      (std::sin((1.0 - alpha) * angle) / denominator) * *normalized_first +
+      (std::sin(alpha * angle) / denominator) * *normalized_second);
+}
+
 } // namespace
 
 class SharedMemory::Impl {
 public:
-  Impl(const std::string &name, PoseTechnique pose_technique)
-      : pose_technique_(pose_technique) {
+  Impl(const std::string &name, PoseTechnique pose_technique,
+       bool attitude_prediction_enabled,
+       double maximum_attitude_prediction_s)
+      : pose_technique_(pose_technique),
+        attitude_prediction_enabled_(attitude_prediction_enabled),
+        maximum_attitude_prediction_s_(maximum_attitude_prediction_s) {
     descriptor_ = shm_open(name.c_str(), O_CREAT | O_RDWR, 0660);
     if (descriptor_ < 0 ||
         ftruncate(descriptor_, sizeof(shared::Layout)) != 0) {
@@ -132,6 +169,8 @@ public:
     result.landing_tile_j = snapshot.landing_tile_j;
 
     shared::AttitudeSample closest{};
+    std::array<shared::AttitudeSample, shared::kAttitudeHistorySize> attitudes{};
+    std::size_t attitude_count = 0;
     bool found = false;
     double closest_distance = 0.0;
     for (const shared::AttitudeSample &slot : layout_->attitudes) {
@@ -158,6 +197,7 @@ public:
           !std::isfinite(sample.timestamp)) {
         continue;
       }
+      attitudes[attitude_count++] = sample;
       const double distance = std::isfinite(camera_timestamp)
                                   ? std::abs(camera_timestamp - sample.timestamp)
                                   : 0.0;
@@ -182,6 +222,99 @@ public:
         closest.attitude_valid != 0 && quaternion.has_value();
     if (quaternion) {
       result.quaternion_xyzw = *quaternion;
+    }
+    if (!attitude_prediction_enabled_ || !result.attitude_valid ||
+        !std::isfinite(camera_timestamp) ||
+        maximum_attitude_prediction_s_ <= 0.0) {
+      return result;
+    }
+
+    struct TimedQuaternion {
+      double timestamp;
+      std::uint32_t sequence;
+      cv::Vec4d quaternion;
+    };
+    std::array<TimedQuaternion, shared::kAttitudeHistorySize> usable{};
+    std::size_t usable_count = 0;
+    for (std::size_t index = 0; index < attitude_count; ++index) {
+      const shared::AttitudeSample &sample = attitudes[index];
+      if (sample.attitude_valid == 0 ||
+          sample.ekf_reset_generation != closest.ekf_reset_generation) {
+        continue;
+      }
+      const auto normalized = normalizeQuaternion(
+          {sample.qx, sample.qy, sample.qz, sample.qw});
+      if (normalized) {
+        usable[usable_count++] =
+            {sample.timestamp, sample.sample_sequence, *normalized};
+      }
+    }
+    std::sort(usable.begin(), usable.begin() + usable_count,
+              [](const TimedQuaternion &left,
+                 const TimedQuaternion &right) {
+                if (left.timestamp != right.timestamp) {
+                  return left.timestamp < right.timestamp;
+                }
+                return left.sequence < right.sequence;
+              });
+    if (usable_count < 2) {
+      return result;
+    }
+
+    const TimedQuaternion *before = nullptr;
+    const TimedQuaternion *after = nullptr;
+    for (std::size_t index = 0; index < usable_count; ++index) {
+      const TimedQuaternion &sample = usable[index];
+      if (sample.timestamp <= camera_timestamp) {
+        before = &sample;
+      }
+      if (sample.timestamp >= camera_timestamp) {
+        after = &sample;
+        break;
+      }
+    }
+
+    const auto apply_pair = [&](const TimedQuaternion &first,
+                                const TimedQuaternion &second) {
+      const double interval = second.timestamp - first.timestamp;
+      if (!(interval > 1e-9) ||
+          interval > maximum_attitude_prediction_s_) {
+        return false;
+      }
+      const double alpha =
+          (camera_timestamp - first.timestamp) / interval;
+      const auto aligned = slerp(first.quaternion, second.quaternion, alpha);
+      if (!aligned) {
+        return false;
+      }
+      result.quaternion_xyzw = *aligned;
+      result.attitude_prediction_applied = true;
+      return true;
+    };
+
+    if (before && after) {
+      if (before->timestamp == after->timestamp) {
+        return result;
+      }
+      static_cast<void>(apply_pair(*before, *after));
+      return result;
+    }
+    if (!before || after) {
+      return result;
+    }
+
+    const double horizon = camera_timestamp - before->timestamp;
+    if (!(horizon > 0.0) || horizon > maximum_attitude_prediction_s_) {
+      return result;
+    }
+    const TimedQuaternion *previous = nullptr;
+    for (std::size_t index = 0; index < usable_count; ++index) {
+      if (usable[index].timestamp < before->timestamp) {
+        previous = &usable[index];
+      }
+    }
+    if (previous) {
+      static_cast<void>(apply_pair(*previous, *before));
     }
     return result;
   }
@@ -260,11 +393,20 @@ private:
   shared::Layout *layout_ = nullptr;
   std::uint32_t pose_sequence_ = 0;
   PoseTechnique pose_technique_ = PoseTechnique::SharedAttitude;
+  bool attitude_prediction_enabled_ = false;
+  double maximum_attitude_prediction_s_ = 0.03;
 };
 
 SharedMemory::SharedMemory(const std::string &name,
                            PoseTechnique pose_technique)
-    : impl_(std::make_unique<Impl>(name, pose_technique)) {}
+    : SharedMemory(name, pose_technique, false, 0.03) {}
+SharedMemory::SharedMemory(const std::string &name,
+                           PoseTechnique pose_technique,
+                           bool attitude_prediction_enabled,
+                           double maximum_attitude_prediction_s)
+    : impl_(std::make_unique<Impl>(name, pose_technique,
+                                  attitude_prediction_enabled,
+                                  maximum_attitude_prediction_s)) {}
 SharedMemory::~SharedMemory() = default;
 ControllerInput SharedMemory::readController(double camera_timestamp) const {
   return impl_->readController(camera_timestamp);

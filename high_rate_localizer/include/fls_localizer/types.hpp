@@ -57,6 +57,7 @@ struct MatchedPoint {
 
 struct ControllerInput {
   bool attitude_valid = false;
+  bool attitude_prediction_applied = false;
   bool landing_requested = false;
   std::uint32_t attitude_sequence = 0;
   std::uint32_t ekf_reset_generation = 0;
@@ -118,6 +119,7 @@ struct FrameResult {
   std::uint32_t initial_pose_generation = 0;
   std::uint32_t attitude_sequence = 0;
   bool attitude_valid = false;
+  bool attitude_prediction_applied = false;
   double attitude_timestamp = 0.0;
   double attitude_time_offset_s = 0.0;
   float hypergrid_acquisition_height_m = 0.0F;

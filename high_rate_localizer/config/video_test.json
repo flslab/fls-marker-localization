@@ -79,7 +79,9 @@
     "projection_gate_px": 35.0,
     "hypergrid_confirmation_frames": 3,
     "lost_after_frames": 30,
-    "maximum_attitude_age_s": 0.1
+    "maximum_attitude_age_s": 0.1,
+    "attitude_prediction_enabled": false,
+    "maximum_attitude_prediction_s": 0.03
   },
   "output": {
     "directory": "logs/high_rate_localizer",

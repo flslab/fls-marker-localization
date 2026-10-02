@@ -55,6 +55,8 @@ struct TrackingConfig {
   int hypergrid_confirmation_frames = 3;
   int lost_after_frames = 30;
   double maximum_attitude_age_s = 0.1;
+  bool attitude_prediction_enabled = false;
+  double maximum_attitude_prediction_s = 0.03;
 };
 
 struct OutputConfig {

@@ -115,6 +115,9 @@ namespace flsloc {
 class SharedMemory {
 public:
   SharedMemory(const std::string &name, PoseTechnique pose_technique);
+  SharedMemory(const std::string &name, PoseTechnique pose_technique,
+               bool attitude_prediction_enabled,
+               double maximum_attitude_prediction_s);
   ~SharedMemory();
   SharedMemory(const SharedMemory &) = delete;
   SharedMemory &operator=(const SharedMemory &) = delete;

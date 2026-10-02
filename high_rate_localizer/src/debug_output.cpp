@@ -285,6 +285,10 @@ json DebugOutput::metadata() const {
            toString(config_.shared_memory_pose_technique)},
           {"pnp_solver", toString(config_.tracking.pnp_solver)},
           {"maximum_pose_points", config_.tracking.maximum_pose_points},
+          {"attitude_prediction_enabled",
+           config_.tracking.attitude_prediction_enabled},
+          {"maximum_attitude_prediction_s",
+           config_.tracking.maximum_attitude_prediction_s},
           {"hypergrid_acquisition_height_m",
            2.0 * map_.hypergridSpacing() *
                std::max(config_.calibration.camera_matrix.at<double>(0, 0) /
@@ -354,6 +358,8 @@ json DebugOutput::frameJson(const FrameResult &result) const {
                   {"mygrid_request", toString(result.mygrid_request)},
                   {"shared_attitude",
                    {{"valid", result.attitude_valid},
+                    {"prediction_applied",
+                     result.attitude_prediction_applied},
                     {"sequence", result.attitude_sequence},
                     {"timestamp", rounded(result.attitude_timestamp)},
                     {"attitude_minus_camera_s",

@@ -505,8 +505,62 @@ void testMaximumPosePointsBound() {
   require(rejected, "maximum_pose_points exceeded maximum_candidates");
 }
 
+void testAttitudePredictionConfig() {
+  std::ifstream input(FLS_TEST_CONFIG_PATH);
+  require(input.good(), "test configuration could not be opened");
+  nlohmann::json config = nlohmann::json::parse(input);
+  const std::filesystem::path path =
+      std::filesystem::temp_directory_path() /
+      ("fls_localizer_prediction_config_" +
+       std::to_string(static_cast<long long>(getpid())) + ".json");
+  const auto write = [&]() {
+    std::ofstream output(path);
+    output << config;
+  };
+
+  write();
+  flsloc::ApplicationConfig loaded = flsloc::loadApplicationConfig(path);
+  require(!loaded.tracking.attitude_prediction_enabled &&
+              std::abs(loaded.tracking.maximum_attitude_prediction_s - 0.03) <
+                  1e-12,
+          "video-test prediction configuration was not loaded");
+
+  config["tracking"].erase("attitude_prediction_enabled");
+  config["tracking"].erase("maximum_attitude_prediction_s");
+  write();
+  loaded = flsloc::loadApplicationConfig(path);
+  require(!loaded.tracking.attitude_prediction_enabled &&
+              std::abs(loaded.tracking.maximum_attitude_prediction_s - 0.03) <
+                  1e-12,
+          "attitude prediction defaults changed");
+
+  config["tracking"]["attitude_prediction_enabled"] = true;
+  config["tracking"]["maximum_attitude_prediction_s"] = 0.02;
+  write();
+  loaded = flsloc::loadApplicationConfig(path);
+  require(loaded.tracking.attitude_prediction_enabled &&
+              std::abs(loaded.tracking.maximum_attitude_prediction_s - 0.02) <
+                  1e-12,
+          "enabled attitude prediction configuration was not loaded");
+
+  for (const double invalid : {-0.001, 0.101}) {
+    config["tracking"]["maximum_attitude_prediction_s"] = invalid;
+    write();
+    bool rejected = false;
+    try {
+      static_cast<void>(flsloc::loadApplicationConfig(path));
+    } catch (const std::runtime_error &) {
+      rejected = true;
+    }
+    require(rejected, "invalid attitude prediction bound was accepted");
+  }
+  std::filesystem::remove(path);
+}
+
 void testLogIncludesGitVersion(const flsloc::GridMap &map) {
   flsloc::ApplicationConfig config = testConfig();
+  config.tracking.attitude_prediction_enabled = true;
+  config.tracking.maximum_attitude_prediction_s = 0.02;
   config.output.annotated_video_fps = 0.0;
   config.output.directory =
       std::filesystem::temp_directory_path() /
@@ -525,6 +579,12 @@ void testLogIncludesGitVersion(const flsloc::GridMap &map) {
   require(log.at("config").at("git_ver").is_string() &&
               !log.at("config").at("git_ver").get<std::string>().empty(),
           "debug JSON log is missing git_ver");
+  const auto &marker_grid = log.at("config").at("marker_grid");
+  require(marker_grid.at("attitude_prediction_enabled").get<bool>() &&
+              std::abs(marker_grid.at("maximum_attitude_prediction_s")
+                           .get<double>() -
+                       0.02) < 1e-12,
+          "debug JSON log is missing attitude prediction configuration");
   std::filesystem::remove_all(config.output.directory);
 }
 
@@ -605,37 +665,99 @@ void testClosestSharedAttitude() {
       offsetof(flsloc::shared::ControllerBlock, sequence_end));
   layout.controller = controller;
 
+  const double degrees_to_radians = std::acos(-1.0) / 180.0;
   auto writeAttitude = [&](std::size_t index, std::uint32_t sequence,
-                           double timestamp, float qz, float qw) {
+                           double timestamp, double yaw_degrees,
+                           std::uint32_t generation, bool negate) {
     flsloc::shared::AttitudeSample sample{};
     sample.sequence_begin = 2;
     sample.sample_sequence = sequence;
-    sample.ekf_reset_generation = sequence + 40;
+    sample.ekf_reset_generation = generation;
     sample.attitude_valid = 1;
     sample.timestamp = timestamp;
-    sample.qz = qz;
-    sample.qw = qw;
+    const double half_yaw = 0.5 * yaw_degrees * degrees_to_radians;
+    const double sign = negate ? -1.0 : 1.0;
+    sample.qz = static_cast<float>(sign * std::sin(half_yaw));
+    sample.qw = static_cast<float>(sign * std::cos(half_yaw));
     sample.sequence_end = 2;
     sample.checksum = sharedChecksum(
         sample, offsetof(flsloc::shared::AttitudeSample, sample_sequence),
         offsetof(flsloc::shared::AttitudeSample, sequence_end));
     layout.attitudes[index] = sample;
   };
-  writeAttitude(0, 1, 10.0, 0.0F, 1.0F);
-  writeAttitude(1, 2, 10.02, 1.0F, 0.0F);
+  const auto yawDegrees = [degrees_to_radians](
+                              const flsloc::ControllerInput &input) {
+    return std::remainder(
+               2.0 * std::atan2(input.quaternion_xyzw[2],
+                                input.quaternion_xyzw[3]),
+               2.0 * std::acos(-1.0)) /
+           degrees_to_radians;
+  };
+  writeAttitude(0, 1, 10.0, 0.0, 42, false);
+  writeAttitude(1, 2, 10.02, 20.0, 42, false);
 
   const flsloc::ControllerInput closest = memory.readController(10.015);
   require(closest.attitude_valid && closest.attitude_sequence == 2 &&
               closest.ekf_reset_generation == 42 &&
               std::abs(closest.timestamp - 10.02) < 1e-12 &&
-              std::abs(closest.quaternion_xyzw[2] - 1.0) < 1e-12,
+              std::abs(yawDegrees(closest) - 20.0) < 1e-5 &&
+              !closest.attitude_prediction_applied,
           "shared memory did not select the closest attitude");
   const flsloc::ControllerInput tie = memory.readController(10.01);
-  require(tie.attitude_sequence == 2,
+  require(tie.attitude_sequence == 2 &&
+              std::abs(yawDegrees(tie) - 20.0) < 1e-5 &&
+              !tie.attitude_prediction_applied,
           "equidistant shared attitudes did not select the later sample");
   require(tie.landing_requested && tie.landing_tile_i == 3 &&
               tie.landing_tile_j == 4,
           "controller metadata was not read with the attitude history");
+
+  flsloc::SharedMemory predicted(name,
+                                 flsloc::PoseTechnique::SharedAttitude, true,
+                                 0.03);
+  const flsloc::ControllerInput interpolated =
+      predicted.readController(10.01);
+  require(interpolated.attitude_prediction_applied &&
+              interpolated.attitude_sequence == 2 &&
+              std::abs(interpolated.timestamp - 10.02) < 1e-12 &&
+              std::abs(yawDegrees(interpolated) - 10.0) < 1e-5,
+          "shared attitude was not interpolated to the camera timestamp");
+
+  const flsloc::ControllerInput extrapolated =
+      predicted.readController(10.03);
+  require(extrapolated.attitude_prediction_applied &&
+              extrapolated.attitude_sequence == 2 &&
+              std::abs(extrapolated.timestamp - 10.02) < 1e-12 &&
+              std::abs(yawDegrees(extrapolated) - 30.0) < 1e-5,
+          "shared attitude was not extrapolated to the camera timestamp");
+
+  writeAttitude(1, 2, 10.02, 20.0, 42, true);
+  const flsloc::ControllerInput antipodal = predicted.readController(10.03);
+  require(antipodal.attitude_prediction_applied &&
+              std::abs(yawDegrees(antipodal) - 30.0) < 1e-5,
+          "attitude prediction did not use the shortest quaternion arc");
+
+  const flsloc::ControllerInput beyond_bound =
+      predicted.readController(10.051);
+  require(!beyond_bound.attitude_prediction_applied &&
+              std::abs(yawDegrees(beyond_bound) - 20.0) < 1e-5,
+          "attitude extrapolation exceeded its configured horizon");
+
+  writeAttitude(0, 1, 10.0, 0.0, 41, false);
+  writeAttitude(1, 2, 10.02, 20.0, 42, false);
+  const flsloc::ControllerInput reset_boundary =
+      predicted.readController(10.01);
+  require(!reset_boundary.attitude_prediction_applied &&
+              reset_boundary.ekf_reset_generation == 42 &&
+              std::abs(yawDegrees(reset_boundary) - 20.0) < 1e-5,
+          "attitude prediction crossed an EKF reset generation");
+
+  writeAttitude(0, 1, 9.98, 0.0, 42, false);
+  const flsloc::ControllerInput excessive_gap =
+      predicted.readController(10.001);
+  require(!excessive_gap.attitude_prediction_applied &&
+              std::abs(yawDegrees(excessive_gap) - 20.0) < 1e-5,
+          "attitude interpolation crossed an excessive sample gap");
 
   flsloc::FrameResult frame;
   frame.frame_id = 12;
@@ -697,6 +819,7 @@ int main() try {
   testOrientationErrorModel();
   testOutputTag();
   testMaximumPosePointsBound();
+  testAttitudePredictionConfig();
   testLogIncludesGitVersion(map);
   testSharedMemoryPoseSelection();
   testSharedMemoryAbiForYawCorrection();

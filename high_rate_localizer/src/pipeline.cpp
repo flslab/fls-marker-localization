@@ -264,6 +264,8 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
   result.initial_pose_generation = initial_pose_generation_;
   result.attitude_sequence = controller.attitude_sequence;
   result.attitude_valid = controller.attitude_valid;
+  result.attitude_prediction_applied =
+      controller.attitude_prediction_applied;
   result.attitude_timestamp = controller.timestamp;
   result.attitude_time_offset_s =
       controller.timestamp > 0.0 ? controller.timestamp - timestamp : 0.0;

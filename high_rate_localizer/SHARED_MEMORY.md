@@ -19,8 +19,9 @@ Keeping ownership separate avoids both processes writing the same fields.
 The controller writes a 16-entry ring of individually committed samples. Each
 sample contains:
 
-- host `CLOCK_MONOTONIC` timestamp in camera-compatible seconds, recorded when
-  the Crazyflie log callback receives the attitude;
+- Crazyflie sample timestamp mapped from its millisecond-since-power-on clock
+  into host `CLOCK_MONOTONIC` camera-compatible seconds using the minimum
+  callback delay observed during startup calibration;
 - normalized drone-to-world quaternion in `x,y,z,w` order;
 - `attitude_valid`;
 - EKF reset generation being acknowledged;
@@ -30,12 +31,28 @@ The controller metadata contains the newest attitude sequence, landing request,
 and known landing tile `(i,j)`. At a 10 ms Crazyflie log period the ring covers
 approximately 150 ms before the newest sample.
 
+The one-way mapping is causal but cannot distinguish the host/FC clock offset
+from the minimum radio and callback transport delay. Consequently, its residual
+uncertainty is that minimum delay plus the FC clock's 1 ms quantization. Exact
+removal of that residual requires an independent two-way clock calibration.
+
 For every camera frame, the localizer reads the stable samples and chooses the
-one minimizing `abs(camera_capture_timestamp - attitude_timestamp)`. It does
-not interpolate. An exactly equidistant tie selects the later sample. The
-existing maximum-attitude-age check is then applied to the selected sample.
-Each frame log records the selected sequence, attitude timestamp, and signed
-`attitude_timestamp - camera_timestamp` offset for timing diagnostics.
+one minimizing `abs(camera_capture_timestamp - attitude_timestamp)`. An
+exactly equidistant tie selects the later sample. With
+`tracking.attitude_prediction_enabled` disabled, that closest quaternion is
+used unchanged. With it enabled, the localizer uses shortest-arc quaternion
+interpolation between samples that bracket the capture time, or bounded
+constant-angular-velocity extrapolation after the newest sample. It never
+combines samples from different EKF reset generations, never extrapolates
+backward before the oldest sample, and falls back to the closest quaternion
+when the samples or configured time bound are unsuitable.
+
+`tracking.maximum_attitude_prediction_s` bounds both the sample interval used
+for alignment and forward extrapolation from the newest sample. The existing
+maximum-attitude-age check is still applied to the closest source sample, not
+to the synthesized capture-time attitude. Each frame log records that source
+sequence and timestamp, its signed `attitude_timestamp - camera_timestamp`
+offset, and whether time alignment was applied.
 
 When the localizer publishes `initial_pose_generation = N` in
 `initial_pose_ready`, the controller resets the EKF from the published yaw and

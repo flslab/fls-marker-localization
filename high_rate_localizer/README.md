@@ -160,6 +160,20 @@ only after the controller resets and acknowledges its EKF. The annotated-video
 position follows this same effective shared-memory technique, which is labeled
 after the state on every frame.
 
+Shared-attitude samples can optionally be aligned to each camera capture under
+`tracking`:
+
+```json
+"attitude_prediction_enabled": true,
+"maximum_attitude_prediction_s": 0.03
+```
+
+When enabled, bracketing samples are interpolated on the quaternion's shortest
+arc. If the capture is newer than the attitude history, the two newest samples
+provide a constant-angular-velocity extrapolation, limited to the configured
+horizon. Samples across an EKF reset are never combined. Disabling the option
+retains closest-timestamp selection, including the later-sample tie break.
+
 ## Ground-truth trajectory
 
 In Blender, select exactly one LightBender and use **Marker Grid → Camera
@@ -214,8 +228,9 @@ hold until `hypergrid_tracking`, and then continue takeoff.
 - Libcamera uses a four-buffer YUV420 stream and processes only its luma plane.
 - Completed requests are latest-only; stale frames are returned immediately.
 - The controller publishes a 16-sample attitude ring at 100 Hz. For each
-  libcamera capture timestamp, the localizer uses the closest committed sample
-  without interpolation and applies the configured age gate afterward.
+  libcamera capture timestamp, the localizer either uses the closest committed
+  sample or performs the configured bounded interpolation/extrapolation. The
+  configured age gate is applied to the closest real source sample afterward.
 - Connected-component storage is reused between frames.
 - Detection is hard-capped at 64 blobs.
 - PnP input is spatially selected and hard-capped at 16 points. Solvers with a
