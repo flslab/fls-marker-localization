@@ -19,13 +19,9 @@ public:
         const cv::Matx33d &world_to_camera_rotation) const;
 
 private:
-  std::vector<MatchedPoint>
-  selectSpatially(std::vector<MatchedPoint> candidates) const;
-
   const GridMap &map_;
   cv::Mat camera_matrix_;
   cv::Mat distortion_;
-  std::size_t maximum_points_;
   double tolerance_cells_;
 };
 

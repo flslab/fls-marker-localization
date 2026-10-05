@@ -60,6 +60,7 @@ private:
   cv::Mat camera_matrix_;
   cv::Mat distortion_;
   PnpSolver pnp_solver_;
+  std::size_t maximum_pose_points_;
   cv::Point2f frame_center_;
   cv::Matx33d camera_to_drone_;
   cv::Vec3d camera_position_drone_;

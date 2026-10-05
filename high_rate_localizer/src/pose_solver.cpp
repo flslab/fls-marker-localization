@@ -133,6 +133,7 @@ PoseSolver::PoseSolver(const ApplicationConfig &config)
     : camera_matrix_(config.calibration.camera_matrix.clone()),
       distortion_(config.calibration.distortion.clone()),
       pnp_solver_(config.tracking.pnp_solver),
+      maximum_pose_points_(config.tracking.maximum_pose_points),
       frame_center_((static_cast<float>(config.camera.width) - 1.0F) * 0.5F,
                     (static_cast<float>(config.camera.height) - 1.0F) * 0.5F),
       camera_to_drone_(config.camera_to_drone_rotation),
@@ -147,12 +148,14 @@ cv::Matx33d PoseSolver::worldToCameraFromDrone(
 std::vector<MatchedPoint> PoseSolver::selectMatchesForPnp(
     const std::vector<MatchedPoint> &matches) const {
   const PnpSolverDefinition definition = definitionFor(pnp_solver_);
-  if (definition.maximum_correspondences == 0) {
-    return matches;
+  std::size_t maximum_correspondences = maximum_pose_points_;
+  if (definition.maximum_correspondences != 0) {
+    maximum_correspondences =
+        std::min(maximum_correspondences, definition.maximum_correspondences);
   }
 
   std::vector<MatchedPoint> selected;
-  if (matches.size() <= definition.maximum_correspondences) {
+  if (matches.size() <= maximum_correspondences) {
     selected = matches;
   } else {
     std::vector<std::size_t> indices(matches.size());
@@ -165,7 +168,7 @@ std::vector<MatchedPoint> PoseSolver::selectMatchesForPnp(
     };
     const auto middle =
         indices.begin() +
-        static_cast<std::ptrdiff_t>(definition.maximum_correspondences);
+        static_cast<std::ptrdiff_t>(maximum_correspondences);
     std::partial_sort(
         indices.begin(), middle, indices.end(),
         [&distanceFromCenter](std::size_t left, std::size_t right) {
@@ -175,7 +178,7 @@ std::vector<MatchedPoint> PoseSolver::selectMatchesForPnp(
                      ? left < right
                      : left_distance < right_distance;
         });
-    selected.reserve(definition.maximum_correspondences);
+    selected.reserve(maximum_correspondences);
     for (auto index = indices.begin(); index != middle; ++index) {
       selected.push_back(matches[*index]);
     }

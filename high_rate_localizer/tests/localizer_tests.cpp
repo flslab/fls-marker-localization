@@ -214,6 +214,7 @@ void testPnpSolverChoices() {
 
 void testPnpCorrespondenceLimit() {
   flsloc::ApplicationConfig config = testConfig();
+  config.tracking.maximum_pose_points = 4;
   std::vector<flsloc::MatchedPoint> matches(6);
   const std::array<cv::Point2f, 6> image{
       cv::Point2f(320.0F, 200.0F), cv::Point2f(300.0F, 200.0F),
@@ -253,8 +254,13 @@ void testPnpCorrespondenceLimit() {
 
   config.tracking.pnp_solver = flsloc::PnpSolver::Epnp;
   flsloc::PoseSolver epnp(config);
-  require(epnp.selectMatchesForPnp(matches).size() == matches.size(),
-          "an unlimited PnP solver discarded correspondences");
+  const auto epnp_selected = epnp.selectMatchesForPnp(matches);
+  require(epnp_selected.size() == config.tracking.maximum_pose_points,
+          "maximum_pose_points was not enforced for an unlimited PnP solver");
+  for (const flsloc::MatchedPoint &match : epnp_selected) {
+    require(match.id >= 0 && match.id < 4,
+            "maximum_pose_points did not keep the center-nearest markers");
+  }
 }
 
 void testTakeoffAttitudeAcquisition(const flsloc::GridMap &map) {

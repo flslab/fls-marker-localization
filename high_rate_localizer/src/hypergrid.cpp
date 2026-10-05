@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <map>
 #include <opencv2/calib3d.hpp>
 
@@ -12,7 +11,6 @@ HyperGridMatcher::HyperGridMatcher(const GridMap &map,
                                    const ApplicationConfig &config)
     : map_(map), camera_matrix_(config.calibration.camera_matrix.clone()),
       distortion_(config.calibration.distortion.clone()),
-      maximum_points_(config.tracking.maximum_pose_points),
       tolerance_cells_(config.tracking.lattice_tolerance_cells) {}
 
 std::vector<MatchedPoint>
@@ -89,42 +87,7 @@ HyperGridMatcher::match(const std::vector<Blob> &blobs,
     (void)key;
     candidates.push_back(match);
   }
-  return selectSpatially(std::move(candidates));
-}
-
-std::vector<MatchedPoint>
-HyperGridMatcher::selectSpatially(std::vector<MatchedPoint> candidates) const {
-  if (candidates.size() <= maximum_points_) {
-    return candidates;
-  }
-  std::vector<MatchedPoint> selected;
-  selected.reserve(maximum_points_);
-  auto first = std::max_element(
-      candidates.begin(), candidates.end(),
-      [](const MatchedPoint &left, const MatchedPoint &right) {
-        return left.image.dot(left.image) < right.image.dot(right.image);
-      });
-  selected.push_back(*first);
-  candidates.erase(first);
-  while (selected.size() < maximum_points_) {
-    auto best = candidates.begin();
-    double best_distance = -1.0;
-    for (auto candidate = candidates.begin(); candidate != candidates.end();
-         ++candidate) {
-      double nearest = std::numeric_limits<double>::infinity();
-      for (const MatchedPoint &used : selected) {
-        const cv::Point2f delta = candidate->image - used.image;
-        nearest = std::min(nearest, static_cast<double>(delta.dot(delta)));
-      }
-      if (nearest > best_distance) {
-        best_distance = nearest;
-        best = candidate;
-      }
-    }
-    selected.push_back(*best);
-    candidates.erase(best);
-  }
-  return selected;
+  return candidates;
 }
 
 } // namespace flsloc
