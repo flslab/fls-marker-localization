@@ -5,9 +5,6 @@ import signal
 import socket
 import time
 
-import board
-import neopixel_spi as neopixel
-
 
 def test_leds(pixels):
     value = 1
@@ -22,6 +19,21 @@ def test_leds(pixels):
             time.sleep(1)
     except KeyboardInterrupt:
         print("LED test stopped", flush=True)
+
+
+def snake_order_tiles(tiles):
+    """Order (i, j) = (x, y) tiles along fixed-x serpentine rows."""
+    rows = sorted({coordinate[0] for coordinate, _ in tiles})
+    row_number = {row: index for index, row in enumerate(rows)}
+    return sorted(
+        tiles,
+        key=lambda tile: (
+            tile[0][0],
+            tile[0][1]
+            if row_number[tile[0][0]] % 2 == 0
+            else -tile[0][1],
+        ),
+    )
 
 
 def load_grid(path):
@@ -48,20 +60,11 @@ def load_grid(path):
             patterns.append(payload + delimiter)
         tiles.append((coordinate, patterns))
 
-    # Follow the physical daisy chain across each row, then enter the next
-    # row from the same side.  Alternating the column direction avoids a
-    # long wire from the end of one row back to the start of the next.
-    rows = sorted({coordinate[1] for coordinate, _ in tiles})
-    row_number = {row: index for index, row in enumerate(rows)}
-    tiles.sort(
-        key=lambda tile: (
-            tile[0][1],
-            tile[0][0]
-            if row_number[tile[0][1]] % 2 == 0
-            else -tile[0][0],
-        )
-    )
-    return tiles, bit_time, payload_bits + len(delimiter)
+    # Tile coordinates are (i, j) = (x, y). Follow the physical daisy chain
+    # across each fixed-x row by changing j, then enter the next x row from
+    # the same side. Alternating the y direction avoids a long wire from the
+    # end of one row back to the start of the next.
+    return snake_order_tiles(tiles), bit_time, payload_bits + len(delimiter)
 
 
 def response(request, modes, changed=0):
@@ -78,6 +81,9 @@ def response(request, modes, changed=0):
 
 
 def main():
+    import board
+    import neopixel_spi as neopixel
+
     parser = argparse.ArgumentParser()
     parser.add_argument("grid")
     parser.add_argument("--host", default="0.0.0.0")

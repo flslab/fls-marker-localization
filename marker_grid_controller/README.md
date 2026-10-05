@@ -27,9 +27,11 @@ python3 -m marker_grid_controller \
   high_rate_localizer/config/hypergrid-mygrid.json --gpio 10 --test
 ```
 
-Tiles are wired in serpentine row-major order: the first row runs from its
-lowest to highest `i`, the next row runs back from highest to lowest `i`, and
-so on. Each tile uses two WS2811 values:
+Tile `(i, j)` uses `i` for the x index and `j` for the y index. Tiles are wired
+in serpentine row-major order: within the first fixed-x row, `j` runs from its
+lowest to highest value; in the next x row, `j` runs from highest to lowest;
+and so on. Thus `(-1, -1)` and `(-1, 0)` are adjacent along the y axis. Each
+tile uses two WS2811 values:
 
 - chip 1 R/G/B: the first three MyGrid patterns
 - chip 2 R: the fourth MyGrid pattern
