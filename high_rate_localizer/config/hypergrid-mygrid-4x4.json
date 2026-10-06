@@ -4,8 +4,8 @@
   "units": "metres",
   "coordinate_frame": "world_FLU",
   "grid_origin": [
-    0.155,
-    0.155,
+    0,
+    0,
     0
   ],
   "origin_definition": "centre of tile (0, 0)",
