@@ -84,7 +84,7 @@
     "hypergrid_confirmation_frames": 3,
     "lost_after_frames": 30,
     "maximum_attitude_age_s": 0.012,
-    "attitude_prediction_enabled": true,
+    "attitude_prediction_enabled": false,
     "maximum_attitude_prediction_s": 0.012
   },
   "output": {
