@@ -76,7 +76,7 @@
   },
   "tracking": {
     "pnp_solver": "ippe",
-    "maximum_pose_points": 16,
+    "maximum_pose_points": 64,
     "initial_distance_m": 0.045,
     "maximum_reprojection_error_px": 5.0,
     "lattice_tolerance_cells": 0.45,
