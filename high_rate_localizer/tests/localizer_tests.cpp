@@ -565,7 +565,7 @@ void testAttitudePredictionConfig() {
   write();
   flsloc::ApplicationConfig loaded = flsloc::loadApplicationConfig(path);
   require(!loaded.tracking.attitude_prediction_enabled &&
-              std::abs(loaded.tracking.maximum_attitude_prediction_s - 0.03) <
+              std::abs(loaded.tracking.maximum_attitude_prediction_s - 0.012) <
                   1e-12,
           "video-test prediction configuration was not loaded");
 
@@ -574,16 +574,16 @@ void testAttitudePredictionConfig() {
   write();
   loaded = flsloc::loadApplicationConfig(path);
   require(!loaded.tracking.attitude_prediction_enabled &&
-              std::abs(loaded.tracking.maximum_attitude_prediction_s - 0.03) <
+              std::abs(loaded.tracking.maximum_attitude_prediction_s - 0.012) <
                   1e-12,
           "attitude prediction defaults changed");
 
   config["tracking"]["attitude_prediction_enabled"] = true;
-  config["tracking"]["maximum_attitude_prediction_s"] = 0.02;
+  config["tracking"]["maximum_attitude_prediction_s"] = 0.01;
   write();
   loaded = flsloc::loadApplicationConfig(path);
   require(loaded.tracking.attitude_prediction_enabled &&
-              std::abs(loaded.tracking.maximum_attitude_prediction_s - 0.02) <
+              std::abs(loaded.tracking.maximum_attitude_prediction_s - 0.01) <
                   1e-12,
           "enabled attitude prediction configuration was not loaded");
 
@@ -604,7 +604,7 @@ void testAttitudePredictionConfig() {
 void testLogIncludesGitVersion(const flsloc::GridMap &map) {
   flsloc::ApplicationConfig config = testConfig();
   config.tracking.attitude_prediction_enabled = true;
-  config.tracking.maximum_attitude_prediction_s = 0.02;
+  config.tracking.maximum_attitude_prediction_s = 0.01;
   config.output.annotated_video_fps = 0.0;
   config.output.directory =
       std::filesystem::temp_directory_path() /
@@ -627,7 +627,7 @@ void testLogIncludesGitVersion(const flsloc::GridMap &map) {
   require(marker_grid.at("attitude_prediction_enabled").get<bool>() &&
               std::abs(marker_grid.at("maximum_attitude_prediction_s")
                            .get<double>() -
-                       0.02) < 1e-12,
+                       0.01) < 1e-12,
           "debug JSON log is missing attitude prediction configuration");
   std::filesystem::remove_all(config.output.directory);
 }
@@ -767,25 +767,25 @@ void testClosestSharedAttitude() {
               std::abs(yawDegrees(interpolated) - 10.0) < 1e-5,
           "shared attitude was not interpolated to the camera timestamp");
 
-  const flsloc::ControllerInput extrapolated =
+  const flsloc::ControllerInput after_newest =
       predicted.readController(10.03);
-  require(extrapolated.attitude_prediction_applied &&
-              extrapolated.attitude_sequence == 2 &&
-              std::abs(extrapolated.timestamp - 10.02) < 1e-12 &&
-              std::abs(yawDegrees(extrapolated) - 30.0) < 1e-5,
-          "shared attitude was not extrapolated to the camera timestamp");
+  require(!after_newest.attitude_prediction_applied &&
+              after_newest.attitude_sequence == 2 &&
+              std::abs(after_newest.timestamp - 10.02) < 1e-12 &&
+              std::abs(yawDegrees(after_newest) - 20.0) < 1e-5,
+          "camera timestamp after newest sample did not use closest attitude");
 
   writeAttitude(1, 2, 10.02, 20.0, 42, true);
-  const flsloc::ControllerInput antipodal = predicted.readController(10.03);
+  const flsloc::ControllerInput antipodal = predicted.readController(10.01);
   require(antipodal.attitude_prediction_applied &&
-              std::abs(yawDegrees(antipodal) - 30.0) < 1e-5,
-          "attitude prediction did not use the shortest quaternion arc");
+              std::abs(yawDegrees(antipodal) - 10.0) < 1e-5,
+          "attitude interpolation did not use the shortest quaternion arc");
 
   const flsloc::ControllerInput beyond_bound =
       predicted.readController(10.051);
   require(!beyond_bound.attitude_prediction_applied &&
               std::abs(yawDegrees(beyond_bound) - 20.0) < 1e-5,
-          "attitude extrapolation exceeded its configured horizon");
+          "camera timestamp after newest sample did not keep closest attitude");
 
   writeAttitude(0, 1, 10.0, 0.0, 41, false);
   writeAttitude(1, 2, 10.02, 20.0, 42, false);

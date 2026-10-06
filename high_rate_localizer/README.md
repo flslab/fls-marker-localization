@@ -165,13 +165,12 @@ Shared-attitude samples can optionally be aligned to each camera capture under
 
 ```json
 "attitude_prediction_enabled": true,
-"maximum_attitude_prediction_s": 0.03
+"maximum_attitude_prediction_s": 0.012
 ```
 
 When enabled, bracketing samples are interpolated on the quaternion's shortest
-arc. If the capture is newer than the attitude history, the two newest samples
-provide a constant-angular-velocity extrapolation, limited to the configured
-horizon. Samples across an EKF reset are never combined. Disabling the option
+arc. If the capture is outside the attitude history, the closest sample is used
+unchanged. Samples across an EKF reset are never combined. Disabling the option
 retains closest-timestamp selection, including the later-sample tie break.
 
 ## Ground-truth trajectory
@@ -234,7 +233,7 @@ hold until `hypergrid_tracking`, and then continue takeoff.
 - Completed requests are latest-only; stale frames are returned immediately.
 - The controller publishes a 16-sample attitude ring at 100 Hz. For each
   libcamera capture timestamp, the localizer either uses the closest committed
-  sample or performs the configured bounded interpolation/extrapolation. The
+  sample or performs the configured bounded interpolation. The
   configured age gate is applied to the closest real source sample afterward.
 - Connected-component storage is reused between frames.
 - Detection is hard-capped at 64 blobs.

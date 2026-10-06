@@ -297,24 +297,6 @@ public:
         return result;
       }
       static_cast<void>(apply_pair(*before, *after));
-      return result;
-    }
-    if (!before || after) {
-      return result;
-    }
-
-    const double horizon = camera_timestamp - before->timestamp;
-    if (!(horizon > 0.0) || horizon > maximum_attitude_prediction_s_) {
-      return result;
-    }
-    const TimedQuaternion *previous = nullptr;
-    for (std::size_t index = 0; index < usable_count; ++index) {
-      if (usable[index].timestamp < before->timestamp) {
-        previous = &usable[index];
-      }
-    }
-    if (previous) {
-      static_cast<void>(apply_pair(*previous, *before));
     }
     return result;
   }
@@ -394,12 +376,12 @@ private:
   std::uint32_t pose_sequence_ = 0;
   PoseTechnique pose_technique_ = PoseTechnique::SharedAttitude;
   bool attitude_prediction_enabled_ = false;
-  double maximum_attitude_prediction_s_ = 0.03;
+  double maximum_attitude_prediction_s_ = 0.012;
 };
 
 SharedMemory::SharedMemory(const std::string &name,
                            PoseTechnique pose_technique)
-    : SharedMemory(name, pose_technique, false, 0.03) {}
+    : SharedMemory(name, pose_technique, false, 0.012) {}
 SharedMemory::SharedMemory(const std::string &name,
                            PoseTechnique pose_technique,
                            bool attitude_prediction_enabled,

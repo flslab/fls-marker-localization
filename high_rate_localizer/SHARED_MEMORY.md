@@ -41,18 +41,18 @@ one minimizing `abs(camera_capture_timestamp - attitude_timestamp)`. An
 exactly equidistant tie selects the later sample. With
 `tracking.attitude_prediction_enabled` disabled, that closest quaternion is
 used unchanged. With it enabled, the localizer uses shortest-arc quaternion
-interpolation between samples that bracket the capture time, or bounded
-constant-angular-velocity extrapolation after the newest sample. It never
-combines samples from different EKF reset generations, never extrapolates
-backward before the oldest sample, and falls back to the closest quaternion
-when the samples or configured time bound are unsuitable.
+interpolation only when samples bracket the capture time. A capture newer than
+the attitude history, or older than its oldest sample, uses the closest
+quaternion unchanged. It never combines samples from different EKF reset
+generations and falls back to the closest quaternion when the samples or
+configured time bound are unsuitable.
 
-`tracking.maximum_attitude_prediction_s` bounds both the sample interval used
-for alignment and forward extrapolation from the newest sample. The existing
-maximum-attitude-age check is still applied to the closest source sample, not
-to the synthesized capture-time attitude. Each frame log records that source
-sequence and timestamp, its signed `attitude_timestamp - camera_timestamp`
-offset, and whether time alignment was applied.
+`tracking.maximum_attitude_prediction_s` bounds the interval between the two
+samples used for interpolation. The maximum-attitude-age check is still
+applied to the closest source sample, not to the synthesized capture-time
+attitude. Each frame log records that source sequence and timestamp, its signed
+`attitude_timestamp - camera_timestamp` offset, and whether time alignment was
+applied.
 
 When the localizer publishes `initial_pose_generation = N` in
 `initial_pose_ready`, the controller resets the EKF from the published yaw and
