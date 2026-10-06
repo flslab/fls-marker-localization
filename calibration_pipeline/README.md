@@ -293,6 +293,53 @@ The selected model is the simplest eligible model within
 `selection.simpler_model_tolerance_px` of the best held-out metric. This avoids
 buying extra coefficients for an insignificant training-only improvement.
 
+### 72 — Verify the calibration currently deployed in the localizer
+
+After copying a calibration into the high-rate controller configuration, check
+the deployed values directly rather than assuming they still match a pipeline
+output:
+
+```sh
+calibration_pipeline/.venv/bin/python \
+  calibration_pipeline/evaluate_localizer_calibration.py \
+  --config high_rate_localizer/config/localizer.json \
+  --output-dir calibration_pipeline/output/localizer_monotonicity
+```
+
+The evaluator tests every pixel center in the configured frame. A pixel is
+green in `per_pixel_validity.png` only when all of these conditions hold:
+
+1. OpenCV can invert that distorted pixel to a finite normalized camera ray.
+2. Projecting that ray through the same calibration returns to the original
+   pixel within `--maximum-round-trip-error-px`.
+3. The numerical determinant of the full pixel-to-ray Jacobian is positive and
+   exceeds `--minimum-inverse-jacobian-determinant`. This includes radial,
+   tangential, and any enabled higher-order distortion terms, so it detects a
+   local fold or orientation reversal.
+4. The ray radius is on the globally monotonic radial branch and the local
+   radial derivative is positive.
+
+For an OpenCV/rational model, the radial part maps ideal normalized radius
+`r` to
+
+```text
+r_distorted = r * (1 + k1*r^2 + k2*r^4 + k3*r^6)
+                  / (1 + k4*r^2 + k5*r^4 + k6*r^6)
+```
+
+The global scan requires `r_distorted` and `d(r_distorted)/dr` to remain finite,
+and the derivative to remain positive, from zero through
+`--radial-test-limit`. The default limit of 5.0 is intentionally much larger
+than an ordinary frame radius. Tangential and thin-prism behavior is not
+represented by this one-dimensional formula; it is covered by the per-pixel
+round-trip and full-Jacobian checks.
+
+The other three panels show safety margin rather than only pass/fail: the
+round-trip error relative to its tolerance, the radial derivative, and the
+inverse-Jacobian determinant relative to its threshold. A white plus marks the
+principal point. The configured processing crop is a solid white rectangle
+when enabled and a dashed rectangle when disabled.
+
 ### 75 — Build an independent operational pose dataset
 
 A calibration target can validate pixel geometry, but it cannot by itself
@@ -582,6 +629,44 @@ diagnosis.
 Written only when a deployable model/ROI passes every threshold. It contains
 the camera matrix, distortion vector and processing crop expected by the
 high-rate localizer.
+
+### `localizer_monotonicity/monotonicity_results.json`
+
+This is the audit record written by
+`evaluate_localizer_calibration.py`. Its entries are:
+
+- `source_config`, `image_size`, `camera_matrix`, and
+  `distortion_coefficients`: the exact deployed source and values evaluated.
+- `processing_crop`: the crop read from the localizer configuration. The crop
+  region is summarized even when `enabled` is false so full-frame and proposed
+  crop margins can be compared.
+- `thresholds`: the three command-line limits used for the decision.
+- `radial_monotonicity`: whether the radial function stayed one-to-one through
+  the test radius, the minimum derivative and where it occurs, and the sampled
+  and finite-sample counts. If it fails, the result reports the first limiting
+  ideal radius found by the sampled scan and bisection.
+- `full_frame` and `configured_crop`: pixel count, valid/invalid count, valid
+  fraction, maximum raw normalized radius, and maximum recovered undistorted
+  radius. Raw radius is `norm(K^-1 [u,v,1])`; undistorted radius is the norm of
+  the ray returned by OpenCV after removing distortion.
+- `metrics.round_trip_error_px`: Euclidean distance between each original
+  pixel and the same ray projected back through the camera model.
+- `metrics.inverse_jacobian_determinant`: determinant of the numerical
+  derivative of normalized ray coordinates with respect to pixel coordinates.
+  A positive value preserves local orientation; values near zero indicate a
+  nearly singular inverse.
+- `metrics.radial_derivative`: `d(r_distorted)/dr` evaluated at each recovered
+  ideal ray radius. It must be positive.
+- `metrics.raw_normalized_radius` and
+  `metrics.undistorted_normalized_radius`: distributions of the two radius
+  definitions above. Each metric reports finite-sample count, minimum, median,
+  linear 95th percentile, and maximum.
+- `failure_counts`: number of full-frame pixels failing each individual
+  condition. Categories can overlap, so they are diagnostic counts and need
+  not sum to `invalid_pixels`.
+- `validity_definition`: a concise, machine-readable description of the
+  conjunction used to classify a pixel.
+- `visualization`: absolute path to `per_pixel_validity.png`.
 
 ## Important limitations
 

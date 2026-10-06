@@ -80,6 +80,37 @@ def response(request, modes, changed=0):
     }
 
 
+def hypergrid_level(coordinate, enabled_tiles, level):
+    """Return the configured level when this tile's HyperGrid is enabled."""
+    if enabled_tiles is None or coordinate in enabled_tiles:
+        return level
+    return 0
+
+
+def parse_tiles(value):
+    try:
+        tiles = json.loads(value)
+        if not isinstance(tiles, list):
+            raise ValueError
+        parsed = []
+        for tile in tiles:
+            if (
+                not isinstance(tile, list)
+                or len(tile) != 2
+                or not all(
+                    isinstance(part, int) and not isinstance(part, bool)
+                    for part in tile
+                )
+            ):
+                raise ValueError
+            parsed.append(tuple(tile))
+        return parsed
+    except (json.JSONDecodeError, ValueError) as error:
+        raise argparse.ArgumentTypeError(
+            "tiles must be a JSON list of [i, j] integer pairs"
+        ) from error
+
+
 def main():
     import board
     import neopixel_spi as neopixel
@@ -94,6 +125,15 @@ def main():
     )
     parser.add_argument("--mygrid-level", type=int, default=255)
     parser.add_argument("--hypergrid-level", type=int, default=255)
+    parser.add_argument(
+        "--hypergrid-tiles",
+        type=parse_tiles,
+        metavar="JSON",
+        help=(
+            "enable HyperGrid LEDs only on these tiles, as a JSON list "
+            "(default: enable every tile; an empty list disables all)"
+        ),
+    )
     parser.add_argument(
         "--test",
         action="store_true",
@@ -110,6 +150,20 @@ def main():
 
     tiles, bit_time, packet_length = load_grid(args.grid)
     modes = {coordinate: args.initial_mode for coordinate, _ in tiles}
+    enabled_hypergrid_tiles = (
+        None
+        if args.hypergrid_tiles is None
+        else set(args.hypergrid_tiles)
+    )
+    unknown_hypergrid_tiles = (
+        set() if enabled_hypergrid_tiles is None
+        else enabled_hypergrid_tiles.difference(modes)
+    )
+    if unknown_hypergrid_tiles:
+        parser.error(
+            "--hypergrid-tiles contains unknown tile(s): "
+            + ", ".join(str(tile) for tile in sorted(unknown_hypergrid_tiles))
+        )
 
     # Binding first also prevents a test process and a running controller from
     # writing conflicting frames to the same SPI bus.
@@ -146,11 +200,14 @@ def main():
             else:
                 levels = [args.mygrid_level * pattern[bit] for pattern in patterns]
 
+            tile_hypergrid_level = hypergrid_level(
+                coordinate, enabled_hypergrid_tiles, args.hypergrid_level
+            )
             pixels[index * 2] = tuple(levels[:3])
             pixels[index * 2 + 1] = (
                 levels[3],
-                args.hypergrid_level,
-                args.hypergrid_level,
+                tile_hypergrid_level,
+                tile_hypergrid_level,
             )
         pixels.show()
 

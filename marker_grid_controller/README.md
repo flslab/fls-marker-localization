@@ -19,6 +19,15 @@ python3 -m marker_grid_controller \
   --initial-mode blink --mygrid-level 255 --hypergrid-level 255
 ```
 
+HyperGrid LEDs are on for every tile by default. To enable them only on
+specific tiles, pass their `[i, j]` coordinates to `--hypergrid-tiles` as JSON:
+
+```sh
+python3 -m marker_grid_controller \
+  high_rate_localizer/config/hypergrid-mygrid.json \
+  --hypergrid-tiles '[[0,0],[1,0]]'
+```
+
 Hardware test—all channels alternate between 0 and 255 every second and each
 transition is printed:
 
@@ -35,7 +44,8 @@ tile uses two WS2811 values:
 
 - chip 1 R/G/B: the first three MyGrid patterns
 - chip 2 R: the fourth MyGrid pattern
-- chip 2 G/B: HyperGrid, always on at `--hypergrid-level`
+- chip 2 G/B: HyperGrid, on at `--hypergrid-level` for every tile by default,
+  or only for tiles selected with `--hypergrid-tiles`
 
 The UDP commands used by the orchestrator are:
 
