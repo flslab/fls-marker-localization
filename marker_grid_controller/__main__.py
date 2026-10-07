@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 import select
 import signal
@@ -67,8 +68,16 @@ def load_grid(path):
     return snake_order_tiles(tiles), bit_time, payload_bits + len(delimiter)
 
 
-def response(request, modes, changed=0):
-    return {
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as file:
+        for block in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def response(request, modes, changed=0, grid_sha256=None):
+    result = {
         "version": 1,
         "request_id": request.get("request_id"),
         "ok": True,
@@ -78,6 +87,9 @@ def response(request, modes, changed=0):
             for coordinate, mode in modes.items()
         ],
     }
+    if grid_sha256 is not None:
+        result["grid_sha256"] = grid_sha256
+    return result
 
 
 def hypergrid_level(coordinate, enabled_tiles, level):
@@ -148,6 +160,7 @@ def main():
     if not 0 <= args.hypergrid_level <= 255:
         parser.error("--hypergrid-level must be between 0 and 255")
 
+    grid_sha256 = file_sha256(args.grid)
     tiles, bit_time, packet_length = load_grid(args.grid)
     modes = {coordinate: args.initial_mode for coordinate, _ in tiles}
     enabled_hypergrid_tiles = (
@@ -251,7 +264,9 @@ def main():
                                 changed += 1
                     elif request["command"] != "status":
                         raise ValueError("invalid command")
-                    reply = response(request, modes, changed)
+                    reply = response(
+                        request, modes, changed, grid_sha256=grid_sha256
+                    )
                 except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
                     reply = {
                         "version": 1,
