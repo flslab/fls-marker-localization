@@ -54,4 +54,5 @@ The UDP commands used by the orchestrator are:
 ```
 
 Add `"tile":[i,j]` to change one tile. Modes are `off`, `static`, and
-`blink`.
+`blink`. Every successful response includes `grid_sha256`, the SHA-256 of the
+loaded grid JSON, so camera pose consumers can reject coordinate-map skew.
