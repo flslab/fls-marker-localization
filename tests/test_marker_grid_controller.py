@@ -3,11 +3,22 @@ import unittest
 from marker_grid_controller.__main__ import (
     hypergrid_level,
     parse_tiles,
+    response,
     snake_order_tiles,
 )
 
 
 class MarkerGridControllerTest(unittest.TestCase):
+    def test_status_response_reports_grid_provenance(self):
+        digest = "a" * 64
+        result = response(
+            {"request_id": "request"},
+            {(0, 0): "off"},
+            grid_sha256=digest,
+        )
+
+        self.assertEqual(result["grid_sha256"], digest)
+
     def test_hypergrid_defaults_to_every_tile(self):
         self.assertEqual(hypergrid_level((4, -2), None, 173), 173)
 

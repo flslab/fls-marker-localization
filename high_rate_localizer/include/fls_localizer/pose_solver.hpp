@@ -5,6 +5,8 @@
 
 #include <opencv2/core.hpp>
 #include <optional>
+#include <set>
+#include <tuple>
 #include <vector>
 
 namespace flsloc {
@@ -26,7 +28,10 @@ public:
                                  const cv::Vec4d &drone_quaternion_xyzw) const;
 
   std::vector<MatchedPoint>
-  selectMatchesForPnp(const std::vector<MatchedPoint> &matches) const;
+  selectMatchesForPnp(const std::vector<MatchedPoint> &matches,
+                      bool apply_hysteresis = true) const;
+  void rememberSelection(const std::vector<MatchedPoint> &matches);
+  void resetSelection();
 
   cv::Matx33d
   worldToCameraFromDrone(const cv::Vec4d &drone_quaternion_xyzw) const;
@@ -61,9 +66,12 @@ private:
   cv::Mat distortion_;
   PnpSolver pnp_solver_;
   std::size_t maximum_pose_points_;
+  double pose_point_hysteresis_px_;
   cv::Point2f frame_center_;
   cv::Matx33d camera_to_drone_;
   cv::Vec3d camera_position_drone_;
+  using MarkerKey = std::tuple<int, int, int, int, int, int, int>;
+  std::set<MarkerKey> previous_pose_points_;
 };
 
 } // namespace flsloc

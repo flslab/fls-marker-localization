@@ -48,6 +48,7 @@ struct ProcessingCropConfig {
 struct TrackingConfig {
   PnpSolver pnp_solver = PnpSolver::Sqpnp;
   std::size_t maximum_pose_points = 16;
+  double pose_point_hysteresis_px = 10.0;
   double initial_distance_m = 0.045;
   double maximum_reprojection_error_px = 5.0;
   double lattice_tolerance_cells = 0.45;

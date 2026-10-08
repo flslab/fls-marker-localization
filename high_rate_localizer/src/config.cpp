@@ -165,6 +165,8 @@ ApplicationConfig loadApplicationConfig(const std::filesystem::path &path) {
     config.tracking.pnp_solver = readPnpSolver(tracking);
     config.tracking.maximum_pose_points = tracking.value(
         "maximum_pose_points", config.tracking.maximum_pose_points);
+    config.tracking.pose_point_hysteresis_px = tracking.value(
+        "pose_point_hysteresis_px", config.tracking.pose_point_hysteresis_px);
     config.tracking.initial_distance_m = tracking.value(
         "initial_distance_m", config.tracking.initial_distance_m);
     config.tracking.maximum_reprojection_error_px =
@@ -230,6 +232,8 @@ ApplicationConfig loadApplicationConfig(const std::filesystem::path &path) {
       config.tracking.maximum_pose_points < 4 ||
       config.tracking.maximum_pose_points >
           config.detector.maximum_candidates ||
+      !std::isfinite(config.tracking.pose_point_hysteresis_px) ||
+      config.tracking.pose_point_hysteresis_px < 0.0 ||
       !std::isfinite(config.tracking.maximum_attitude_prediction_s) ||
       config.tracking.maximum_attitude_prediction_s < 0.0 ||
       (config.tracking.attitude_prediction_enabled &&

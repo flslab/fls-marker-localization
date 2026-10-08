@@ -147,6 +147,19 @@ above-marker-plane checks and Levenberg–Marquardt refinement. The selected
 correspondence set is shared by the PnP and shared-attitude tracks, so their
 logging and downstream comparison remain aligned.
 
+When `maximum_pose_points` limits the available correspondences, selection uses
+spatial hysteresis configured under `tracking`:
+
+```json
+"pose_point_hysteresis_px": 10.0
+```
+
+A marker used by the last accepted pose keeps a 10-pixel selection advantage.
+A replacement is therefore made immediately when it is materially closer to
+the image center or when the previous marker disappears. This suppresses
+boundary chatter without imposing a time delay or limiting vehicle speed. A
+failed retained set is retried once using the raw center-nearest selection.
+
 Set which accepted tracking pose is published to the controller in the JSON
 configuration:
 

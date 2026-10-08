@@ -285,6 +285,8 @@ json DebugOutput::metadata() const {
            toString(config_.shared_memory_pose_technique)},
           {"pnp_solver", toString(config_.tracking.pnp_solver)},
           {"maximum_pose_points", config_.tracking.maximum_pose_points},
+          {"pose_point_hysteresis_px",
+           config_.tracking.pose_point_hysteresis_px},
           {"attitude_prediction_enabled",
            config_.tracking.attitude_prediction_enabled},
           {"maximum_attitude_prediction_s",

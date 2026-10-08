@@ -183,14 +183,30 @@ bool LocalizationPipeline::acceptable(const PoseSolution &pose) const {
 
 PoseEstimates LocalizationPipeline::solveTrackingPoses(
     std::vector<MatchedPoint> &matches,
-    const cv::Vec4d &drone_quaternion_xyzw) const {
-  matches = pose_solver_.selectMatchesForPnp(matches);
-  PoseEstimates poses;
-  poses.shared_attitude =
-      pose_solver_.solveWithAttitude(matches, drone_quaternion_xyzw);
-  poses.shared_attitude.accepted = acceptable(poses.shared_attitude);
-  poses.pnp = pose_solver_.solveWithPnp(matches);
-  poses.pnp.accepted = acceptable(poses.pnp);
+    const cv::Vec4d &drone_quaternion_xyzw) {
+  const std::vector<MatchedPoint> candidates = std::move(matches);
+  const auto solve = [&](const std::vector<MatchedPoint> &selected) {
+    PoseEstimates estimates;
+    estimates.shared_attitude =
+        pose_solver_.solveWithAttitude(selected, drone_quaternion_xyzw);
+    estimates.shared_attitude.accepted = acceptable(estimates.shared_attitude);
+    estimates.pnp = pose_solver_.solveWithPnp(selected);
+    estimates.pnp.accepted = acceptable(estimates.pnp);
+    return estimates;
+  };
+
+  matches = pose_solver_.selectMatchesForPnp(candidates);
+  PoseEstimates poses = solve(matches);
+  if (!poses.shared_attitude.accepted &&
+      config_.tracking.pose_point_hysteresis_px > 0.0) {
+    std::vector<MatchedPoint> nearest =
+        pose_solver_.selectMatchesForPnp(candidates, false);
+    PoseEstimates nearest_poses = solve(nearest);
+    if (nearest_poses.shared_attitude.accepted) {
+      matches = std::move(nearest);
+      poses = std::move(nearest_poses);
+    }
+  }
   return poses;
 }
 
@@ -212,6 +228,7 @@ void LocalizationPipeline::usePoses(FrameResult &result, PoseSource source,
   result.poses = std::move(poses);
   result.tracking_pose_technique = tracking_technique;
   result.matched = std::move(matches);
+  pose_solver_.rememberSelection(result.matched);
   result.status = "success";
   result.message = source == PoseSource::HyperGrid
                        ? "pose solved from static HyperGrid lattice"
@@ -479,6 +496,7 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
       state_ != LocalizerState::MyGridDecoding &&
       state_ != LocalizerState::InitialPoseReady) {
     state_ = LocalizerState::Lost;
+    pose_solver_.resetSelection();
     result.status = "lost";
     result.message = "no geometrically valid pose within the loss window";
   }

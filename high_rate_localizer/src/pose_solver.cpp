@@ -134,6 +134,7 @@ PoseSolver::PoseSolver(const ApplicationConfig &config)
       distortion_(config.calibration.distortion.clone()),
       pnp_solver_(config.tracking.pnp_solver),
       maximum_pose_points_(config.tracking.maximum_pose_points),
+      pose_point_hysteresis_px_(config.tracking.pose_point_hysteresis_px),
       frame_center_((static_cast<float>(config.camera.width) - 1.0F) * 0.5F,
                     (static_cast<float>(config.camera.height) - 1.0F) * 0.5F),
       camera_to_drone_(config.camera_to_drone_rotation),
@@ -146,7 +147,7 @@ cv::Matx33d PoseSolver::worldToCameraFromDrone(
 }
 
 std::vector<MatchedPoint> PoseSolver::selectMatchesForPnp(
-    const std::vector<MatchedPoint> &matches) const {
+    const std::vector<MatchedPoint> &matches, bool apply_hysteresis) const {
   const PnpSolverDefinition definition = definitionFor(pnp_solver_);
   std::size_t maximum_correspondences = maximum_pose_points_;
   if (definition.maximum_correspondences != 0) {
@@ -162,9 +163,23 @@ std::vector<MatchedPoint> PoseSolver::selectMatchesForPnp(
     for (std::size_t index = 0; index < indices.size(); ++index) {
       indices[index] = index;
     }
-    const auto distanceFromCenter = [this, &matches](std::size_t index) {
+    const auto markerKey = [](const MatchedPoint &match) {
+      return MarkerKey{match.id,     match.grid_x, match.grid_y,
+                       match.tile_i, match.tile_j, match.local_i,
+                       match.local_j};
+    };
+    const auto distanceFromCenter = [this, &matches, &markerKey,
+                                     apply_hysteresis](std::size_t index) {
       const cv::Point2f delta = matches[index].image - frame_center_;
-      return delta.dot(delta);
+      float distance = cv::norm(delta);
+      // This is a spatial Schmitt trigger, not a time hold. A fast movement
+      // still replaces a point immediately once the distance gap exceeds the
+      // configured pixel margin.
+      if (apply_hysteresis &&
+          previous_pose_points_.contains(markerKey(matches[index]))) {
+        distance -= static_cast<float>(pose_point_hysteresis_px_);
+      }
+      return distance;
     };
     const auto middle =
         indices.begin() +
@@ -214,6 +229,17 @@ std::vector<MatchedPoint> PoseSolver::selectMatchesForPnp(
   }
   return selected;
 }
+
+void PoseSolver::rememberSelection(const std::vector<MatchedPoint> &matches) {
+  previous_pose_points_.clear();
+  for (const MatchedPoint &match : matches) {
+    previous_pose_points_.emplace(
+        match.id, match.grid_x, match.grid_y, match.tile_i, match.tile_j,
+        match.local_i, match.local_j);
+  }
+}
+
+void PoseSolver::resetSelection() { previous_pose_points_.clear(); }
 
 std::optional<PoseSolver::PnpCandidate>
 PoseSolver::selectPnpCandidate(const std::vector<cv::Point3f> &object_points,

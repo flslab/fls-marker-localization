@@ -33,9 +33,8 @@ private:
                                            const cv::Matx33d &world_to_camera,
                                            double projection_gate_px) const;
   bool acceptable(const PoseSolution &pose) const;
-  PoseEstimates solveTrackingPoses(
-      std::vector<MatchedPoint> &matches,
-      const cv::Vec4d &drone_quaternion_xyzw) const;
+  PoseEstimates solveTrackingPoses(std::vector<MatchedPoint> &matches,
+                                   const cv::Vec4d &drone_quaternion_xyzw);
   cv::Vec3d predictedCameraPosition(double timestamp) const;
   void usePoses(FrameResult &result, PoseSource source,
                 std::vector<MatchedPoint> matches, PoseEstimates poses,
