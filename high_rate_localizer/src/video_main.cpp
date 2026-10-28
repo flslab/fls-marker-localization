@@ -190,6 +190,8 @@ int main(int argc, char **argv) try {
                                  ? static_cast<double>(frame_id) / frame_rate
                                  : capture.get(cv::CAP_PROP_POS_MSEC) * 1e-3;
     controller.timestamp = timestamp;
+    controller.alignment.effective_timestamp = timestamp;
+    controller.alignment.bracket_timestamps = {timestamp, timestamp};
     const flsloc::TrajectorySample &truth = trajectory.sample(frame_id);
     controller.quaternion_xyzw = orientation_error.apply(truth.quaternion_xyzw);
     controller.landing_requested =

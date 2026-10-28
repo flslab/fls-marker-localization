@@ -284,6 +284,9 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
   result.attitude_prediction_applied =
       controller.attitude_prediction_applied;
   result.attitude_timestamp = controller.timestamp;
+  result.attitude_quaternion_xyzw = controller.quaternion_xyzw;
+  result.attitude_ekf_reset_generation = controller.ekf_reset_generation;
+  result.attitude_alignment = controller.alignment;
   result.attitude_time_offset_s =
       controller.timestamp > 0.0 ? controller.timestamp - timestamp : 0.0;
   result.hypergrid_acquisition_height_m = hypergrid_acquisition_height_m_;

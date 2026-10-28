@@ -8,6 +8,8 @@
 #include "fls_localizer/shared_memory.hpp"
 #include "fls_localizer/trajectory.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -261,6 +263,61 @@ void testPnpCorrespondenceLimit() {
     require(match.id >= 0 && match.id < 4,
             "maximum_pose_points did not keep the center-nearest markers");
   }
+}
+
+void testPosePointSelectionHysteresis() {
+  flsloc::ApplicationConfig config = testConfig();
+  config.tracking.pnp_solver = flsloc::PnpSolver::Epnp;
+  config.tracking.maximum_pose_points = 4;
+  config.tracking.pose_point_hysteresis_px = 10.0;
+  flsloc::PoseSolver solver(config);
+
+  const cv::Point2f center(319.5F, 199.5F);
+  const auto makeMatches = [&](const std::array<float, 5> &distances) {
+    std::vector<flsloc::MatchedPoint> matches(distances.size());
+    for (std::size_t index = 0; index < matches.size(); ++index) {
+      matches[index].id = static_cast<int>(index);
+      matches[index].image = center + cv::Point2f(distances[index], 0.0F);
+    }
+    return matches;
+  };
+  const auto containsId = [](const std::vector<flsloc::MatchedPoint> &matches,
+                             int id) {
+    return std::any_of(matches.begin(), matches.end(),
+                       [id](const flsloc::MatchedPoint &match) {
+                         return match.id == id;
+                       });
+  };
+
+  const auto initial = solver.selectMatchesForPnp(
+      makeMatches({10.0F, 20.0F, 30.0F, 40.0F, 50.0F}));
+  require(containsId(initial, 3) && !containsId(initial, 4),
+          "initial pose-point selection did not use raw center distance");
+  solver.rememberSelection(initial);
+
+  const auto jitter = solver.selectMatchesForPnp(
+      makeMatches({10.0F, 20.0F, 30.0F, 45.0F, 40.0F}));
+  require(containsId(jitter, 3) && !containsId(jitter, 4),
+          "selection hysteresis did not suppress a small boundary crossing");
+
+  solver.resetSelection();
+  const auto reset = solver.selectMatchesForPnp(
+      makeMatches({10.0F, 20.0F, 30.0F, 45.0F, 40.0F}));
+  require(!containsId(reset, 3) && containsId(reset, 4),
+          "reset selection retained stale pose-point hysteresis");
+
+  solver.rememberSelection(initial);
+  const auto decisive = solver.selectMatchesForPnp(
+      makeMatches({10.0F, 20.0F, 30.0F, 55.0F, 40.0F}));
+  require(!containsId(decisive, 3) && containsId(decisive, 4),
+          "selection hysteresis blocked a decisive marker change");
+  solver.rememberSelection(decisive);
+
+  auto missing = makeMatches({10.0F, 20.0F, 30.0F, 55.0F, 60.0F});
+  missing[4].id = 5;
+  const auto replaced = solver.selectMatchesForPnp(missing);
+  require(containsId(replaced, 3) && !containsId(replaced, 4),
+          "a missing selected marker was not replaced immediately");
 }
 
 void testTakeoffAttitudeAcquisition(const flsloc::GridMap &map) {
@@ -533,6 +590,8 @@ void testMaximumPosePointsBound() {
   require(loaded.tracking.maximum_pose_points ==
               loaded.detector.maximum_candidates,
           "maximum_pose_points could not equal maximum_candidates");
+  require(std::abs(loaded.tracking.pose_point_hysteresis_px - 10.0) < 1e-12,
+          "pose-point selection hysteresis was not loaded");
 
   config["tracking"]["maximum_pose_points"] = 65;
   {
@@ -545,8 +604,22 @@ void testMaximumPosePointsBound() {
   } catch (const std::runtime_error &) {
     rejected = true;
   }
-  std::filesystem::remove(path);
   require(rejected, "maximum_pose_points exceeded maximum_candidates");
+
+  config["tracking"]["maximum_pose_points"] = 64;
+  config["tracking"]["pose_point_hysteresis_px"] = -1.0;
+  {
+    std::ofstream output(path);
+    output << config;
+  }
+  rejected = false;
+  try {
+    static_cast<void>(flsloc::loadApplicationConfig(path));
+  } catch (const std::runtime_error &) {
+    rejected = true;
+  }
+  std::filesystem::remove(path);
+  require(rejected, "negative pose-point hysteresis was accepted");
 }
 
 void testAttitudePredictionConfig() {
@@ -614,6 +687,17 @@ void testLogIncludesGitVersion(const flsloc::GridMap &map) {
 
   {
     flsloc::DebugOutput output(config, map, "unit-test");
+    flsloc::FrameResult frame;
+    frame.timestamp = 10.01;
+    frame.attitude_valid = true;
+    frame.attitude_quaternion_xyzw = {0.0, 0.0, 0.123456789, 0.992349};
+    frame.attitude_ekf_reset_generation = 42;
+    frame.attitude_prediction_applied = true;
+    frame.attitude_alignment.effective_timestamp = 10.01;
+    frame.attitude_alignment.bracket_timestamps = {10.0,10.02};
+    frame.attitude_alignment.bracket_sequences = {11,12};
+    frame.attitude_alignment.interpolation_alpha = 0.5;
+    output.submit(frame);
     output.finish();
   }
 
@@ -624,11 +708,22 @@ void testLogIncludesGitVersion(const flsloc::GridMap &map) {
               !log.at("config").at("git_ver").get<std::string>().empty(),
           "debug JSON log is missing git_ver");
   const auto &marker_grid = log.at("config").at("marker_grid");
+  const auto &alignment = log.at("frames").at(0).at("blob_grid_localization").at("shared_attitude");
+  require(alignment.at("quaternion_xyzw").at(2).get<double>() == 0.123456789 &&
+              alignment.at("ekf_reset_generation").get<int>() == 42 &&
+              alignment.at("bracket_sequences").at(1).get<int>() == 12 &&
+              alignment.at("effective_timestamp").get<double>() == 10.01 &&
+              alignment.at("interpolation_alpha").get<double>() == 0.5,
+          "debug log lost camera-aligned attitude or interpolation provenance when no image pose exists");
   require(marker_grid.at("attitude_prediction_enabled").get<bool>() &&
               std::abs(marker_grid.at("maximum_attitude_prediction_s")
                            .get<double>() -
                        0.01) < 1e-12,
           "debug JSON log is missing attitude prediction configuration");
+  require(std::abs(marker_grid.at("pose_point_hysteresis_px").get<double>() -
+                       config.tracking.pose_point_hysteresis_px) <
+              1e-12,
+          "debug JSON log is missing pose-point hysteresis configuration");
   std::filesystem::remove_all(config.output.directory);
 }
 
@@ -761,6 +856,12 @@ void testClosestSharedAttitude() {
                                  0.03);
   const flsloc::ControllerInput interpolated =
       predicted.readController(10.01);
+  require(interpolated.alignment.effective_timestamp == 10.01 &&
+              interpolated.alignment.bracket_timestamps[0] == 10.0 &&
+              interpolated.alignment.bracket_sequences[0] == 1 &&
+              interpolated.alignment.bracket_sequences[1] == 2 &&
+              std::abs(interpolated.alignment.interpolation_alpha-0.5) < 1e-10,
+          "shared attitude interpolation provenance is incomplete");
   require(interpolated.attitude_prediction_applied &&
               interpolated.attitude_sequence == 2 &&
               std::abs(interpolated.timestamp - 10.02) < 1e-12 &&
@@ -769,6 +870,10 @@ void testClosestSharedAttitude() {
 
   const flsloc::ControllerInput after_newest =
       predicted.readController(10.03);
+  require(after_newest.alignment.effective_timestamp == 10.02 &&
+              after_newest.alignment.bracket_sequences[0] == 2 &&
+              after_newest.alignment.bracket_sequences[1] == 2,
+          "nearest attitude provenance incorrectly describes interpolation");
   require(!after_newest.attitude_prediction_applied &&
               after_newest.attitude_sequence == 2 &&
               std::abs(after_newest.timestamp - 10.02) < 1e-12 &&
@@ -856,6 +961,7 @@ int main() try {
   testPnpRefinement();
   testPnpSolverChoices();
   testPnpCorrespondenceLimit();
+  testPosePointSelectionHysteresis();
   testTakeoffAttitudeAcquisition(map);
   testProcessingCrop(map);
   testHyperGrid(map);

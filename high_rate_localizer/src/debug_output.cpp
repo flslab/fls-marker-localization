@@ -291,6 +291,7 @@ json DebugOutput::metadata() const {
            config_.tracking.attitude_prediction_enabled},
           {"maximum_attitude_prediction_s",
            config_.tracking.maximum_attitude_prediction_s},
+          {"maximum_attitude_age_s", config_.tracking.maximum_attitude_age_s},
           {"hypergrid_acquisition_height_m",
            2.0 * map_.hypergridSpacing() *
                std::max(config_.calibration.camera_matrix.at<double>(0, 0) /
@@ -364,6 +365,15 @@ json DebugOutput::frameJson(const FrameResult &result) const {
                      result.attitude_prediction_applied},
                     {"sequence", result.attitude_sequence},
                     {"timestamp", rounded(result.attitude_timestamp)},
+                    {"quaternion_xyzw", result.attitude_valid
+                         ? json::array({result.attitude_quaternion_xyzw[0], result.attitude_quaternion_xyzw[1],
+                                        result.attitude_quaternion_xyzw[2], result.attitude_quaternion_xyzw[3]})
+                         : json(nullptr)},
+                    {"ekf_reset_generation", result.attitude_ekf_reset_generation},
+                    {"effective_timestamp", result.attitude_alignment.effective_timestamp},
+                    {"bracket_timestamps", result.attitude_alignment.bracket_timestamps},
+                    {"bracket_sequences", result.attitude_alignment.bracket_sequences},
+                    {"interpolation_alpha", result.attitude_alignment.interpolation_alpha},
                     {"attitude_minus_camera_s",
                      rounded(result.attitude_time_offset_s)}}},
                   {"processing_ms", rounded(result.processing_ms, 1000.0)}}}};

@@ -216,6 +216,9 @@ public:
     result.attitude_sequence = closest.sample_sequence;
     result.timestamp = closest.timestamp;
     result.ekf_reset_generation = closest.ekf_reset_generation;
+    result.alignment.effective_timestamp = closest.timestamp;
+    result.alignment.bracket_timestamps = {closest.timestamp, closest.timestamp};
+    result.alignment.bracket_sequences = {closest.sample_sequence, closest.sample_sequence};
     const auto quaternion = normalizeQuaternion(
         {closest.qx, closest.qy, closest.qz, closest.qw});
     result.attitude_valid =
@@ -289,6 +292,10 @@ public:
       }
       result.quaternion_xyzw = *aligned;
       result.attitude_prediction_applied = true;
+      result.alignment.effective_timestamp = camera_timestamp;
+      result.alignment.bracket_timestamps = {first.timestamp, second.timestamp};
+      result.alignment.bracket_sequences = {first.sequence, second.sequence};
+      result.alignment.interpolation_alpha = alpha;
       return true;
     };
 

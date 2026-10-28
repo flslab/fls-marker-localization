@@ -55,6 +55,13 @@ struct MatchedPoint {
   float match_error = 0.0F;
 };
 
+struct AttitudeAlignment {
+  double effective_timestamp = 0.0;
+  std::array<double, 2> bracket_timestamps{};
+  std::array<std::uint32_t, 2> bracket_sequences{};
+  double interpolation_alpha = 0.0;
+};
+
 struct ControllerInput {
   bool attitude_valid = false;
   bool attitude_prediction_applied = false;
@@ -63,6 +70,7 @@ struct ControllerInput {
   std::uint32_t ekf_reset_generation = 0;
   double timestamp = 0.0;
   cv::Vec4d quaternion_xyzw{0.0, 0.0, 0.0, 1.0};
+  AttitudeAlignment alignment;
   int landing_tile_i = 0;
   int landing_tile_j = 0;
 };
@@ -122,6 +130,9 @@ struct FrameResult {
   bool attitude_prediction_applied = false;
   double attitude_timestamp = 0.0;
   double attitude_time_offset_s = 0.0;
+  cv::Vec4d attitude_quaternion_xyzw{0.0, 0.0, 0.0, 1.0};
+  std::uint32_t attitude_ekf_reset_generation = 0;
+  AttitudeAlignment attitude_alignment;
   float hypergrid_acquisition_height_m = 0.0F;
   std::string status = "starting";
   std::string message;
