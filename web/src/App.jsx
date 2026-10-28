@@ -9,6 +9,7 @@ import laBaseYaml from './data/la_base.yaml?raw';
 import { createLogModel, flattenObject, formatNumber, formatRawTime } from './lib/logModel.js';
 import { makeDemoLog } from './lib/demoLog.js';
 import FlightPlanner from './components/FlightPlanner.jsx';
+import FlightSupport from './components/FlightSupport.jsx';
 import WorldScene from './components/WorldScene.jsx';
 import ImagePlane from './components/ImagePlane.jsx';
 import LineChart, { StatusLane } from './components/LineChart.jsx';
@@ -21,6 +22,7 @@ const tabs = [
   { id: 'explore', label: 'Explore', icon: Activity },
   { id: 'flight', label: 'Flight coverage', icon: PlaneTakeoff },
   { id: 'generator', label: 'Marker grid', icon: Layers3 },
+  { id: 'support', label: 'Flight region', icon: Box },
   { id: 'frames', label: 'Frames', icon: Table2 },
   { id: 'run', label: 'Run data', icon: SlidersHorizontal },
   { id: 'raw', label: 'Raw JSON', icon: Braces },
@@ -204,6 +206,7 @@ export default function App() {
   const [model, setModel] = useState(makeDemoModel);
   const [isDemo, setIsDemo] = useState(true);
   const [activeTab, setActiveTab] = useState('explore');
+  const [supportSource, setSupportSource] = useState(null);
   const [selectedIndex, setSelectedIndex] = useState(120);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
@@ -283,7 +286,9 @@ export default function App() {
     : activeTab === 'flight'
       ? <FlightPlanner source={flightSource} onOpenSfl={() => fileInputRef.current?.click()} />
     : activeTab === 'generator'
-      ? <MarkerGenerator />
+      ? <MarkerGenerator onVisualize={(raw) => { setSupportSource({ raw, name: 'Authored marker layout' }); setActiveTab('support'); }} />
+    : activeTab === 'support'
+      ? <FlightSupport source={supportSource} />
     : activeTab === 'frames'
       ? <FramesView {...{ model, selectedIndex, setSelectedIndex, setActiveTab }} />
       : activeTab === 'run'
@@ -301,17 +306,17 @@ export default function App() {
       <header className="topbar">
         <div className="brand"><span className="brand-mark"><span /></span><div><b>FLS</b><span>POSE SCOPE</span></div></div>
         <nav aria-label="Viewer sections">{tabs.map(({ id, label, icon: Icon }) => <button key={id} aria-current={activeTab === id ? 'page' : undefined} className={activeTab === id ? 'nav-active' : ''} onClick={() => { setPlaying(false); setActiveTab(id); }}><Icon size={13} />{label}</button>)}</nav>
-        {activeTab === 'generator' ? <span className="topbar-spacer" /> : <button className="open-button" onClick={() => fileInputRef.current?.click()}><FolderOpen size={16} /> {activeTab === 'flight' ? 'Open SFL' : 'Open log'}</button>}
+        {(activeTab === 'generator' || activeTab === 'support') ? <span className="topbar-spacer" /> : <button className="open-button" onClick={() => fileInputRef.current?.click()}><FolderOpen size={16} /> {activeTab === 'flight' ? 'Open SFL' : 'Open log'}</button>}
         <input ref={fileInputRef} hidden type="file" accept={activeTab === 'flight' ? 'application/yaml,text/yaml,.yaml,.yml' : 'application/json,.json'} onChange={(event) => { loadFile(event.target.files?.[0]); event.target.value = ''; }} />
       </header>
 
-      {activeTab !== 'flight' && activeTab !== 'generator' && <section className="runbar">
+      {activeTab !== 'flight' && activeTab !== 'generator' && activeTab !== 'support' && <section className="runbar">
         <div className="file-title"><FileJson size={18} /><div><strong title={model.fileName}>{model.fileName}</strong><span>{isDemo ? 'DEMO DATA' : 'LOCAL LOG'} · {model.mode.toUpperCase()}</span></div></div>
         <RunStats model={model} />
         <div className="run-actions"><span className="local-pill"><ShieldCheck size={13} />stays on device</span><button className="plain-button" onClick={resetDemo}><RotateCcw size={15} /> Demo</button></div>
       </section>}
 
-      {activeTab !== 'flight' && activeTab !== 'generator' && model.warnings.length > 0 && <button className="warning-banner" onClick={() => setActiveTab('raw')}><AlertTriangle size={15} /><span>{model.warnings.length} schema warning{model.warnings.length === 1 ? '' : 's'} · {model.warnings[0]}</span><b>Inspect raw JSON</b></button>}
+      {activeTab !== 'flight' && activeTab !== 'generator' && activeTab !== 'support' && model.warnings.length > 0 && <button className="warning-banner" onClick={() => setActiveTab('raw')}><AlertTriangle size={15} /><span>{model.warnings.length} schema warning{model.warnings.length === 1 ? '' : 's'} · {model.warnings[0]}</span><b>Inspect raw JSON</b></button>}
       {error && <div className="error-banner" role="alert"><AlertTriangle size={16} /><div><strong>Log not loaded</strong><span>{error}</span></div><button onClick={() => setError('')}>Dismiss</button></div>}
       {tabContent}
 

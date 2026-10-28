@@ -99,3 +99,85 @@ known run metadata and selected-frame arrays are rendered as tables.
 npm test
 npm run build
 ```
+
+## Flight region in 3D
+
+The **Flight region** tab defaults to a continuous analytic envelope for a level
+camera guaranteed across every yaw. A sampled roll/pitch model is also available
+for a finite marker installation. Load a localization grid JSON, or use **Visualize
+flight region** in the marker generator. For `fls-marker-grid` files, selected
+MyGrid tiles define the installed HyperGrid tile set; the infinite flag does
+not add markers beyond those tiles in this view. A finite 4×4 example is built
+in. MyGrid landing dots are excluded from flight support.
+
+Set the maximum absolute roll and pitch (each independently), fixed yaw,
+drone heights above the marker plane, configured processing ROI, dot area threshold, and
+horizontal search border. The calibrated camera defaults come from
+`high_rate_localizer/config/localizer.json`; another localizer config can be
+loaded to change intrinsics, distortion, image size and camera mount.
+
+The interactive 3D view shows level-flight support in blue and positions
+supported at every sampled combined attitude in green. Height slices isolate
+a cross section. Volume is a cell-center estimate over the displayed search
+bounds, with 16 height layers and selectable XY/attitude resolutions. All
+calculation runs locally in a worker. The support test projects a 16-point dot
+contour, requires sufficient projected area, and checks the nearest four
+visible markers for separation and non-collinearity. Supported cells indicate
+geometric feasibility; intermediate attitudes, occlusion, exposure, image
+thresholding, association and solver quality are not certified by this model.
+
+### Level camera, every yaw
+
+The default model assumes a downward level camera and pinhole projection.
+It retains the camera intrinsics, processing ROI, principal point and mount
+translation; lens distortion is excluded. Intersecting all yaw rotations of
+the eroded footprint gives a disk centered on the drone origin, whose radius
+is the minimum distance to the four footprint edges minus marker radius.
+For each XY position, the smallest farthest-corner distance among complete
+installed 2×2 blocks determines a continuous minimum-height boundary. The
+upper height follows the projected dot-area limit.
+
+This guarantees visibility of the same complete block through every yaw;
+allowing different blocks at different yaw angles can yield a larger region.
+The view shows a closed triangular surface, with continuous filled height
+slices. Surface detail controls interpolation of the analytic boundary;
+volume is computed from that mesh and remains approximate. The calculation
+uses model-derived horizontal bounds and the selected height band. Exact
+formulae and the derivation are in `doc/main.tex`.
+
+### Fixed yaw and height slicing
+
+Choose **Level camera · fixed yaw** to use an editable drone yaw (default 0°).
+This analytic mode intersects each block's image-edge constraints to form its
+continuous region. At a fixed height, the supported area is a union of rotated
+rectangles; every-yaw slices instead intersect four disks per block. Slices
+are computed directly from these boundaries, independently of the lower
+surface mesh, to preserve narrow gaps and avoid interpolation bridges.
+
+A height slider moves a cyan slicing plane and the filled 2D support area.
+The full 3D region remains visible at reduced opacity. Toggle **Slice plane**
+off to restore its normal opacity; moving the slider enables it again.
+Orbit and zoom are retained while adjusting slice height.
+
+The percentage margin control has been removed. All support modes use
+`processing_crop` from the loaded camera configuration when enabled, and the
+full image when disabled; the active ROI is shown beside the camera inputs.
+For analytic modes, the horizontal mesh domain is derived from the model's
+support bounds at the effective ceiling. The slicing plane is sized from the
+selected maximum height (default 3 m), and the optional extra border adds
+space around those model bounds. Marker-area limits can make the supported
+ceiling lower than the selected height; the result summary reports this.
+
+### Camera and tile overlays
+
+Under **Scene overlays**, toggle the camera's frustum and ground footprint,
+and the installed tile cuboids independently. Camera X/Y are world coordinates;
+height is its optical-center distance above the marker plane. Roll/pitch/yaw
+rotate the camera from the configured mount orientation, in degrees. Editing
+this preview pose leaves the calculated support model intact. The orange
+pinhole frustum uses the active processing ROI and is clipped at the floor;
+if the ROI crosses the horizon, no bounded ground polygon is drawn.
+
+Purple cuboids show each installed tile footprint extruded to the chosen
+maximum drone height. Missing tiles stay empty. These are geometric tile
+volumes, independent of the optical support and marker-area ceiling.

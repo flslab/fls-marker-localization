@@ -219,7 +219,7 @@ function AnimationEditor({ tile, updateEvents }) {
   );
 }
 
-export default function MarkerGenerator() {
+export default function MarkerGenerator({ onVisualize }) {
   const [config, setConfig] = useState({ ...DEFAULT_MARKER_GRID_CONFIG, origin: [...DEFAULT_MARKER_GRID_CONFIG.origin] });
   const [tiles, setTiles] = useState([]);
   const [selectedKey, setSelectedKey] = useState(null);
@@ -264,6 +264,7 @@ export default function MarkerGenerator() {
     <section className="generator-page">
       <header className="generator-heading">
         <div><span className="eyebrow">MARKER MAP AUTHORING</span><h1>Infinite grid, precise local identity.</h1><p>Set the global HyperGrid once, then place cyclic MyGrid signatures exactly where short-range localization is needed.</p></div>
+        <button className="generator-download" onClick={() => onVisualize?.(generated.file)} disabled={!generated.file || !tiles.length}>Visualize flight region</button>
         <button className="generator-download" onClick={download} disabled={!generated.file}><Download size={16} />Download grid file</button>
       </header>
 
