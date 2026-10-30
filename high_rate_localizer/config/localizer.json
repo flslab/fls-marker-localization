@@ -60,6 +60,10 @@
       ]
     ]
   },
+  "camera_mount_patch": {
+    "file": "/home/fls/.config/fls-localizer/camera_mount.json",
+    "required": true
+  },
   "detector": {
     "intensity_threshold": 160,
     "minimum_area": 8,

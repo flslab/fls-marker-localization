@@ -58,15 +58,19 @@ malformed, incomplete, or invalid patch stops startup. Position must be finite
 and the rotation must be a proper orthonormal matrix. Restart the localizer
 after changing the file.
 
-To require a particular file, add this to the main configuration (relative
-paths resolve against that configuration, and `~/` expands to the user's home):
+The shipped `config/localizer.json` explicitly requires the installed RPi
+patch, so a missing calibration file stops startup:
 
 ```json
 "camera_mount_patch": {
-  "file": "~/.config/fls-localizer/camera_mount.json",
+  "file": "/home/fls/.config/fls-localizer/camera_mount.json",
   "required": true
 }
 ```
+
+For another installation, edit this path. Relative paths resolve against the
+main configuration, and `~/` expands to the user's home. Set `required: false`
+to allow an absent file to fall back to the base mount.
 
 Use `"camera_mount_patch": null` to explicitly disable discovery. Offline
 `fls_localizer_video` does not discover the device file automatically; use an
