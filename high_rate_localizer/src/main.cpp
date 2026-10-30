@@ -49,7 +49,14 @@ Arguments parse(int argc, char **argv) {
 int main(int argc, char **argv) try {
   const Arguments arguments = parse(argc, argv);
   flsloc::ApplicationConfig config =
-      flsloc::loadApplicationConfig(arguments.config);
+      flsloc::loadApplicationConfig(arguments.config, true);
+  std::cout << "camera_mount_patch_applied="
+            << (config.camera_mount_patch.applied ? "true" : "false")
+            << " file=" << config.camera_mount_patch.file << '\n'
+            << "camera_position_drone_flu_m="
+            << config.camera_position_drone_flu << '\n'
+            << "camera_to_drone_rotation="
+            << config.camera_to_drone_rotation << std::endl;
   flsloc::applyOutputTag(config.output, arguments.tag);
   flsloc::GridMap map = flsloc::GridMap::load(config.grid_file);
   flsloc::LocalizationPipeline pipeline(config, map);

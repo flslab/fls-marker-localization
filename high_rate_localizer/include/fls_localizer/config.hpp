@@ -69,6 +69,13 @@ struct OutputConfig {
 
 void applyOutputTag(OutputConfig &output, const std::string &tag);
 
+struct CameraMountPatch {
+  std::filesystem::path file;
+  bool required = false;
+  bool applied = false;
+  std::string snapshot_json = "{}";
+};
+
 struct ApplicationConfig {
   CameraConfig camera;
   CalibrationConfig calibration;
@@ -79,6 +86,7 @@ struct ApplicationConfig {
   cv::Matx33d camera_to_drone_rotation{0.0, -1.0, 0.0, -1.0, 0.0,
                                        0.0, 0.0,  0.0, -1.0};
   cv::Vec3d camera_position_drone_flu{0.0, 0.0, 0.0};
+  CameraMountPatch camera_mount_patch;
   std::filesystem::path grid_file;
   std::string shared_memory_name = "/fls_localizer_v3";
   PoseTechnique shared_memory_pose_technique = PoseTechnique::SharedAttitude;
@@ -87,6 +95,9 @@ struct ApplicationConfig {
   double video_test_landing_time_s = 16.0;
 };
 
-ApplicationConfig loadApplicationConfig(const std::filesystem::path &path);
+// Production can discover the optional per-device patch; offline replay only
+// loads a patch when explicitly requested in its configuration.
+ApplicationConfig loadApplicationConfig(const std::filesystem::path &path,
+                                        bool use_device_mount_patch = false);
 
 } // namespace flsloc

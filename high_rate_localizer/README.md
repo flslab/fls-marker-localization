@@ -45,6 +45,42 @@ Production has one option:
 ./build/fls_localizer --config config/localizer.json
 ```
 
+The production executable also looks for an optional per-device camera mount
+at `~/.config/fls-localizer/camera_mount.json` (for user `fls`,
+`/home/fls/.config/fls-localizer/camera_mount.json`). This file stays outside
+the Git checkout. Its `camera_mount` object must contain both
+`position_drone_flu_m` and `camera_to_drone_rotation`, in the same format as
+the main config. These values **replace** the base mount; they are not added
+as a second correction. Other settings still come from the main config.
+
+An absent default patch preserves the base mount. An existing but unreadable,
+malformed, incomplete, or invalid patch stops startup. Position must be finite
+and the rotation must be a proper orthonormal matrix. Restart the localizer
+after changing the file.
+
+To require a particular file, add this to the main configuration (relative
+paths resolve against that configuration, and `~/` expands to the user's home):
+
+```json
+"camera_mount_patch": {
+  "file": "~/.config/fls-localizer/camera_mount.json",
+  "required": true
+}
+```
+
+Use `"camera_mount_patch": null` to explicitly disable discovery. Offline
+`fls_localizer_video` does not discover the device file automatically; use an
+explicit `camera_mount_patch` setting when replaying with a patch.
+
+Startup prints the patch status, path, and effective mount. The final JSON
+log records `config.camera_mount_patch.applied`, `.file`, `.required`, and
+`.snapshot` (the complete loaded patch, including any calibration metadata).
+`config.camera_mount` always records the exact effective position and rotation,
+even when no patch is applied. The existing
+`config.marker_grid.camera_offset_drone` remains available for older readers.
+The snapshot is captured at startup, so editing the file during a run cannot
+change the recorded calibration for that run.
+
 The MP4 fixture runner accepts a grid override and output directory:
 
 ```sh

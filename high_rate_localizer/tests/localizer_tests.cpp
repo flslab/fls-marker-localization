@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
@@ -674,8 +675,80 @@ void testAttitudePredictionConfig() {
   std::filesystem::remove(path);
 }
 
+void testCameraMountPatch() {
+  const auto directory = std::filesystem::temp_directory_path() /
+      ("fls_mount_patch_" + std::to_string(static_cast<long long>(getpid())));
+  std::filesystem::create_directories(directory / ".config/fls-localizer");
+  struct RestoreHome {
+    bool present = std::getenv("HOME") != nullptr;
+    std::string value = present ? std::getenv("HOME") : "";
+    ~RestoreHome() {
+      if (present) setenv("HOME", value.c_str(), 1);
+      else unsetenv("HOME");
+    }
+  } restore_home;
+  setenv("HOME", directory.c_str(), 1);
+  std::ifstream input(FLS_TEST_CONFIG_PATH);
+  nlohmann::json root = nlohmann::json::parse(input);
+  const auto config_path = directory / "config.json";
+  const auto patch_path = directory / ".config/fls-localizer/camera_mount.json";
+  const auto write = [](const auto &path, const nlohmann::json &value) {
+    std::ofstream output(path);
+    output << value;
+  };
+  const auto rejected = [&]() {
+    try {
+      static_cast<void>(flsloc::loadApplicationConfig(config_path, true));
+    } catch (const std::exception &) {
+      return true;
+    }
+    return false;
+  };
+  write(config_path, root);
+  require(!flsloc::loadApplicationConfig(config_path, true).camera_mount_patch.applied,
+          "absent optional device patch must preserve base mount");
+  nlohmann::json patch = {{"camera_mount", root.at("camera_mount")},
+                          {"calibration_id", "critical-patch-test"}};
+  patch["camera_mount"]["position_drone_flu_m"] = {0.046426939054, 0.003478310587, -0.017928512704};
+  patch["camera_mount"]["camera_to_drone_rotation"] = {{0,-1,0},{-1,0,0},{0,0,-1}};
+  write(patch_path, patch);
+  auto loaded = flsloc::loadApplicationConfig(config_path, true);
+  require(loaded.camera_mount_patch.applied &&
+              loaded.camera_mount_patch.file == patch_path &&
+              loaded.camera_position_drone_flu[2] == -0.017928512704 &&
+              nlohmann::json::parse(loaded.camera_mount_patch.snapshot_json) == patch,
+          "device patch was not fully applied and snapshotted");
+  require(!flsloc::loadApplicationConfig(config_path).camera_mount_patch.applied,
+          "offline loading must not silently use the device patch");
+  root["camera_mount_patch"] = nullptr;
+  write(config_path, root);
+  require(!flsloc::loadApplicationConfig(config_path, true).camera_mount_patch.applied,
+          "explicit null did not disable device patch");
+  root["camera_mount_patch"] = {{"file", ".config/fls-localizer/camera_mount.json"}};
+  write(config_path, root);
+  require(flsloc::loadApplicationConfig(config_path).camera_mount_patch.applied,
+          "explicit relative patch must resolve against config directory");
+  auto invalid = patch;
+  invalid["camera_mount"]["camera_to_drone_rotation"] = {{1,0,0},{0,1,0},{0,0,-1}};
+  write(patch_path, invalid);
+  require(rejected(), "reflection patch must fail startup");
+  invalid = patch;
+  invalid["camera_mount"].erase("position_drone_flu_m");
+  write(patch_path, invalid);
+  require(rejected(), "incomplete patch must fail startup");
+  { std::ofstream output(patch_path); output << "{broken"; }
+  require(rejected(), "malformed patch must fail startup");
+  std::filesystem::remove(patch_path);
+  require(rejected(), "missing required patch must fail startup");
+  std::filesystem::remove_all(directory);
+}
+
 void testLogIncludesGitVersion(const flsloc::GridMap &map) {
   flsloc::ApplicationConfig config = testConfig();
+  config.camera_mount_patch.applied = true;
+  config.camera_mount_patch.file = "/device/camera_mount.json";
+  config.camera_mount_patch.snapshot_json = R"({"calibration_id":"log-test"})";
+  config.camera_position_drone_flu = {0.046426939054, 0.003478310587, -0.017928512704};
   config.tracking.attitude_prediction_enabled = true;
   config.tracking.maximum_attitude_prediction_s = 0.01;
   config.output.annotated_video_fps = 0.0;
@@ -708,6 +781,14 @@ void testLogIncludesGitVersion(const flsloc::GridMap &map) {
               !log.at("config").at("git_ver").get<std::string>().empty(),
           "debug JSON log is missing git_ver");
   const auto &marker_grid = log.at("config").at("marker_grid");
+  const auto &mount_patch = log.at("config").at("camera_mount_patch");
+  const auto &mount = log.at("config").at("camera_mount");
+  require(mount_patch.at("applied").get<bool>() &&
+              mount_patch.at("file") == "/device/camera_mount.json" &&
+              mount_patch.at("snapshot").at("calibration_id") == "log-test" &&
+              mount.at("position_drone_flu_m").at(2).get<double>() == config.camera_position_drone_flu[2] &&
+              mount.at("camera_to_drone_rotation").at(0).at(1).get<double>() == config.camera_to_drone_rotation(0, 1),
+          "final log lost patch provenance or effective mount values");
   const auto &alignment = log.at("frames").at(0).at("blob_grid_localization").at("shared_attitude");
   require(alignment.at("quaternion_xyzw").at(2).get<double>() == 0.123456789 &&
               alignment.at("ekf_reset_generation").get<int>() == 42 &&
@@ -970,6 +1051,7 @@ int main() try {
   testOutputTag();
   testMaximumPosePointsBound();
   testAttitudePredictionConfig();
+  testCameraMountPatch();
   testLogIncludesGitVersion(map);
   testSharedMemoryPoseSelection();
   testSharedMemoryAbiForYawCorrection();

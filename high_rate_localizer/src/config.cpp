@@ -1,6 +1,7 @@
 #include "fls_localizer/config.hpp"
 
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
@@ -70,6 +71,68 @@ PnpSolver readPnpSolver(const json &tracking) {
       "tracking.pnp_solver must be ippe, sqpnp, iterative, epnp, or ap3p");
 }
 
+void readCameraMount(const json &mount, ApplicationConfig &config) {
+  const cv::Mat rotation = readMatrix(mount.at("camera_to_drone_rotation"),
+                                      3, 3, "camera_to_drone_rotation");
+  const cv::Vec3d position =
+      readVec3(mount.at("position_drone_flu_m"), "position_drone_flu_m");
+  if (!cv::checkRange(rotation) || !std::isfinite(position[0]) ||
+      !std::isfinite(position[1]) || !std::isfinite(position[2]) ||
+      cv::norm(rotation.t() * rotation - cv::Mat::eye(3, 3, CV_64F)) > 1e-6 ||
+      std::abs(cv::determinant(rotation) - 1.0) > 1e-6) {
+    throw std::runtime_error("camera_mount requires a finite position and a proper rotation matrix");
+  }
+  config.camera_to_drone_rotation = rotation;
+  config.camera_position_drone_flu = position;
+}
+
+void applyCameraMountPatch(const json &root, const std::filesystem::path &config_path,
+                          bool use_device_mount_patch, ApplicationConfig &config) {
+  auto &patch = config.camera_mount_patch;
+  if (root.contains("camera_mount_patch")) {
+    const auto &setting = root.at("camera_mount_patch");
+    if (setting.is_null()) {
+      return; // Explicitly disable per-device discovery, including production.
+    }
+    patch.file = setting.at("file").get<std::string>();
+    patch.required = setting.value("required", true);
+  } else if (use_device_mount_patch) {
+    patch.file = "~/.config/fls-localizer/camera_mount.json";
+  } else {
+    return;
+  }
+  if (patch.file.empty()) {
+    throw std::runtime_error("camera_mount_patch.file must not be empty");
+  }
+  const std::string file = patch.file.string();
+  if (file.starts_with("~/")) {
+    const char *home = std::getenv("HOME");
+    if (home == nullptr || *home == '\0') {
+      throw std::runtime_error("HOME is required to resolve camera_mount_patch.file");
+    }
+    patch.file = std::filesystem::path(home) / file.substr(2);
+  } else if (patch.file.is_relative()) {
+    patch.file = config_path.parent_path() / patch.file;
+  }
+  patch.file = std::filesystem::absolute(patch.file).lexically_normal();
+  if (!std::filesystem::exists(patch.file) && !patch.required) {
+    return;
+  }
+  try {
+    std::ifstream input(patch.file);
+    if (!input) {
+      throw std::runtime_error("unable to open file");
+    }
+    const json content = json::parse(input);
+    readCameraMount(content.at("camera_mount"), config);
+    patch.snapshot_json = content.dump();
+    patch.applied = true;
+  } catch (const std::exception &error) {
+    throw std::runtime_error("camera mount patch " + patch.file.string() +
+                             ": " + error.what());
+  }
+}
+
 } // namespace
 
 const char *toString(PnpSolver solver) {
@@ -102,7 +165,8 @@ void applyOutputTag(OutputConfig &output, const std::string &tag) {
   output.json_name = tagged_name(output.json_name);
 }
 
-ApplicationConfig loadApplicationConfig(const std::filesystem::path &path) {
+ApplicationConfig loadApplicationConfig(const std::filesystem::path &path,
+                                        bool use_device_mount_patch) {
   std::ifstream input(path);
   if (!input) {
     throw std::runtime_error("unable to open configuration: " + path.string());
@@ -203,12 +267,8 @@ ApplicationConfig loadApplicationConfig(const std::filesystem::path &path) {
         output.value("json_name", config.output.json_name);
   }
 
-  const auto &mount = root.at("camera_mount");
-  cv::Mat mount_rotation = readMatrix(mount.at("camera_to_drone_rotation"), 3,
-                                      3, "camera_to_drone_rotation");
-  config.camera_to_drone_rotation = mount_rotation;
-  config.camera_position_drone_flu =
-      readVec3(mount.at("position_drone_flu_m"), "position_drone_flu_m");
+  readCameraMount(root.at("camera_mount"), config);
+  applyCameraMountPatch(root, path, use_device_mount_patch, config);
 
   config.grid_file = root.at("grid_file").get<std::string>();
   if (config.grid_file.is_relative()) {
