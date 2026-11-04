@@ -60,10 +60,7 @@
       ]
     ]
   },
-  "camera_mount_patch": {
-    "file": "/home/fls/.config/fls-localizer/camera_mount.json",
-    "required": true
-  },
+  "camera_mount_patch": null,
   "detector": {
     "intensity_threshold": 160,
     "minimum_area": 8,
@@ -102,7 +99,7 @@
   "shared_memory_name": "/fls_localizer_v3",
   "shared_memory_pose_technique": "shared_attitude",
   "yaw_correction": {
-    "enabled": true,
+    "enabled": false,
     "stddev_rad": 0.01,
     "maximum_pnp_reprojection_error_px": 0.8,
     "minimum_feature_count": 4,
