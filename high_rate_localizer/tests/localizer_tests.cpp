@@ -745,6 +745,7 @@ void testCameraMountPatch() {
 
 void testLogIncludesGitVersion(const flsloc::GridMap &map) {
   flsloc::ApplicationConfig config = testConfig();
+  config.calibration.distortion.at<double>(0) = 0.21584588210408298;
   config.camera_mount_patch.applied = true;
   config.camera_mount_patch.file = "/device/camera_mount.json";
   config.camera_mount_patch.snapshot_json = R"({"calibration_id":"log-test"})";
@@ -781,6 +782,15 @@ void testLogIncludesGitVersion(const flsloc::GridMap &map) {
               !log.at("config").at("git_ver").get<std::string>().empty(),
           "debug JSON log is missing git_ver");
   const auto &marker_grid = log.at("config").at("marker_grid");
+  const auto &calibration = log.at("config").at("calibration");
+  require(calibration.at("camera_matrix").at(0).at(0).get<double>() ==
+              config.calibration.camera_matrix.at<double>(0, 0) &&
+              calibration.at("camera_matrix").at(0).at(2).get<double>() ==
+              config.calibration.camera_matrix.at<double>(0, 2) &&
+              calibration.at("distortion_coefficients").size() == 5 &&
+              calibration.at("distortion_coefficients").at(0).get<double>() ==
+              config.calibration.distortion.at<double>(0),
+          "final log lost the actual camera intrinsics used for localization");
   const auto &mount_patch = log.at("config").at("camera_mount_patch");
   const auto &mount = log.at("config").at("camera_mount");
   require(mount_patch.at("applied").get<bool>() &&

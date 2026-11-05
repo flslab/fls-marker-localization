@@ -222,6 +222,16 @@ void DebugOutput::finish() {
 }
 
 json DebugOutput::metadata() const {
+  json camera_matrix = json::array();
+  for (int row = 0; row < 3; ++row) {
+    camera_matrix.push_back({config_.calibration.camera_matrix.at<double>(row, 0),
+                             config_.calibration.camera_matrix.at<double>(row, 1),
+                             config_.calibration.camera_matrix.at<double>(row, 2)});
+  }
+  json distortion = json::array();
+  for (std::size_t index = 0; index < config_.calibration.distortion.total(); ++index) {
+    distortion.push_back(config_.calibration.distortion.at<double>(static_cast<int>(index)));
+  }
   json short_range_tiles = json::array();
   for (const MyGridTile &tile : map_.tiles()) {
     json markers = json::array();
@@ -258,6 +268,8 @@ json DebugOutput::metadata() const {
       {"args", std::move(args)},
       {"config",
        {{"git_ver", FLS_GIT_VERSION},
+        {"calibration", {{"camera_matrix", std::move(camera_matrix)},
+                          {"distortion_coefficients", std::move(distortion)}}},
         {"initial_distance", config_.tracking.initial_distance_m},
         {"aruco_mode", false},
         {"blob_grid_localization_enabled", true},

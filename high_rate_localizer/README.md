@@ -85,6 +85,14 @@ even when no patch is applied. The existing
 The snapshot is captured at startup, so editing the file during a run cannot
 change the recorded calibration for that run.
 
+The log also snapshots the effective `config.calibration.camera_matrix` and
+`config.calibration.distortion_coefficients`. Offline mount calibration reads
+this snapshot instead of assuming that another camera's calibration applies.
+Matching the recorded model reproduces the run; it does not establish that
+the intrinsics are physically accurate. Calibrate each camera/lens and sensor
+mode independently before interpreting a fitted camera mount as a physical
+measurement.
+
 The MP4 fixture runner accepts a grid override and output directory:
 
 ```sh
