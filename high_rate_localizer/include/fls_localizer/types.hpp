@@ -1,5 +1,7 @@
 #pragma once
 
+#include "fls_localizer/frame_timing.hpp"
+
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -120,6 +122,7 @@ struct GroundTruthEvaluation {
 struct FrameResult {
   std::uint64_t frame_id = 0;
   double timestamp = 0.0;
+  std::optional<FrameTiming> camera_timing;
   double processing_ms = 0.0;
   LocalizerState state = LocalizerState::Starting;
   PoseSource source = PoseSource::None;

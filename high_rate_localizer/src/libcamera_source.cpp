@@ -14,10 +14,21 @@
 #include <map>
 #include <mutex>
 #include <stdexcept>
+#include <time.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
 namespace flsloc {
+namespace {
+
+std::optional<std::uint64_t> hostMonotonicNs() noexcept {
+  timespec stamp{};
+  if (clock_gettime(CLOCK_MONOTONIC, &stamp) != 0) return std::nullopt;
+  return static_cast<std::uint64_t>(stamp.tv_sec) * 1'000'000'000ULL +
+         static_cast<std::uint64_t>(stamp.tv_nsec);
+}
+
+} // namespace
 
 class LibcameraSource::Impl {
 public:
@@ -114,9 +125,10 @@ public:
     }
   }
 
-  bool read(cv::Mat &gray, double &timestamp) {
-    libcamera::Request *selected = nullptr;
-    std::deque<libcamera::Request *> stale;
+  bool read(cv::Mat &gray, double &timestamp, FrameTiming &timing) {
+    const auto read_started = hostMonotonicNs();
+    Completed selected;
+    std::deque<Completed> stale;
     {
       std::unique_lock lock(mutex_);
       ready_.wait(lock, [&] { return !completed_.empty(); });
@@ -124,26 +136,49 @@ public:
       completed_.pop_back();
       stale.swap(completed_);
     }
-    for (libcamera::Request *request : stale) {
-      recycle(request);
+    for (const Completed &request : stale) {
+      recycle(request.request);
     }
-    const auto iterator = selected->buffers().find(stream_);
-    if (iterator == selected->buffers().end()) {
-      recycle(selected);
+    const auto iterator = selected.request->buffers().find(stream_);
+    if (iterator == selected.request->buffers().end()) {
+      recycle(selected.request);
       return false;
     }
     libcamera::FrameBuffer *buffer = iterator->second;
     const Mapping &mapping = mappings_.at(buffer);
     const auto &metadata = buffer->metadata();
+    // Keep the existing runtime time base and phase. SensorTimestamp is
+    // diagnostic evidence, not an implicit change to localization timing.
     timestamp = static_cast<double>(metadata.timestamp) * 1e-9;
     cv::Mat view(static_cast<int>(height_), static_cast<int>(width_), CV_8UC1,
                  mapping.data, stride_);
     view.copyTo(gray);
-    recycle(selected);
+    timing = selected.timing;
+    timing.host_read_started_monotonic_ns = read_started;
+    timing.host_read_finished_monotonic_ns = hostMonotonicNs();
+    timing.stale_requests_skipped = stale.size();
+    stale_requests_skipped_total_ += stale.size();
+    timing.stale_requests_skipped_total = stale_requests_skipped_total_;
+    timing.buffer_progress = buffer_sequences_.observe(timing.buffer_sequence);
+    timing.request_progress = request_sequences_.observe(timing.request_sequence);
+    timing.buffer_timestamp_nonmonotonic =
+        previous_buffer_timestamp_ && timing.buffer_timestamp_ns <= *previous_buffer_timestamp_;
+    previous_buffer_timestamp_ = timing.buffer_timestamp_ns;
+    if (timing.sensor_timestamp_ns) {
+      timing.sensor_timestamp_nonmonotonic =
+          previous_sensor_timestamp_ && *timing.sensor_timestamp_ns <= *previous_sensor_timestamp_;
+      previous_sensor_timestamp_ = timing.sensor_timestamp_ns;
+    }
+    recycle(selected.request);
     return true;
   }
 
 private:
+  struct Completed {
+    libcamera::Request *request = nullptr;
+    FrameTiming timing;
+  };
+
   struct Mapping {
     void *base = MAP_FAILED;
     std::size_t length = 0;
@@ -174,9 +209,28 @@ private:
     if (request->status() == libcamera::Request::RequestCancelled) {
       return;
     }
+    FrameTiming timing;
+    timing.host_completed_monotonic_ns = hostMonotonicNs();
+    timing.request_sequence = request->sequence();
+    const auto iterator = request->buffers().find(stream_);
+    if (iterator != request->buffers().end()) {
+      const auto &buffer_metadata = iterator->second->metadata();
+      timing.buffer_timestamp_ns = buffer_metadata.timestamp;
+      timing.buffer_sequence = buffer_metadata.sequence;
+      timing.buffer_status = static_cast<int>(buffer_metadata.status);
+    }
+    const auto &metadata = request->metadata();
+    if (const auto value = metadata.get(libcamera::controls::SensorTimestamp))
+      timing.sensor_timestamp_ns = *value;
+    if (const auto value = metadata.get(libcamera::controls::ExposureTime))
+      timing.exposure_time_us = *value;
+    if (const auto value = metadata.get(libcamera::controls::FrameDuration))
+      timing.frame_duration_us = *value;
+    if (const auto value = metadata.get(libcamera::controls::AnalogueGain))
+      timing.analogue_gain = *value;
     {
       std::lock_guard lock(mutex_);
-      completed_.push_back(request);
+      completed_.push_back({request, timing});
     }
     ready_.notify_one();
   }
@@ -196,7 +250,12 @@ private:
   std::map<libcamera::FrameBuffer *, Mapping> mappings_;
   std::mutex mutex_;
   std::condition_variable ready_;
-  std::deque<libcamera::Request *> completed_;
+  std::deque<Completed> completed_;
+  FrameSequenceTracker buffer_sequences_;
+  FrameSequenceTracker request_sequences_;
+  std::optional<std::uint64_t> previous_buffer_timestamp_;
+  std::optional<std::int64_t> previous_sensor_timestamp_;
+  std::uint64_t stale_requests_skipped_total_ = 0;
   unsigned int width_ = 0;
   unsigned int height_ = 0;
   unsigned int stride_ = 0;
@@ -208,7 +267,11 @@ LibcameraSource::LibcameraSource(const CameraConfig &config)
     : impl_(std::make_unique<Impl>(config)) {}
 LibcameraSource::~LibcameraSource() = default;
 bool LibcameraSource::read(cv::Mat &gray, double &timestamp) {
-  return impl_->read(gray, timestamp);
+  FrameTiming ignored;
+  return impl_->read(gray, timestamp, ignored);
+}
+bool LibcameraSource::read(cv::Mat &gray, double &timestamp, FrameTiming &timing) {
+  return impl_->read(gray, timestamp, timing);
 }
 
 } // namespace flsloc

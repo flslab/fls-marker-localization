@@ -1,6 +1,7 @@
 #pragma once
 
 #include "fls_localizer/config.hpp"
+#include "fls_localizer/frame_timing.hpp"
 
 #include <memory>
 #include <opencv2/core.hpp>
@@ -15,6 +16,7 @@ public:
   LibcameraSource &operator=(const LibcameraSource &) = delete;
 
   bool read(cv::Mat &gray, double &timestamp);
+  bool read(cv::Mat &gray, double &timestamp, FrameTiming &timing);
 
 private:
   class Impl;

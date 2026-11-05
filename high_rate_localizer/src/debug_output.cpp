@@ -31,6 +31,40 @@ json vec4(const cv::Vec4d &value) {
           rounded(value[3])};
 }
 
+template <typename T> json optionalJson(const std::optional<T> &value) {
+  return value ? json(*value) : json(nullptr);
+}
+
+json cameraTimingJson(const std::optional<FrameTiming> &value) {
+  if (!value) return nullptr;
+  const FrameTiming &timing = *value;
+  return {{"schema_version", 1},
+          {"runtime_timestamp_source", "framebuffer_metadata"},
+          {"buffer_timestamp_ns", timing.buffer_timestamp_ns},
+          {"sensor_timestamp_ns", optionalJson(timing.sensor_timestamp_ns)},
+          {"exposure_time_us", optionalJson(timing.exposure_time_us)},
+          {"frame_duration_us", optionalJson(timing.frame_duration_us)},
+          {"analogue_gain", optionalJson(timing.analogue_gain)},
+          {"buffer_sequence", timing.buffer_sequence},
+          {"request_sequence", timing.request_sequence},
+          {"buffer_status", timing.buffer_status},
+          {"host_completed_monotonic_ns", optionalJson(timing.host_completed_monotonic_ns)},
+          {"host_read_started_monotonic_ns", optionalJson(timing.host_read_started_monotonic_ns)},
+          {"host_read_finished_monotonic_ns", optionalJson(timing.host_read_finished_monotonic_ns)},
+          {"stale_requests_skipped", timing.stale_requests_skipped},
+          {"stale_requests_skipped_total", timing.stale_requests_skipped_total},
+          {"buffer_sequence_delta", optionalJson(timing.buffer_progress.delta)},
+          {"buffer_sequence_wrapped", timing.buffer_progress.wrapped},
+          {"buffer_sequence_reset_or_out_of_order", timing.buffer_progress.reset_or_out_of_order},
+          {"buffer_sequence_duplicate", timing.buffer_progress.duplicate},
+          {"request_sequence_delta", optionalJson(timing.request_progress.delta)},
+          {"request_sequence_wrapped", timing.request_progress.wrapped},
+          {"request_sequence_reset_or_out_of_order", timing.request_progress.reset_or_out_of_order},
+          {"request_sequence_duplicate", timing.request_progress.duplicate},
+          {"buffer_timestamp_nonmonotonic", timing.buffer_timestamp_nonmonotonic},
+          {"sensor_timestamp_nonmonotonic", timing.sensor_timestamp_nonmonotonic}};
+}
+
 std::string webGridType(PoseSource source) {
   return source == PoseSource::MyGrid ? "short_range" : "main";
 }
@@ -265,6 +299,17 @@ json DebugOutput::metadata() const {
     args["orientation_noise_seed"] = orientation_error_->seed;
   }
   return {
+      {"camera_timing_schema",
+       {{"version", 1},
+        {"runtime_timestamp", "frames.time remains framebuffer timestamp converted to seconds"},
+        {"buffer_timestamp_clock", "system clock since unspecified epoch; not assumed CLOCK_MONOTONIC or CLOCK_BOOTTIME"},
+        {"buffer_timestamp_phase", "unspecified_by_libcamera_FrameMetadata"},
+        {"sensor_timestamp_clock", "CLOCK_BOOTTIME"},
+        {"sensor_timestamp_phase", "first_row_exposure_start"},
+        {"host_timestamp_clock", "CLOCK_MONOTONIC"},
+        {"sequence_comparison", "previous successfully read camera frame; first delta is null"},
+        {"missing_controls", "null; no substitution from configured settings"},
+        {"midpoint_correction_applied", false}}},
       {"args", std::move(args)},
       {"config",
        {{"git_ver", FLS_GIT_VERSION},
@@ -373,6 +418,7 @@ json DebugOutput::frameJson(const FrameResult &result) const {
       result.sharedMemoryPose(config_.shared_memory_pose_technique);
   json frame = {{"time", rounded(result.timestamp)},
                 {"frame_id", result.frame_id},
+                {"camera_timing", cameraTimingJson(result.camera_timing)},
                 {"blobs", blobs},
                 {"poses", json::array()},
                 {"blob_grid_localization",
@@ -470,6 +516,7 @@ void DebugOutput::worker() {
     const json root = metadata();
     log << "{\n  \"args\": " << root["args"].dump()
         << ",\n  \"config\": " << root["config"].dump()
+        << ",\n  \"camera_timing_schema\": " << root["camera_timing_schema"].dump()
         << ",\n  \"frames\": [\n";
     bool first = true;
     cv::VideoWriter video;

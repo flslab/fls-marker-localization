@@ -888,12 +888,66 @@ void testLogIncludesGitVersion(const flsloc::GridMap &map) {
     frame.attitude_alignment.bracket_sequences = {11,12};
     frame.attitude_alignment.interpolation_alpha = 0.5;
     output.submit(frame);
+    flsloc::FrameTiming timing;
+    timing.buffer_timestamp_ns = 9'007'199'254'740'993ULL;
+    timing.sensor_timestamp_ns = 9'007'199'253'240'993LL;
+    timing.exposure_time_us = 2500;
+    timing.frame_duration_us = 8333;
+    timing.analogue_gain = 1.25;
+    timing.buffer_sequence = 102;
+    timing.request_sequence = 57;
+    timing.host_completed_monotonic_ns = 10'010'000'000ULL;
+    timing.host_read_started_monotonic_ns = 10'009'000'000ULL;
+    timing.host_read_finished_monotonic_ns = 10'010'500'000ULL;
+    timing.stale_requests_skipped = 2;
+    timing.stale_requests_skipped_total = 8;
+    timing.buffer_progress.delta = 3;
+    timing.request_progress.delta = 3;
+    timing.buffer_timestamp_nonmonotonic = true;
+    frame.camera_timing = timing;
+    output.submit(frame);
+    // Missing metadata stays unknown even though camera configuration has
+    // exposure/gain values. Video and legacy frames remain timing-null.
+    frame.camera_timing = flsloc::FrameTiming{};
+    output.submit(frame);
     output.finish();
   }
 
   std::ifstream input(config.output.directory / config.output.json_name);
   require(input.good(), "debug JSON log was not written");
   const nlohmann::json log = nlohmann::json::parse(input);
+  const auto &camera_schema = log.at("camera_timing_schema");
+  require(camera_schema.at("sensor_timestamp_clock") == "CLOCK_BOOTTIME" &&
+              camera_schema.at("sensor_timestamp_phase") == "first_row_exposure_start" &&
+              camera_schema.at("buffer_timestamp_phase") == "unspecified_by_libcamera_FrameMetadata" &&
+              !camera_schema.at("midpoint_correction_applied").get<bool>(),
+          "camera timing schema must distinguish known sensor exposure phase from unknown framebuffer phase");
+  require(log.at("frames").at(0).at("camera_timing").is_null(),
+          "a frame without native timing must not acquire fabricated metadata");
+  const auto &camera_timing = log.at("frames").at(1).at("camera_timing");
+  require(camera_timing.at("buffer_timestamp_ns").get<std::uint64_t>() == 9'007'199'254'740'993ULL &&
+              camera_timing.at("sensor_timestamp_ns").get<std::int64_t>() == 9'007'199'253'240'993LL &&
+              camera_timing.at("exposure_time_us") == 2500 &&
+              camera_timing.at("frame_duration_us") == 8333 &&
+              camera_timing.at("analogue_gain") == 1.25 &&
+              camera_timing.at("buffer_sequence") == 102 &&
+              camera_timing.at("request_sequence") == 57 &&
+              camera_timing.at("buffer_sequence_delta") == 3 &&
+              camera_timing.at("stale_requests_skipped") == 2 &&
+              camera_timing.at("stale_requests_skipped_total") == 8 &&
+              camera_timing.at("host_completed_monotonic_ns") == 10'010'000'000ULL &&
+              camera_timing.at("host_read_started_monotonic_ns") == 10'009'000'000ULL &&
+              camera_timing.at("host_read_finished_monotonic_ns") == 10'010'500'000ULL &&
+              camera_timing.at("buffer_timestamp_nonmonotonic").get<bool>() &&
+              log.at("frames").at(1).at("time") == 10.01,
+          "camera timing log lost integer precision, actual controls, source counters or changed runtime timestamp");
+  const auto &missing_timing = log.at("frames").at(2).at("camera_timing");
+  require(missing_timing.at("sensor_timestamp_ns").is_null() &&
+              missing_timing.at("exposure_time_us").is_null() &&
+              missing_timing.at("frame_duration_us").is_null() &&
+              missing_timing.at("analogue_gain").is_null() &&
+              missing_timing.at("buffer_sequence_delta").is_null(),
+          "unavailable camera metadata must stay null rather than using configuration defaults");
   require(log.at("config").at("git_ver").is_string() &&
               !log.at("config").at("git_ver").get<std::string>().empty(),
           "debug JSON log is missing git_ver");
@@ -937,6 +991,24 @@ void testLogIncludesGitVersion(const flsloc::GridMap &map) {
               1e-12,
           "debug JSON log is missing pose-point hysteresis configuration");
   std::filesystem::remove_all(config.output.directory);
+}
+
+void testCameraSequenceProgress() {
+  flsloc::FrameSequenceTracker sequence;
+  require(!sequence.observe(10).delta.has_value(), "first source counter has no prior delta");
+  const auto gap = sequence.observe(14);
+  require(gap.delta == 4 && !gap.wrapped && !gap.reset_or_out_of_order,
+          "camera source counter must expose sequence gaps");
+  const auto duplicate = sequence.observe(14);
+  require(duplicate.delta == 0 && duplicate.duplicate, "duplicate sequence must be diagnosed");
+  const auto reset = sequence.observe(2);
+  require(!reset.delta && reset.reset_or_out_of_order && !reset.wrapped,
+          "backward reset must not be reported as billions of missing frames");
+  flsloc::FrameSequenceTracker wrapped;
+  wrapped.observe(0xfffffffeU);
+  const auto rollover = wrapped.observe(1);
+  require(rollover.delta == 3 && rollover.wrapped && !rollover.reset_or_out_of_order,
+          "valid uint32 counter rollover must retain its small forward delta");
 }
 
 void testSharedMemoryPoseSelection() {
@@ -1185,6 +1257,7 @@ int main() try {
   testCameraMountPatch();
   testDroneCalibration();
   testLogIncludesGitVersion(map);
+  testCameraSequenceProgress();
   testSharedMemoryPoseSelection();
   testSharedMemoryAbiForYawCorrection();
   testClosestSharedAttitude();

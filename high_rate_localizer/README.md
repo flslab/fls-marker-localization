@@ -103,6 +103,12 @@ the intrinsics are physically accurate. Calibrate each camera/lens and sensor
 mode independently before interpreting a fitted camera mount as a physical
 measurement.
 
+Native recordings also preserve camera source counters, original buffer and
+sensor timestamps, actual exposure/gain metadata, host completion/read times,
+and deliberately skipped stale requests in `frames[].camera_timing`. Runtime
+pose timing is unchanged. See [Camera timing evidence](CAMERA_TIMING.md) for
+clock definitions, missing fields, and drop/reset diagnostics.
+
 The MP4 fixture runner accepts a grid override and output directory:
 
 ```sh
