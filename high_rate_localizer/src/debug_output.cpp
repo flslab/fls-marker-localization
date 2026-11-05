@@ -296,6 +296,13 @@ json DebugOutput::metadata() const {
           {"snapshot", config_.camera_mount_patch.applied
                            ? json::parse(config_.camera_mount_patch.snapshot_json)
                            : json(nullptr)}}},
+        {"drone_calibration",
+         {{"applied", config_.drone_calibration.applied},
+          {"file", config_.drone_calibration.file.string()},
+          {"required", config_.drone_calibration.required},
+          {"snapshot", config_.drone_calibration.applied
+                           ? json::parse(config_.drone_calibration.snapshot_json)
+                           : json(nullptr)}}},
         {"marker_grid",
          {{"map_file", map_.path().string()},
           {"rows", 0},

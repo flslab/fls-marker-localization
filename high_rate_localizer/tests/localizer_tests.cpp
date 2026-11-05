@@ -743,12 +743,128 @@ void testCameraMountPatch() {
   std::filesystem::remove_all(directory);
 }
 
+void testDroneCalibration() {
+  const auto directory = std::filesystem::temp_directory_path() /
+      ("fls_drone_calibration_" + std::to_string(static_cast<long long>(getpid())));
+  std::filesystem::create_directories(directory / ".config/fls-localizer");
+  struct RestoreHome {
+    bool present = std::getenv("HOME") != nullptr;
+    std::string value = present ? std::getenv("HOME") : "";
+    ~RestoreHome() {
+      if (present) setenv("HOME", value.c_str(), 1);
+      else unsetenv("HOME");
+    }
+  } restore_home;
+  setenv("HOME", directory.c_str(), 1);
+  std::ifstream input(FLS_TEST_CONFIG_PATH);
+  nlohmann::json root = nlohmann::json::parse(input);
+  root.erase("camera_mount_patch");
+  root.erase("drone_calibration");
+  const auto config_path = directory / "config.json";
+  const auto profile_path = directory / ".config/fls-localizer/calibration.json";
+  const auto legacy_path = directory / ".config/fls-localizer/camera_mount.json";
+  const auto write = [](const auto &path, const nlohmann::json &value) {
+    std::ofstream output(path);
+    output << value;
+  };
+  const auto rejected = [&]() {
+    try { static_cast<void>(flsloc::loadApplicationConfig(config_path, true)); }
+    catch (const std::exception &) { return true; }
+    return false;
+  };
+  write(config_path, root);
+  require(!flsloc::loadApplicationConfig(config_path, true).drone_calibration.applied,
+          "absent optional drone calibration must preserve base settings");
+  nlohmann::json legacy = {{"camera_mount", root.at("camera_mount")}};
+  legacy["camera_mount"]["position_drone_flu_m"] = {0.02, 0.0, 0.0};
+  write(legacy_path, legacy);
+  nlohmann::json profile = {{"calibration", root.at("calibration")},
+                            {"camera_mount", root.at("camera_mount")},
+                            {"image_size", {root["camera"]["width"], root["camera"]["height"]}},
+                            {"provenance", {{"id", "joint-device-test"}}}};
+  profile["calibration"]["camera_matrix"][0][0] = 512.345678901234;
+  profile["calibration"]["distortion_coefficients"] = {0.12, -0.03, 0.001, -0.002, 0.01};
+  profile["camera_mount"]["position_drone_flu_m"] = {0.046, 0.002, -0.017};
+  write(profile_path, profile);
+  auto loaded = flsloc::loadApplicationConfig(config_path, true);
+  require(!loaded.camera_mount_patch.applied && loaded.drone_calibration.applied &&
+              loaded.drone_calibration.file == profile_path &&
+              loaded.calibration.camera_matrix.at<double>(0, 0) == 512.345678901234 &&
+              loaded.calibration.distortion.at<double>(0) == 0.12 &&
+              loaded.camera_position_drone_flu[0] == 0.046 &&
+              nlohmann::json::parse(loaded.drone_calibration.snapshot_json) == profile,
+          "combined profile must supply mount and intrinsics without reading legacy files");
+  { std::ofstream output(legacy_path); output << "{broken"; }
+  require(flsloc::loadApplicationConfig(config_path, true).drone_calibration.applied,
+          "valid combined profile must ignore corrupt legacy mount");
+  std::filesystem::remove(legacy_path);
+  root["camera_mount_patch"] = {{"file", "missing_required_legacy.json"}, {"required", true}};
+  write(config_path, root);
+  require(flsloc::loadApplicationConfig(config_path, true).drone_calibration.applied,
+          "valid combined profile must ignore missing required legacy mount");
+  root.erase("camera_mount_patch");
+  write(config_path, root);
+  write(legacy_path, legacy);
+  require(!flsloc::loadApplicationConfig(config_path).drone_calibration.applied,
+          "offline loading silently discovered a drone profile");
+  root["drone_calibration"] = nullptr;
+  write(config_path, root);
+  loaded = flsloc::loadApplicationConfig(config_path, true);
+  require(!loaded.drone_calibration.applied && loaded.camera_position_drone_flu[0] == 0.02,
+          "explicit null must disable combined profile while preserving legacy compatibility");
+  root["drone_calibration"] = {{"file", ".config/fls-localizer/calibration.json"}};
+  write(config_path, root);
+  require(flsloc::loadApplicationConfig(config_path).drone_calibration.applied,
+          "explicit relative combined profile must load in offline mode");
+  auto invalid = profile;
+  invalid.erase("camera_mount");
+  write(profile_path, invalid);
+  require(rejected(), "intrinsics-only profile must fail instead of partially applying");
+  invalid = profile;
+  invalid.erase("calibration");
+  write(profile_path, invalid);
+  require(rejected(), "mount-only profile is not a complete drone calibration");
+  invalid = profile;
+  invalid["calibration"]["camera_matrix"][0][0] = -10;
+  write(profile_path, invalid);
+  require(rejected(), "negative focal length was accepted from drone profile");
+  invalid = profile;
+  invalid["calibration"]["distortion_coefficients"] = {0, 0, 0};
+  write(profile_path, invalid);
+  require(rejected(), "invalid distortion length was accepted from drone profile");
+  invalid = profile;
+  invalid["camera_mount"]["camera_to_drone_rotation"] = {{1,0,0},{0,1,0},{0,0,-1}};
+  write(profile_path, invalid);
+  require(rejected(), "reflection mount was accepted from combined profile");
+  invalid = profile;
+  invalid["image_size"] = {1280, 800};
+  write(profile_path, invalid);
+  require(rejected(), "profile for a different sensor mode was accepted");
+  invalid = profile;
+  invalid.erase("image_size");
+  write(profile_path, invalid);
+  require(flsloc::loadApplicationConfig(config_path).drone_calibration.applied,
+          "optional image_size metadata became mandatory");
+  { std::ofstream output(profile_path); output << "{broken"; }
+  require(rejected(), "malformed combined profile must fail startup");
+  std::filesystem::remove(profile_path);
+  require(rejected(), "missing required combined profile must fail startup");
+  root["drone_calibration"]["required"] = false;
+  write(config_path, root);
+  require(!flsloc::loadApplicationConfig(config_path).drone_calibration.applied,
+          "missing optional explicit profile must preserve base settings");
+  std::filesystem::remove_all(directory);
+}
+
 void testLogIncludesGitVersion(const flsloc::GridMap &map) {
   flsloc::ApplicationConfig config = testConfig();
   config.calibration.distortion.at<double>(0) = 0.21584588210408298;
   config.camera_mount_patch.applied = true;
   config.camera_mount_patch.file = "/device/camera_mount.json";
   config.camera_mount_patch.snapshot_json = R"({"calibration_id":"log-test"})";
+  config.drone_calibration.applied = true;
+  config.drone_calibration.file = "/device/calibration.json";
+  config.drone_calibration.snapshot_json = R"({"provenance":{"id":"joint-log-test"}})";
   config.camera_position_drone_flu = {0.046426939054, 0.003478310587, -0.017928512704};
   config.tracking.attitude_prediction_enabled = true;
   config.tracking.maximum_attitude_prediction_s = 0.01;
@@ -799,6 +915,11 @@ void testLogIncludesGitVersion(const flsloc::GridMap &map) {
               mount.at("position_drone_flu_m").at(2).get<double>() == config.camera_position_drone_flu[2] &&
               mount.at("camera_to_drone_rotation").at(0).at(1).get<double>() == config.camera_to_drone_rotation(0, 1),
           "final log lost patch provenance or effective mount values");
+  const auto &profile = log.at("config").at("drone_calibration");
+  require(profile.at("applied").get<bool>() &&
+              profile.at("file") == "/device/calibration.json" &&
+              profile.at("snapshot").at("provenance").at("id") == "joint-log-test",
+          "final log lost combined drone calibration provenance");
   const auto &alignment = log.at("frames").at(0).at("blob_grid_localization").at("shared_attitude");
   require(alignment.at("quaternion_xyzw").at(2).get<double>() == 0.123456789 &&
               alignment.at("ekf_reset_generation").get<int>() == 42 &&
@@ -1062,6 +1183,7 @@ int main() try {
   testMaximumPosePointsBound();
   testAttitudePredictionConfig();
   testCameraMountPatch();
+  testDroneCalibration();
   testLogIncludesGitVersion(map);
   testSharedMemoryPoseSelection();
   testSharedMemoryAbiForYawCorrection();

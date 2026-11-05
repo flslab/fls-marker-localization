@@ -86,6 +86,30 @@ void readCameraMount(const json &mount, ApplicationConfig &config) {
   config.camera_position_drone_flu = position;
 }
 
+void readCalibration(const json &value, ApplicationConfig &config) {
+  const cv::Mat matrix = readMatrix(value.at("camera_matrix"), 3, 3, "camera_matrix");
+  const std::vector<double> distortion =
+      value.at("distortion_coefficients").get<std::vector<double>>();
+  if (!cv::checkRange(matrix) || matrix.at<double>(0, 0) <= 0.0 ||
+      matrix.at<double>(1, 1) <= 0.0 ||
+      std::abs(matrix.at<double>(0, 1)) > 1e-12 ||
+      std::abs(matrix.at<double>(1, 0)) > 1e-12 ||
+      std::abs(matrix.at<double>(2, 0)) > 1e-12 ||
+      std::abs(matrix.at<double>(2, 1)) > 1e-12 ||
+      std::abs(matrix.at<double>(2, 2) - 1.0) > 1e-12 ||
+      (distortion.size() != 4 && distortion.size() != 5 &&
+       distortion.size() != 8 && distortion.size() != 12 && distortion.size() != 14)) {
+    throw std::runtime_error("calibration requires a finite zero-skew pinhole matrix and 4, 5, 8, 12 or 14 distortion coefficients");
+  }
+  for (const double coefficient : distortion) {
+    if (!std::isfinite(coefficient)) {
+      throw std::runtime_error("distortion coefficients must be finite");
+    }
+  }
+  config.calibration.camera_matrix = matrix;
+  config.calibration.distortion = cv::Mat(distortion, true);
+}
+
 void applyCameraMountPatch(const json &root, const std::filesystem::path &config_path,
                           bool use_device_mount_patch, ApplicationConfig &config) {
   auto &patch = config.camera_mount_patch;
@@ -130,6 +154,60 @@ void applyCameraMountPatch(const json &root, const std::filesystem::path &config
   } catch (const std::exception &error) {
     throw std::runtime_error("camera mount patch " + patch.file.string() +
                              ": " + error.what());
+  }
+}
+
+void applyDroneCalibration(const json &root, const std::filesystem::path &config_path,
+                           bool use_device_files, ApplicationConfig &config) {
+  auto &profile = config.drone_calibration;
+  if (root.contains("drone_calibration")) {
+    const auto &setting = root.at("drone_calibration");
+    if (setting.is_null()) return;
+    profile.file = setting.at("file").get<std::string>();
+    profile.required = setting.value("required", true);
+  } else if (use_device_files) {
+    profile.file = "~/.config/fls-localizer/calibration.json";
+  } else {
+    return;
+  }
+  if (profile.file.empty()) {
+    throw std::runtime_error("drone_calibration.file must not be empty");
+  }
+  const std::string file = profile.file.string();
+  if (file.starts_with("~/")) {
+    const char *home = std::getenv("HOME");
+    if (home == nullptr || *home == '\0') {
+      throw std::runtime_error("HOME is required to resolve drone_calibration.file");
+    }
+    profile.file = std::filesystem::path(home) / file.substr(2);
+  } else if (profile.file.is_relative()) {
+    profile.file = config_path.parent_path() / profile.file;
+  }
+  profile.file = std::filesystem::absolute(profile.file).lexically_normal();
+  if (!std::filesystem::exists(profile.file) && !profile.required) return;
+  try {
+    std::ifstream input(profile.file);
+    if (!input) throw std::runtime_error("unable to open file");
+    const json content = json::parse(input);
+    if (content.contains("image_size")) {
+      const auto &size = content.at("image_size");
+      if (!size.is_array() || size.size() != 2 || !size[0].is_number_integer() ||
+          !size[1].is_number_integer() || size[0].get<int>() != config.camera.width ||
+          size[1].get<int>() != config.camera.height) {
+        throw std::runtime_error("profile image_size differs from configured camera mode");
+      }
+    }
+    // Validate both sections before committing either one to the live settings.
+    ApplicationConfig candidate = config;
+    readCalibration(content.at("calibration"), candidate);
+    readCameraMount(content.at("camera_mount"), candidate);
+    config.calibration = candidate.calibration;
+    config.camera_to_drone_rotation = candidate.camera_to_drone_rotation;
+    config.camera_position_drone_flu = candidate.camera_position_drone_flu;
+    profile.snapshot_json = content.dump();
+    profile.applied = true;
+  } catch (const std::exception &error) {
+    throw std::runtime_error("drone calibration " + profile.file.string() + ": " + error.what());
   }
 }
 
@@ -191,12 +269,7 @@ ApplicationConfig loadApplicationConfig(const std::filesystem::path &path,
       camera.value("brightness", config.camera.brightness);
   config.camera.contrast = camera.value("contrast", config.camera.contrast);
 
-  const auto &calibration = root.at("calibration");
-  config.calibration.camera_matrix =
-      readMatrix(calibration.at("camera_matrix"), 3, 3, "camera_matrix");
-  const std::vector<double> distortion =
-      calibration.at("distortion_coefficients").get<std::vector<double>>();
-  config.calibration.distortion = cv::Mat(distortion, true);
+  readCalibration(root.at("calibration"), config);
 
   if (root.contains("detector")) {
     const auto &detector = root["detector"];
@@ -268,7 +341,12 @@ ApplicationConfig loadApplicationConfig(const std::filesystem::path &path,
   }
 
   readCameraMount(root.at("camera_mount"), config);
-  applyCameraMountPatch(root, path, use_device_mount_patch, config);
+  applyDroneCalibration(root, path, use_device_mount_patch, config);
+  // A valid combined profile is authoritative. Obsolete legacy files must not
+  // block startup or mix a previous mounting transform with new intrinsics.
+  if (!config.drone_calibration.applied) {
+    applyCameraMountPatch(root, path, use_device_mount_patch, config);
+  }
 
   config.grid_file = root.at("grid_file").get<std::string>();
   if (config.grid_file.is_relative()) {

@@ -53,6 +53,9 @@ int main(int argc, char **argv) try {
   std::cout << "camera_mount_patch_applied="
             << (config.camera_mount_patch.applied ? "true" : "false")
             << " file=" << config.camera_mount_patch.file << '\n'
+            << "drone_calibration_applied="
+            << (config.drone_calibration.applied ? "true" : "false")
+            << " file=" << config.drone_calibration.file << '\n'
             << "camera_position_drone_flu_m="
             << config.camera_position_drone_flu << '\n'
             << "camera_to_drone_rotation="
