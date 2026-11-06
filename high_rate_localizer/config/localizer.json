@@ -79,7 +79,7 @@
   },
   "tracking": {
     "pnp_solver": "ippe",
-    "maximum_pose_points": 64,
+    "maximum_pose_points": 4,
     "pose_point_hysteresis_px": 10.0,
     "initial_distance_m": 0.045,
     "maximum_reprojection_error_px": 5.0,
@@ -99,9 +99,9 @@
   },
   "grid_file": "hypergrid-mygrid-4x4.json",
   "shared_memory_name": "/fls_localizer_v3",
-  "shared_memory_pose_technique": "pnp",
+  "shared_memory_pose_technique": "shared_attitude",
   "yaw_correction": {
-    "enabled": false,
+    "enabled": true,
     "stddev_rad": 0.01,
     "maximum_pnp_reprojection_error_px": 0.8,
     "minimum_feature_count": 4,
