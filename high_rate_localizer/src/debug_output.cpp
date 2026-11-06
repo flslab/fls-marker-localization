@@ -334,17 +334,9 @@ json DebugOutput::metadata() const {
            {{config_.camera_to_drone_rotation(0, 0), config_.camera_to_drone_rotation(0, 1), config_.camera_to_drone_rotation(0, 2)},
             {config_.camera_to_drone_rotation(1, 0), config_.camera_to_drone_rotation(1, 1), config_.camera_to_drone_rotation(1, 2)},
             {config_.camera_to_drone_rotation(2, 0), config_.camera_to_drone_rotation(2, 1), config_.camera_to_drone_rotation(2, 2)}}}}},
-        {"camera_mount_patch",
-         {{"applied", config_.camera_mount_patch.applied},
-          {"file", config_.camera_mount_patch.file.string()},
-          {"required", config_.camera_mount_patch.required},
-          {"snapshot", config_.camera_mount_patch.applied
-                           ? json::parse(config_.camera_mount_patch.snapshot_json)
-                           : json(nullptr)}}},
         {"drone_calibration",
          {{"applied", config_.drone_calibration.applied},
           {"file", config_.drone_calibration.file.string()},
-          {"required", config_.drone_calibration.required},
           {"snapshot", config_.drone_calibration.applied
                            ? json::parse(config_.drone_calibration.snapshot_json)
                            : json(nullptr)}}},

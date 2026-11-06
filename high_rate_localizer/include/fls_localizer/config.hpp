@@ -69,17 +69,9 @@ struct OutputConfig {
 
 void applyOutputTag(OutputConfig &output, const std::string &tag);
 
-struct CameraMountPatch {
-  std::filesystem::path file;
-  bool required = false;
-  bool applied = false;
-  std::string snapshot_json = "{}";
-};
-
 // One per-drone profile supplies intrinsics and the mounting transform together.
 struct DroneCalibration {
   std::filesystem::path file;
-  bool required = false;
   bool applied = false;
   std::string snapshot_json = "{}";
 };
@@ -94,7 +86,6 @@ struct ApplicationConfig {
   cv::Matx33d camera_to_drone_rotation{0.0, -1.0, 0.0, -1.0, 0.0,
                                        0.0, 0.0,  0.0, -1.0};
   cv::Vec3d camera_position_drone_flu{0.0, 0.0, 0.0};
-  CameraMountPatch camera_mount_patch;
   DroneCalibration drone_calibration;
   std::filesystem::path grid_file;
   std::string shared_memory_name = "/fls_localizer_v3";
@@ -104,9 +95,8 @@ struct ApplicationConfig {
   double video_test_landing_time_s = 16.0;
 };
 
-// Production discovers optional per-device mount and combined calibration files;
-// offline replay loads them only when explicitly requested in its configuration.
-ApplicationConfig loadApplicationConfig(const std::filesystem::path &path,
-                                        bool use_device_mount_patch = false);
+// An optional drone_calibration.file overrides inline calibration and mount.
+// Missing files or omitted paths preserve the inline settings in all callers.
+ApplicationConfig loadApplicationConfig(const std::filesystem::path &path);
 
 } // namespace flsloc

@@ -675,74 +675,6 @@ void testAttitudePredictionConfig() {
   std::filesystem::remove(path);
 }
 
-void testCameraMountPatch() {
-  const auto directory = std::filesystem::temp_directory_path() /
-      ("fls_mount_patch_" + std::to_string(static_cast<long long>(getpid())));
-  std::filesystem::create_directories(directory / ".config/fls-localizer");
-  struct RestoreHome {
-    bool present = std::getenv("HOME") != nullptr;
-    std::string value = present ? std::getenv("HOME") : "";
-    ~RestoreHome() {
-      if (present) setenv("HOME", value.c_str(), 1);
-      else unsetenv("HOME");
-    }
-  } restore_home;
-  setenv("HOME", directory.c_str(), 1);
-  std::ifstream input(FLS_TEST_CONFIG_PATH);
-  nlohmann::json root = nlohmann::json::parse(input);
-  const auto config_path = directory / "config.json";
-  const auto patch_path = directory / ".config/fls-localizer/camera_mount.json";
-  const auto write = [](const auto &path, const nlohmann::json &value) {
-    std::ofstream output(path);
-    output << value;
-  };
-  const auto rejected = [&]() {
-    try {
-      static_cast<void>(flsloc::loadApplicationConfig(config_path, true));
-    } catch (const std::exception &) {
-      return true;
-    }
-    return false;
-  };
-  write(config_path, root);
-  require(!flsloc::loadApplicationConfig(config_path, true).camera_mount_patch.applied,
-          "absent optional device patch must preserve base mount");
-  nlohmann::json patch = {{"camera_mount", root.at("camera_mount")},
-                          {"calibration_id", "critical-patch-test"}};
-  patch["camera_mount"]["position_drone_flu_m"] = {0.046426939054, 0.003478310587, -0.017928512704};
-  patch["camera_mount"]["camera_to_drone_rotation"] = {{0,-1,0},{-1,0,0},{0,0,-1}};
-  write(patch_path, patch);
-  auto loaded = flsloc::loadApplicationConfig(config_path, true);
-  require(loaded.camera_mount_patch.applied &&
-              loaded.camera_mount_patch.file == patch_path &&
-              loaded.camera_position_drone_flu[2] == -0.017928512704 &&
-              nlohmann::json::parse(loaded.camera_mount_patch.snapshot_json) == patch,
-          "device patch was not fully applied and snapshotted");
-  require(!flsloc::loadApplicationConfig(config_path).camera_mount_patch.applied,
-          "offline loading must not silently use the device patch");
-  root["camera_mount_patch"] = nullptr;
-  write(config_path, root);
-  require(!flsloc::loadApplicationConfig(config_path, true).camera_mount_patch.applied,
-          "explicit null did not disable device patch");
-  root["camera_mount_patch"] = {{"file", ".config/fls-localizer/camera_mount.json"}};
-  write(config_path, root);
-  require(flsloc::loadApplicationConfig(config_path).camera_mount_patch.applied,
-          "explicit relative patch must resolve against config directory");
-  auto invalid = patch;
-  invalid["camera_mount"]["camera_to_drone_rotation"] = {{1,0,0},{0,1,0},{0,0,-1}};
-  write(patch_path, invalid);
-  require(rejected(), "reflection patch must fail startup");
-  invalid = patch;
-  invalid["camera_mount"].erase("position_drone_flu_m");
-  write(patch_path, invalid);
-  require(rejected(), "incomplete patch must fail startup");
-  { std::ofstream output(patch_path); output << "{broken"; }
-  require(rejected(), "malformed patch must fail startup");
-  std::filesystem::remove(patch_path);
-  require(rejected(), "missing required patch must fail startup");
-  std::filesystem::remove_all(directory);
-}
-
 void testDroneCalibration() {
   const auto directory = std::filesystem::temp_directory_path() /
       ("fls_drone_calibration_" + std::to_string(static_cast<long long>(getpid())));
@@ -758,26 +690,31 @@ void testDroneCalibration() {
   setenv("HOME", directory.c_str(), 1);
   std::ifstream input(FLS_TEST_CONFIG_PATH);
   nlohmann::json root = nlohmann::json::parse(input);
-  root.erase("camera_mount_patch");
   root.erase("drone_calibration");
   const auto config_path = directory / "config.json";
   const auto profile_path = directory / ".config/fls-localizer/calibration.json";
-  const auto legacy_path = directory / ".config/fls-localizer/camera_mount.json";
   const auto write = [](const auto &path, const nlohmann::json &value) {
     std::ofstream output(path);
     output << value;
   };
   const auto rejected = [&]() {
-    try { static_cast<void>(flsloc::loadApplicationConfig(config_path, true)); }
+    try { static_cast<void>(flsloc::loadApplicationConfig(config_path)); }
     catch (const std::exception &) { return true; }
     return false;
   };
+  const auto base = flsloc::loadApplicationConfig(FLS_TEST_CONFIG_PATH);
+  const auto require_fallback = [&]() {
+    const auto loaded = flsloc::loadApplicationConfig(config_path);
+    require(!loaded.drone_calibration.applied &&
+                cv::norm(loaded.calibration.camera_matrix - base.calibration.camera_matrix) == 0.0 &&
+                cv::norm(loaded.calibration.distortion - base.calibration.distortion) == 0.0 &&
+                cv::norm(loaded.camera_to_drone_rotation - base.camera_to_drone_rotation) == 0.0 &&
+                cv::norm(loaded.camera_position_drone_flu - base.camera_position_drone_flu) == 0.0,
+            "fallback must preserve inline intrinsics and mount together");
+  };
+  root["drone_calibration"] = {{"file", "~/.config/fls-localizer/calibration.json"}};
   write(config_path, root);
-  require(!flsloc::loadApplicationConfig(config_path, true).drone_calibration.applied,
-          "absent optional drone calibration must preserve base settings");
-  nlohmann::json legacy = {{"camera_mount", root.at("camera_mount")}};
-  legacy["camera_mount"]["position_drone_flu_m"] = {0.02, 0.0, 0.0};
-  write(legacy_path, legacy);
+  require_fallback();
   nlohmann::json profile = {{"calibration", root.at("calibration")},
                             {"camera_mount", root.at("camera_mount")},
                             {"image_size", {root["camera"]["width"], root["camera"]["height"]}},
@@ -785,37 +722,35 @@ void testDroneCalibration() {
   profile["calibration"]["camera_matrix"][0][0] = 512.345678901234;
   profile["calibration"]["distortion_coefficients"] = {0.12, -0.03, 0.001, -0.002, 0.01};
   profile["camera_mount"]["position_drone_flu_m"] = {0.046, 0.002, -0.017};
+  profile["camera_mount"]["camera_to_drone_rotation"] = {{1,0,0},{0,1,0},{0,0,1}};
   write(profile_path, profile);
-  auto loaded = flsloc::loadApplicationConfig(config_path, true);
-  require(!loaded.camera_mount_patch.applied && loaded.drone_calibration.applied &&
+  auto loaded = flsloc::loadApplicationConfig(config_path);
+  require(loaded.drone_calibration.applied &&
               loaded.drone_calibration.file == profile_path &&
               loaded.calibration.camera_matrix.at<double>(0, 0) == 512.345678901234 &&
               loaded.calibration.distortion.at<double>(0) == 0.12 &&
               loaded.camera_position_drone_flu[0] == 0.046 &&
+              cv::norm(loaded.camera_to_drone_rotation - cv::Matx33d::eye()) == 0.0 &&
               nlohmann::json::parse(loaded.drone_calibration.snapshot_json) == profile,
-          "combined profile must supply mount and intrinsics without reading legacy files");
-  { std::ofstream output(legacy_path); output << "{broken"; }
-  require(flsloc::loadApplicationConfig(config_path, true).drone_calibration.applied,
-          "valid combined profile must ignore corrupt legacy mount");
-  std::filesystem::remove(legacy_path);
-  root["camera_mount_patch"] = {{"file", "missing_required_legacy.json"}, {"required", true}};
+          "combined profile must supply mount and intrinsics together");
+  // Even when the home profile exists, an omitted path must use inline settings.
+  root.erase("drone_calibration");
   write(config_path, root);
-  require(flsloc::loadApplicationConfig(config_path, true).drone_calibration.applied,
-          "valid combined profile must ignore missing required legacy mount");
-  root.erase("camera_mount_patch");
-  write(config_path, root);
-  write(legacy_path, legacy);
-  require(!flsloc::loadApplicationConfig(config_path).drone_calibration.applied,
-          "offline loading silently discovered a drone profile");
-  root["drone_calibration"] = nullptr;
-  write(config_path, root);
-  loaded = flsloc::loadApplicationConfig(config_path, true);
-  require(!loaded.drone_calibration.applied && loaded.camera_position_drone_flu[0] == 0.02,
-          "explicit null must disable combined profile while preserving legacy compatibility");
+  require_fallback();
+  for (const auto &setting : {nlohmann::json(nullptr), nlohmann::json::object(),
+                             nlohmann::json{{"file", ""}}}) {
+    root["drone_calibration"] = setting;
+    write(config_path, root);
+    require_fallback();
+  }
   root["drone_calibration"] = {{"file", ".config/fls-localizer/calibration.json"}};
   write(config_path, root);
   require(flsloc::loadApplicationConfig(config_path).drone_calibration.applied,
-          "explicit relative combined profile must load in offline mode");
+          "explicit relative combined profile must resolve beside the config");
+  root["drone_calibration"]["file"] = profile_path.string();
+  write(config_path, root);
+  require(flsloc::loadApplicationConfig(config_path).drone_calibration.applied,
+          "absolute combined profile path must load");
   auto invalid = profile;
   invalid.erase("camera_mount");
   write(profile_path, invalid);
@@ -848,20 +783,13 @@ void testDroneCalibration() {
   { std::ofstream output(profile_path); output << "{broken"; }
   require(rejected(), "malformed combined profile must fail startup");
   std::filesystem::remove(profile_path);
-  require(rejected(), "missing required combined profile must fail startup");
-  root["drone_calibration"]["required"] = false;
-  write(config_path, root);
-  require(!flsloc::loadApplicationConfig(config_path).drone_calibration.applied,
-          "missing optional explicit profile must preserve base settings");
+  require_fallback();
   std::filesystem::remove_all(directory);
 }
 
 void testLogIncludesGitVersion(const flsloc::GridMap &map) {
   flsloc::ApplicationConfig config = testConfig();
   config.calibration.distortion.at<double>(0) = 0.21584588210408298;
-  config.camera_mount_patch.applied = true;
-  config.camera_mount_patch.file = "/device/camera_mount.json";
-  config.camera_mount_patch.snapshot_json = R"({"calibration_id":"log-test"})";
   config.drone_calibration.applied = true;
   config.drone_calibration.file = "/device/calibration.json";
   config.drone_calibration.snapshot_json = R"({"provenance":{"id":"joint-log-test"}})";
@@ -961,14 +889,10 @@ void testLogIncludesGitVersion(const flsloc::GridMap &map) {
               calibration.at("distortion_coefficients").at(0).get<double>() ==
               config.calibration.distortion.at<double>(0),
           "final log lost the actual camera intrinsics used for localization");
-  const auto &mount_patch = log.at("config").at("camera_mount_patch");
   const auto &mount = log.at("config").at("camera_mount");
-  require(mount_patch.at("applied").get<bool>() &&
-              mount_patch.at("file") == "/device/camera_mount.json" &&
-              mount_patch.at("snapshot").at("calibration_id") == "log-test" &&
-              mount.at("position_drone_flu_m").at(2).get<double>() == config.camera_position_drone_flu[2] &&
+  require(mount.at("position_drone_flu_m").at(2).get<double>() == config.camera_position_drone_flu[2] &&
               mount.at("camera_to_drone_rotation").at(0).at(1).get<double>() == config.camera_to_drone_rotation(0, 1),
-          "final log lost patch provenance or effective mount values");
+          "final log lost effective mount values");
   const auto &profile = log.at("config").at("drone_calibration");
   require(profile.at("applied").get<bool>() &&
               profile.at("file") == "/device/calibration.json" &&
@@ -1254,7 +1178,6 @@ int main() try {
   testOutputTag();
   testMaximumPosePointsBound();
   testAttitudePredictionConfig();
-  testCameraMountPatch();
   testDroneCalibration();
   testLogIncludesGitVersion(map);
   testCameraSequenceProgress();

@@ -45,8 +45,14 @@ Production has one option:
 ./build/fls_localizer --config config/localizer.json
 ```
 
-Production automatically discovers the optional combined per-drone profile
-**`~/.config/fls-localizer/calibration.json`**. For user `fls` this is
+`config/localizer.json` selects the optional combined per-drone profile through:
+
+```json
+"drone_calibration": {"file": "~/.config/fls-localizer/calibration.json"}
+```
+
+The checked-in config selects **`~/.config/fls-localizer/calibration.json`**.
+For user `fls` this is
 `/home/fls/.config/fls-localizer/calibration.json`, outside the Git checkout.
 Store both sections in this one file:
 
@@ -66,34 +72,28 @@ Store both sections in this one file:
 
 These numbers illustrate the schema; use the accepted calibration output.
 The file replaces intrinsics and mount together. A complete valid profile is
-authoritative and bypasses legacy mount files entirely. `image_size`, when
-present, must match the configured sensor mode. Both sections are validated
+authoritative. `image_size`, when present, must match the configured sensor mode.
+Both sections are validated
 before either is applied; a malformed or partial profile stops startup.
 
 The joint calibration workflow's `--deploy` option writes this profile with
-backup, atomic replacement and independent readback. No edit to `localizer.json`
-is needed. Rebuild/install this version of the native executable on the drone
+backup, atomic replacement and independent readback. The configured path must
+select that deployment destination. Rebuild/install this version of the native
+executable on the drone
 before deployment. Values are loaded at the next normal localizer start;
 writing the file does not change an already-running process.
 
-When the default profile is absent, shared defaults and the existing optional
-`~/.config/fls-localizer/camera_mount.json` mount-only mechanism remain available.
-The existing `camera_mount_patch` object selects a legacy file; null disables
-that legacy mechanism. A legacy file is read only when no combined profile is
-applied, so obsolete legacy files cannot block a valid combined profile.
-
-For explicit/offline profile selection, a config can contain
-`"drone_calibration": {"file": "/path/to/calibration.json", "required": true}`.
-Relative paths resolve beside that config; `~/` uses the process user's home.
-`"drone_calibration": null` disables combined-profile discovery.
-Offline `fls_localizer_video` never discovers home-directory device files
-implicitly; select them explicitly to reproduce a recording.
+When the selected file is absent, or `drone_calibration` is omitted or null,
+or its `file` is omitted or empty, the inline `calibration` and `camera_mount`
+sections in the localizer config are used together. No other device files are
+searched. Relative paths resolve beside the config; `~/` uses the process user's
+home. Production and offline `fls_localizer_video` follow the same selection
+rules; offline configs without a path use their inline settings.
 
 Startup prints combined-profile status/path and effective mount. Logs snapshot
-`config.drone_calibration` (`applied`, `file`, `required`, `snapshot`), legacy
-`config.camera_mount_patch`, and the exact effective `config.calibration` and
-`config.camera_mount`. Profile edits during a run cannot change its startup
-snapshot. `config.marker_grid.camera_offset_drone` remains for older readers.
+`config.drone_calibration` (`applied`, `file`, `snapshot`), and the exact effective
+`config.calibration` and `config.camera_mount`. Profile edits during a run cannot
+change its startup snapshot. `config.marker_grid.camera_offset_drone` remains for older readers.
 
 The log also snapshots the effective `config.calibration.camera_matrix` and
 `config.calibration.distortion_coefficients`. Offline mount calibration reads

@@ -110,68 +110,16 @@ void readCalibration(const json &value, ApplicationConfig &config) {
   config.calibration.distortion = cv::Mat(distortion, true);
 }
 
-void applyCameraMountPatch(const json &root, const std::filesystem::path &config_path,
-                          bool use_device_mount_patch, ApplicationConfig &config) {
-  auto &patch = config.camera_mount_patch;
-  if (root.contains("camera_mount_patch")) {
-    const auto &setting = root.at("camera_mount_patch");
-    if (setting.is_null()) {
-      return; // Explicitly disable per-device discovery, including production.
-    }
-    patch.file = setting.at("file").get<std::string>();
-    patch.required = setting.value("required", true);
-  } else if (use_device_mount_patch) {
-    patch.file = "~/.config/fls-localizer/camera_mount.json";
-  } else {
-    return;
-  }
-  if (patch.file.empty()) {
-    throw std::runtime_error("camera_mount_patch.file must not be empty");
-  }
-  const std::string file = patch.file.string();
-  if (file.starts_with("~/")) {
-    const char *home = std::getenv("HOME");
-    if (home == nullptr || *home == '\0') {
-      throw std::runtime_error("HOME is required to resolve camera_mount_patch.file");
-    }
-    patch.file = std::filesystem::path(home) / file.substr(2);
-  } else if (patch.file.is_relative()) {
-    patch.file = config_path.parent_path() / patch.file;
-  }
-  patch.file = std::filesystem::absolute(patch.file).lexically_normal();
-  if (!std::filesystem::exists(patch.file) && !patch.required) {
-    return;
-  }
-  try {
-    std::ifstream input(patch.file);
-    if (!input) {
-      throw std::runtime_error("unable to open file");
-    }
-    const json content = json::parse(input);
-    readCameraMount(content.at("camera_mount"), config);
-    patch.snapshot_json = content.dump();
-    patch.applied = true;
-  } catch (const std::exception &error) {
-    throw std::runtime_error("camera mount patch " + patch.file.string() +
-                             ": " + error.what());
-  }
-}
-
 void applyDroneCalibration(const json &root, const std::filesystem::path &config_path,
-                           bool use_device_files, ApplicationConfig &config) {
-  auto &profile = config.drone_calibration;
-  if (root.contains("drone_calibration")) {
-    const auto &setting = root.at("drone_calibration");
-    if (setting.is_null()) return;
-    profile.file = setting.at("file").get<std::string>();
-    profile.required = setting.value("required", true);
-  } else if (use_device_files) {
-    profile.file = "~/.config/fls-localizer/calibration.json";
-  } else {
+                           ApplicationConfig &config) {
+  if (!root.contains("drone_calibration") || root.at("drone_calibration").is_null()) {
     return;
   }
+  const auto &setting = root.at("drone_calibration");
+  auto &profile = config.drone_calibration;
+  profile.file = setting.value("file", std::string{});
   if (profile.file.empty()) {
-    throw std::runtime_error("drone_calibration.file must not be empty");
+    return;
   }
   const std::string file = profile.file.string();
   if (file.starts_with("~/")) {
@@ -184,7 +132,7 @@ void applyDroneCalibration(const json &root, const std::filesystem::path &config
     profile.file = config_path.parent_path() / profile.file;
   }
   profile.file = std::filesystem::absolute(profile.file).lexically_normal();
-  if (!std::filesystem::exists(profile.file) && !profile.required) return;
+  if (!std::filesystem::exists(profile.file)) return;
   try {
     std::ifstream input(profile.file);
     if (!input) throw std::runtime_error("unable to open file");
@@ -243,8 +191,7 @@ void applyOutputTag(OutputConfig &output, const std::string &tag) {
   output.json_name = tagged_name(output.json_name);
 }
 
-ApplicationConfig loadApplicationConfig(const std::filesystem::path &path,
-                                        bool use_device_mount_patch) {
+ApplicationConfig loadApplicationConfig(const std::filesystem::path &path) {
   std::ifstream input(path);
   if (!input) {
     throw std::runtime_error("unable to open configuration: " + path.string());
@@ -341,12 +288,7 @@ ApplicationConfig loadApplicationConfig(const std::filesystem::path &path,
   }
 
   readCameraMount(root.at("camera_mount"), config);
-  applyDroneCalibration(root, path, use_device_mount_patch, config);
-  // A valid combined profile is authoritative. Obsolete legacy files must not
-  // block startup or mix a previous mounting transform with new intrinsics.
-  if (!config.drone_calibration.applied) {
-    applyCameraMountPatch(root, path, use_device_mount_patch, config);
-  }
+  applyDroneCalibration(root, path, config);
 
   config.grid_file = root.at("grid_file").get<std::string>();
   if (config.grid_file.is_relative()) {

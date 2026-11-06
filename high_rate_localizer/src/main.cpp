@@ -49,11 +49,8 @@ Arguments parse(int argc, char **argv) {
 int main(int argc, char **argv) try {
   const Arguments arguments = parse(argc, argv);
   flsloc::ApplicationConfig config =
-      flsloc::loadApplicationConfig(arguments.config, true);
-  std::cout << "camera_mount_patch_applied="
-            << (config.camera_mount_patch.applied ? "true" : "false")
-            << " file=" << config.camera_mount_patch.file << '\n'
-            << "drone_calibration_applied="
+      flsloc::loadApplicationConfig(arguments.config);
+  std::cout << "drone_calibration_applied="
             << (config.drone_calibration.applied ? "true" : "false")
             << " file=" << config.drone_calibration.file << '\n'
             << "camera_position_drone_flu_m="
