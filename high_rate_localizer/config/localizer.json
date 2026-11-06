@@ -64,8 +64,8 @@
     ]
   },
   "detector": {
-    "intensity_threshold": 160,
-    "minimum_area": 8,
+    "intensity_threshold": 128,
+    "minimum_area": 6,
     "maximum_area": 6500,
     "minimum_fill_ratio": 0.45,
     "maximum_candidates": 64
