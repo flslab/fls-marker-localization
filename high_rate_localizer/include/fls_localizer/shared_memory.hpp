@@ -123,6 +123,9 @@ public:
   SharedMemory &operator=(const SharedMemory &) = delete;
 
   ControllerInput readController(double camera_timestamp) const;
+  // Production waits only for a late bracketing sample, never extrapolates.
+  ControllerInput readControllerAligned(double camera_timestamp,
+                                       double maximum_wait_s) const;
   void publish(const FrameResult &result);
 
 private:

@@ -3,6 +3,11 @@
 Quantifies the 3d position and orientation of a 3D marker consisting of 4 points. Made for Raspberry Pi and Raspberry Camera.
 This software is a part of the FLS prototype software stack: https://github.com/flyinglightspeck/FLS.
 
+The repository also contains the lightweight Raspberry Pi Zero W controller
+for the two-WS2811 physical marker tiles. See
+[`marker_grid_controller/README.md`](marker_grid_controller/README.md) for its
+wiring, deployment, and orchestrator-only network protocol.
+
 ## Install Dependencies
 
 ```

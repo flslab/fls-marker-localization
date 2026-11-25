@@ -4,12 +4,14 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <fcntl.h>
 #include <optional>
 #include <stdexcept>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -108,8 +110,10 @@ public:
         attitude_prediction_enabled_(attitude_prediction_enabled),
         maximum_attitude_prediction_s_(maximum_attitude_prediction_s) {
     descriptor_ = shm_open(name.c_str(), O_CREAT | O_RDWR, 0660);
-    if (descriptor_ < 0 ||
-        ftruncate(descriptor_, sizeof(shared::Layout)) != 0) {
+    struct stat info{};
+    if (descriptor_ < 0 || fstat(descriptor_, &info) != 0 ||
+        (info.st_size < static_cast<off_t>(sizeof(shared::Layout)) &&
+         ftruncate(descriptor_, sizeof(shared::Layout)) != 0)) {
       throw std::runtime_error("unable to create shared memory " + name);
     }
     void *mapping = mmap(nullptr, sizeof(shared::Layout),
@@ -308,6 +312,34 @@ public:
     return result;
   }
 
+  ControllerInput readControllerAligned(double camera_timestamp,
+                                       double maximum_wait_s) const {
+    using Clock = std::chrono::steady_clock;
+    if (!std::isfinite(maximum_wait_s) || maximum_wait_s < 0 || maximum_wait_s > 0.012)
+      throw std::invalid_argument("attitude alignment wait must be in [0, 0.012] seconds");
+    const auto started = Clock::now();
+    const auto deadline = started + std::chrono::duration<double>(maximum_wait_s);
+    ControllerInput result = readController(camera_timestamp);
+    const bool required = attitude_prediction_enabled_ && maximum_wait_s > 0;
+    const auto aligned = [&]() {
+      return result.attitude_valid &&
+          (result.attitude_prediction_applied ||
+           std::abs(result.timestamp - camera_timestamp) <= 1e-9);
+    };
+    // No wait can repair an invalid sample, a reset boundary, an excessive
+    // existing bracket gap, or a camera time older than the available history.
+    while (required && result.attitude_valid && !aligned() &&
+           result.timestamp < camera_timestamp && Clock::now() < deadline) {
+      std::this_thread::sleep_for(std::chrono::microseconds(100));
+      result = readController(camera_timestamp);
+    }
+    result.alignment.required = required;
+    result.alignment.available = aligned();
+    result.alignment.wait_s = std::chrono::duration<double>(Clock::now() - started).count();
+    result.alignment.wait_timed_out = required && !aligned() && Clock::now() >= deadline;
+    return result;
+  }
+
   void publish(const FrameResult &result) {
     const PoseSolution &pose = result.sharedMemoryPose(pose_technique_);
     shared::LocalizerBlock block{};
@@ -399,6 +431,10 @@ SharedMemory::SharedMemory(const std::string &name,
 SharedMemory::~SharedMemory() = default;
 ControllerInput SharedMemory::readController(double camera_timestamp) const {
   return impl_->readController(camera_timestamp);
+}
+ControllerInput SharedMemory::readControllerAligned(double camera_timestamp,
+                                                  double maximum_wait_s) const {
+  return impl_->readControllerAligned(camera_timestamp, maximum_wait_s);
 }
 void SharedMemory::publish(const FrameResult &result) {
   impl_->publish(result);

@@ -22,6 +22,9 @@ struct CameraConfig {
   double analogue_gain = 1.0;
   double brightness = 0.0;
   double contrast = 1.0;
+  // Optional calibrated fixed capture phase correction. Keep zero for the
+  // deployed global-shutter camera unless independently measured.
+  double timestamp_offset_us = 0.0;
 };
 
 struct CalibrationConfig {
@@ -58,6 +61,7 @@ struct TrackingConfig {
   double maximum_attitude_age_s = 0.012;
   bool attitude_prediction_enabled = false;
   double maximum_attitude_prediction_s = 0.012;
+  double attitude_alignment_wait_s = 0.006;
 };
 
 struct OutputConfig {

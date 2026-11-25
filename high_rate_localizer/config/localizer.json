@@ -8,7 +8,8 @@
     "exposure_time_us": 3000,
     "analogue_gain": 1.0,
     "brightness": 0.0,
-    "contrast": 1.0
+    "contrast": 1.0,
+    "timestamp_offset_us": 0.0
   },
   "drone_calibration": {
     "file": "~/.config/fls-localizer/calibration.json"
@@ -89,7 +90,8 @@
     "lost_after_frames": 30,
     "maximum_attitude_age_s": 0.012,
     "attitude_prediction_enabled": true,
-    "maximum_attitude_prediction_s": 0.012
+    "maximum_attitude_prediction_s": 0.012,
+    "attitude_alignment_wait_s": 0.006
   },
   "output": {
     "directory": "logs/high_rate_localizer",

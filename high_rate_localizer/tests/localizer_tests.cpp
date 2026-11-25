@@ -25,6 +25,7 @@
 #include <stdexcept>
 #include <string>
 #include <sys/mman.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 namespace {
@@ -396,6 +397,20 @@ void testTakeoffAttitudeAcquisition(const flsloc::GridMap &map) {
   require(tracked.trackingPose().accepted && tracked.matched.size() == 4,
           "normal projection gate did not retain the acquired takeoff pose");
 
+  controller.alignment.required = true;
+  controller.alignment.available = false;
+  controller.timestamp += 1.0 / 120.0;
+  const auto unaligned = pipeline.process(
+      ++frame, controller.timestamp, static_markers, controller);
+  require(unaligned.status == "attitude_alignment_unavailable" &&
+              !unaligned.poses.shared_attitude.accepted && !unaligned.poses.pnp.accepted,
+          "fresh but unaligned attitude reached the pose publication path");
+  controller.alignment.available = true;
+  controller.timestamp += 1.0 / 120.0;
+  require(pipeline.process(++frame, controller.timestamp, static_markers, controller)
+              .trackingPose().accepted,
+          "tracking did not recover with a camera-aligned attitude");
+
   const double stale_attitude_timestamp = controller.timestamp;
   double camera_timestamp = stale_attitude_timestamp;
   flsloc::FrameResult lost;
@@ -672,6 +687,34 @@ void testAttitudePredictionConfig() {
     }
     require(rejected, "invalid attitude prediction bound was accepted");
   }
+  config["tracking"]["maximum_attitude_prediction_s"] = 0.012;
+  require(std::abs(loaded.tracking.attitude_alignment_wait_s - 0.006) < 1e-12,
+          "old configs did not inherit the native bounded-wait default");
+  const auto rejected_config = [&]() {
+    write();
+    try { static_cast<void>(flsloc::loadApplicationConfig(path)); }
+    catch (const std::exception &) { return true; }
+    return false;
+  };
+  for (double wait : {-0.001, 0.013}) {
+    config["tracking"]["attitude_alignment_wait_s"] = wait;
+    require(rejected_config(), "unbounded or negative alignment wait was accepted");
+  }
+  config["tracking"]["attitude_alignment_wait_s"] = 0.006;
+  config["camera"]["exposure_time_us"] = 0;
+  require(rejected_config(), "zero manual exposure was accepted");
+  config["camera"]["exposure_time_us"] = 9000;
+  require(rejected_config(), "exposure longer than frame interval was accepted");
+  config["camera"]["exposure_time_us"] = 3000;
+  config["camera"]["analogue_gain"] = 0;
+  require(rejected_config(), "zero manual analogue gain was accepted");
+  config["camera"]["analogue_gain"] = 1;
+  config["camera"]["timestamp_offset_us"] = 9000;
+  require(rejected_config(), "capture phase offset outside a frame was accepted");
+  config["camera"]["timestamp_offset_us"] = 250;
+  write();
+  require(flsloc::loadApplicationConfig(path).camera.timestamp_offset_us == 250,
+          "calibrated capture phase offset was not loaded");
   std::filesystem::remove(path);
 }
 
@@ -815,6 +858,9 @@ void testLogIncludesGitVersion(const flsloc::GridMap &map) {
     frame.attitude_alignment.bracket_timestamps = {10.0,10.02};
     frame.attitude_alignment.bracket_sequences = {11,12};
     frame.attitude_alignment.interpolation_alpha = 0.5;
+    frame.attitude_alignment.required = true;
+    frame.attitude_alignment.available = true;
+    frame.attitude_alignment.wait_s = 0.002;
     output.submit(frame);
     flsloc::FrameTiming timing;
     timing.buffer_timestamp_ns = 9'007'199'254'740'993ULL;
@@ -822,6 +868,10 @@ void testLogIncludesGitVersion(const flsloc::GridMap &map) {
     timing.exposure_time_us = 2500;
     timing.frame_duration_us = 8333;
     timing.analogue_gain = 1.25;
+    timing.capture_monotonic_ns = 10'010'000'000LL;
+    timing.boottime_minus_monotonic_ns = 1000;
+    timing.clock_pair_uncertainty_ns = 200;
+    timing.manual_controls_match = true;
     timing.buffer_sequence = 102;
     timing.request_sequence = 57;
     timing.host_completed_monotonic_ns = 10'010'000'000ULL;
@@ -853,6 +903,11 @@ void testLogIncludesGitVersion(const flsloc::GridMap &map) {
   require(log.at("frames").at(0).at("camera_timing").is_null(),
           "a frame without native timing must not acquire fabricated metadata");
   const auto &camera_timing = log.at("frames").at(1).at("camera_timing");
+  require(camera_timing.at("capture_monotonic_ns") == 10'010'000'000LL &&
+              camera_timing.at("runtime_timestamp_source") == "sensor_exposure_midpoint_monotonic" &&
+              camera_timing.at("manual_controls_match") == true &&
+              camera_timing.at("boottime_minus_monotonic_ns") == 1000,
+          "capture timestamp and manual-control verification were not logged");
   require(camera_timing.at("buffer_timestamp_ns").get<std::uint64_t>() == 9'007'199'254'740'993ULL &&
               camera_timing.at("sensor_timestamp_ns").get<std::int64_t>() == 9'007'199'253'240'993LL &&
               camera_timing.at("exposure_time_us") == 2500 &&
@@ -899,6 +954,11 @@ void testLogIncludesGitVersion(const flsloc::GridMap &map) {
               profile.at("snapshot").at("provenance").at("id") == "joint-log-test",
           "final log lost combined drone calibration provenance");
   const auto &alignment = log.at("frames").at(0).at("blob_grid_localization").at("shared_attitude");
+  require(alignment.at("alignment_required") == true &&
+              alignment.at("alignment_available") == true &&
+              alignment.at("alignment_wait_s") == 0.002 &&
+              alignment.at("alignment_wait_timed_out") == false,
+          "bounded-wait alignment diagnostics were not logged");
   require(alignment.at("quaternion_xyzw").at(2).get<double>() == 0.123456789 &&
               alignment.at("ekf_reset_generation").get<int>() == 42 &&
               alignment.at("bracket_sequences").at(1).get<int>() == 12 &&
@@ -933,6 +993,46 @@ void testCameraSequenceProgress() {
   const auto rollover = wrapped.observe(1);
   require(rollover.delta == 3 && rollover.wrapped && !rollover.reset_or_out_of_order,
           "valid uint32 counter rollover must retain its small forward delta");
+}
+
+void testExposureTimingAndManualControls() {
+  flsloc::FrameTiming timing;
+  timing.sensor_timestamp_ns = 12'000'000'000LL;
+  timing.exposure_time_us = 3000;
+  timing.analogue_gain = 1.0;
+  timing.boottime_minus_monotonic_ns = 2'000'000'000LL;
+  timing.clock_pair_uncertainty_ns = 500;
+  require(flsloc::exposureMidpointMonotonicNs(timing) == 10'001'500'000LL,
+          "sensor exposure midpoint was not mapped from BOOTTIME to MONOTONIC");
+  timing.timestamp_offset_us = 250.5;
+  require(flsloc::exposureMidpointMonotonicNs(timing) == 10'001'750'500LL,
+          "calibrated row timing offset was not applied");
+  require(flsloc::manualCameraControlsMatch(timing, 3000, 1.0),
+          "matching manual metadata was rejected");
+  timing.exposure_time_us = 2992;
+  timing.analogue_gain = 1.01;
+  require(flsloc::manualCameraControlsMatch(timing, 3000, 1.0),
+          "normal sensor quantization was rejected");
+  timing.exposure_time_us = 8089;
+  timing.analogue_gain = 8.0;
+  require(!flsloc::manualCameraControlsMatch(timing, 3000, 1.0),
+          "the observed automatic exposure/gain regression was accepted");
+  timing.exposure_time_us.reset();
+  require(!flsloc::exposureMidpointMonotonicNs(timing) &&
+              !flsloc::manualCameraControlsMatch(timing, 3000, 1.0),
+          "missing actual exposure was replaced with the requested exposure");
+  timing.exposure_time_us = 3000;
+  timing.sensor_timestamp_ns.reset();
+  require(!flsloc::exposureMidpointMonotonicNs(timing),
+          "missing SensorTimestamp acquired a fabricated capture time");
+  timing.sensor_timestamp_ns = 12'000'000'000LL;
+  timing.clock_pair_uncertainty_ns = 100'001;
+  require(!flsloc::exposureMidpointMonotonicNs(timing),
+          "an uncertain clock pair was accepted");
+  timing.clock_pair_uncertainty_ns = 0;
+  timing.boottime_minus_monotonic_ns.reset();
+  require(!flsloc::exposureMidpointMonotonicNs(timing),
+          "BOOTTIME and MONOTONIC epochs were assumed equal");
 }
 
 void testSharedMemoryPoseSelection() {
@@ -1116,6 +1216,45 @@ void testClosestSharedAttitude() {
               std::abs(yawDegrees(excessive_gap) - 20.0) < 1e-5,
           "attitude interpolation crossed an excessive sample gap");
 
+  const auto gap = predicted.readControllerAligned(10.001, 0.006);
+  require(gap.alignment.required && !gap.alignment.available,
+          "a large bracket gap was accepted by the production alignment path");
+  writeAttitude(0, 1, 10.0, 0.0, 42, false);
+  writeAttitude(1, 2, 10.005, 5.0, 42, false);
+  const auto fast_pair = predicted.readControllerAligned(10.0025, 0.006);
+  require(fast_pair.alignment.available && fast_pair.attitude_prediction_applied &&
+              std::abs(yawDegrees(fast_pair) - 2.5) < 1e-5,
+          "200 Hz attitudes were not interpolated to an exposure between samples");
+  const auto exact = predicted.readControllerAligned(10.005, 0.006);
+  require(exact.alignment.available && !exact.attitude_prediction_applied,
+          "an exact capture-time sample unnecessarily required a pair");
+  const auto fallback = predicted.readControllerAligned(10.010, 0.0);
+  require(!fallback.alignment.required && !fallback.attitude_prediction_applied,
+          "zero wait no longer preserves optional nearest-sample behavior");
+
+  const pid_t writer = fork();
+  require(writer >= 0, "could not fork delayed attitude producer");
+  if (writer == 0) {
+    usleep(1000);
+    writeAttitude(2, 3, 10.010, 10.0, 42, false);
+    _exit(0);
+  }
+  const auto late = predicted.readControllerAligned(10.0075, 0.012);
+  int child_status = 0;
+  waitpid(writer, &child_status, 0);
+  require(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0 &&
+              late.alignment.available && late.attitude_prediction_applied &&
+              std::abs(yawDegrees(late) - 7.5) < 1e-5,
+          "production reader did not wait for a late bracketing attitude");
+  const auto timeout = predicted.readControllerAligned(10.015, 0.001);
+  require(timeout.alignment.required && !timeout.alignment.available &&
+              timeout.alignment.wait_timed_out && !timeout.attitude_prediction_applied,
+          "missing future attitude was extrapolated or mislabeled as aligned");
+  writeAttitude(2, 3, 10.010, 10.0, 43, false);
+  const auto reset_wait = predicted.readControllerAligned(10.0075, 0.006);
+  require(!reset_wait.alignment.available && !reset_wait.attitude_prediction_applied,
+          "bounded-wait alignment crossed an EKF reset boundary");
+
   flsloc::FrameResult frame;
   frame.frame_id = 12;
   frame.timestamp = 100.0;
@@ -1181,6 +1320,7 @@ int main() try {
   testDroneCalibration();
   testLogIncludesGitVersion(map);
   testCameraSequenceProgress();
+  testExposureTimingAndManualControls();
   testSharedMemoryPoseSelection();
   testSharedMemoryAbiForYawCorrection();
   testClosestSharedAttitude();

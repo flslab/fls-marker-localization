@@ -75,7 +75,8 @@ int main(int argc, char **argv) try {
   std::uint64_t frame_id = 0;
   while (running.load() && camera.read(gray, timestamp, camera_timing)) {
     const flsloc::ControllerInput controller =
-        shared_memory.readController(timestamp);
+        shared_memory.readControllerAligned(
+            timestamp, config.tracking.attitude_alignment_wait_s);
     flsloc::FrameResult result =
         pipeline.process(frame_id, timestamp, gray, controller);
     result.camera_timing = camera_timing;

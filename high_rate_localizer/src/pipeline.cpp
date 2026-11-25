@@ -369,7 +369,11 @@ FrameResult LocalizationPipeline::process(std::uint64_t frame_id,
                                 (controller.timestamp <= 0.0 ||
                                  std::abs(timestamp - controller.timestamp) <=
                                      config_.tracking.maximum_attitude_age_s);
-    if (!attitude_fresh || !last_pose_.valid) {
+    if (controller.alignment.required && !controller.alignment.available) {
+      ++invalid_frames_;
+      result.status = "attitude_alignment_unavailable";
+      result.message = "no same-generation attitude bracket for camera exposure time";
+    } else if (!attitude_fresh || !last_pose_.valid) {
       ++invalid_frames_;
       result.status = "attitude_unavailable";
       result.message = "shared EKF quaternion is invalid or stale";
