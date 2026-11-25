@@ -47,6 +47,16 @@ tile uses two WS2811 values:
 - chip 2 G/B: HyperGrid, on at `--hypergrid-level` for every tile by default,
   or only for tiles selected with `--hypergrid-tiles`
 
+Maps can optionally include `wiring.physical_layout: [4,4]` and
+`wiring.tile_order`, an ordered list of 16 entries. Each entry is an active
+logical `[i,j]` tile address or `null` for an inactive physical chain slot.
+Every active tile must appear exactly once. This explicit list overrides the
+default serpentine sorting and preserves all physical chain positions when
+using a smaller active layout on the same installation. The controller sends
+32 WS2811 values, turning both chips of every inactive tile fully off.
+Status and mode responses report `physical_tile_count`, including inactive
+slots. Maps without `wiring` retain their existing serpentine behavior.
+
 The UDP commands used by the orchestrator are:
 
 ```json

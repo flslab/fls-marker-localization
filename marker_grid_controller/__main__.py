@@ -65,7 +65,47 @@ def load_grid(path):
     # across each fixed-x row by changing j, then enter the next x row from
     # the same side. Alternating the y direction avoids a long wire from the
     # end of one row back to the start of the next.
+    if 'wiring' in grid:
+        wiring = grid['wiring']
+        order = wiring['tile_order']
+        shape = wiring['physical_layout']
+        if (not isinstance(shape, list) or len(shape) != 2
+                or any(type(v) is not int or v <= 0 for v in shape)
+                or not isinstance(order, list) or len(order) != shape[0] * shape[1]):
+            raise ValueError('wiring must specify one tile_order entry per physical tile')
+        by_coordinate = dict(tiles)
+        used, ordered = set(), []
+        for coordinate in order:
+            if coordinate is None:
+                ordered.append((None, None))
+                continue
+            if (not isinstance(coordinate, list) or len(coordinate) != 2
+                    or any(type(v) is not int for v in coordinate)):
+                raise ValueError('wiring.tile_order entries must be [i,j] or null')
+            key = tuple(coordinate)
+            if key in used or key not in by_coordinate:
+                raise ValueError('wiring.tile_order contains a duplicate or unknown tile')
+            used.add(key)
+            ordered.append((key, by_coordinate[key]))
+        if used != set(by_coordinate):
+            raise ValueError('wiring.tile_order must include every active tile')
+        return ordered, bit_time, payload_bits + len(delimiter)
     return snake_order_tiles(tiles), bit_time, payload_bits + len(delimiter)
+
+
+def frame_values(tiles, modes, bit, mygrid_level, hypergrid_brightness, enabled_tiles=None):
+    """Emit every physical chain slot, clearing both chips on inactive tiles."""
+    values = []
+    for coordinate, patterns in tiles:
+        if coordinate is None:
+            values.extend([(0, 0, 0), (0, 0, 0)])
+            continue
+        mode = modes[coordinate]
+        levels = ([0] * 4 if mode == 'off' else [mygrid_level] * 4
+                  if mode == 'static' else [mygrid_level * p[bit] for p in patterns])
+        brightness = hypergrid_level(coordinate, enabled_tiles, hypergrid_brightness)
+        values.extend([tuple(levels[:3]), (levels[3], brightness, brightness)])
+    return values
 
 
 def file_sha256(path):
@@ -76,7 +116,7 @@ def file_sha256(path):
     return digest.hexdigest()
 
 
-def response(request, modes, changed=0, grid_sha256=None):
+def response(request, modes, changed=0, grid_sha256=None, physical_tile_count=None):
     result = {
         "version": 1,
         "request_id": request.get("request_id"),
@@ -89,6 +129,8 @@ def response(request, modes, changed=0, grid_sha256=None):
     }
     if grid_sha256 is not None:
         result["grid_sha256"] = grid_sha256
+    if physical_tile_count is not None:
+        result['physical_tile_count'] = physical_tile_count
     return result
 
 
@@ -162,7 +204,7 @@ def main():
 
     grid_sha256 = file_sha256(args.grid)
     tiles, bit_time, packet_length = load_grid(args.grid)
-    modes = {coordinate: args.initial_mode for coordinate, _ in tiles}
+    modes = {coordinate: args.initial_mode for coordinate, _ in tiles if coordinate is not None}
     enabled_hypergrid_tiles = (
         None
         if args.hypergrid_tiles is None
@@ -204,24 +246,10 @@ def main():
         return
 
     def draw(bit):
-        for index, (coordinate, patterns) in enumerate(tiles):
-            mode = modes[coordinate]
-            if mode == "off":
-                levels = [0, 0, 0, 0]
-            elif mode == "static":
-                levels = [args.mygrid_level] * 4
-            else:
-                levels = [args.mygrid_level * pattern[bit] for pattern in patterns]
-
-            tile_hypergrid_level = hypergrid_level(
-                coordinate, enabled_hypergrid_tiles, args.hypergrid_level
-            )
-            pixels[index * 2] = tuple(levels[:3])
-            pixels[index * 2 + 1] = (
-                levels[3],
-                tile_hypergrid_level,
-                tile_hypergrid_level,
-            )
+        values = frame_values(tiles, modes, bit, args.mygrid_level,
+                              args.hypergrid_level, enabled_hypergrid_tiles)
+        for index, value in enumerate(values):
+            pixels[index] = value
         pixels.show()
 
     running = True
@@ -265,7 +293,8 @@ def main():
                     elif request["command"] != "status":
                         raise ValueError("invalid command")
                     reply = response(
-                        request, modes, changed, grid_sha256=grid_sha256
+                        request, modes, changed, grid_sha256=grid_sha256,
+                        physical_tile_count=len(tiles),
                     )
                 except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
                     reply = {
