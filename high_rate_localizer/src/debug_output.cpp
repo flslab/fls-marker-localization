@@ -376,12 +376,10 @@ json DebugOutput::metadata() const {
           {"maximum_attitude_prediction_s",
            config_.tracking.maximum_attitude_prediction_s},
           {"maximum_attitude_age_s", config_.tracking.maximum_attitude_age_s},
-          {"attitude_alignment_wait_s", config_.tracking.attitude_alignment_wait_s},
-          {"attitude_alignment_required", config_.tracking.attitude_alignment_required},
-          {"attitude_alignment_lookahead_frames",
-           input_description_ == "libcamera" &&
-                   config_.tracking.attitude_prediction_enabled &&
-                   config_.tracking.attitude_alignment_wait_s > 0.0 ? 1 : 0},
+          {"attitude_alignment_wait_s", 0.0},
+          {"attitude_alignment_required", false},
+          {"attitude_alignment_lookahead_frames", 0},
+          {"attitude_alignment_policy", "immediate_nearest_with_optional_interpolation"},
           {"hypergrid_acquisition_height_m",
            2.0 * map_.hypergridSpacing() *
                std::max(config_.calibration.camera_matrix.at<double>(0, 0) /

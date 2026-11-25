@@ -1,5 +1,4 @@
 #include "fls_localizer/blink_decoder.hpp"
-#include "fls_localizer/camera_loop.hpp"
 #include "fls_localizer/config.hpp"
 #include "fls_localizer/debug_output.hpp"
 #include "fls_localizer/grid_map.hpp"
@@ -19,7 +18,6 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
-#include <functional>
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <opencv2/calib3d.hpp>
@@ -27,7 +25,6 @@
 #include <stdexcept>
 #include <string>
 #include <sys/mman.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 namespace {
@@ -443,20 +440,6 @@ void testTakeoffAttitudeAcquisition(const flsloc::GridMap &map) {
   require(tracked.trackingPose().accepted && tracked.matched.size() == 4,
           "normal projection gate did not retain the acquired takeoff pose");
 
-  controller.alignment.required = true;
-  controller.alignment.available = false;
-  controller.timestamp += 1.0 / 120.0;
-  const auto unaligned = pipeline.process(
-      ++frame, controller.timestamp, static_markers, controller);
-  require(unaligned.status == "attitude_alignment_unavailable" &&
-              !unaligned.poses.shared_attitude.accepted && !unaligned.poses.pnp.accepted,
-          "fresh but unaligned attitude reached the pose publication path");
-  controller.alignment.available = true;
-  controller.timestamp += 1.0 / 120.0;
-  require(pipeline.process(++frame, controller.timestamp, static_markers, controller)
-              .trackingPose().accepted,
-          "tracking did not recover with a camera-aligned attitude");
-
   controller.alignment.required = false;
   controller.alignment.available = false;
   controller.timestamp += 1.0 / 120.0;
@@ -751,25 +734,12 @@ void testAttitudePredictionConfig() {
     require(rejected, "invalid attitude prediction bound was accepted");
   }
   config["tracking"]["maximum_attitude_prediction_s"] = 0.012;
-  require(std::abs(loaded.tracking.attitude_alignment_wait_s - 0.008) < 1e-12 &&
-              !loaded.tracking.attitude_alignment_required,
-          "old configs did not inherit the native bounded-wait default");
-  config["tracking"]["attitude_alignment_required"] = true;
-  write();
-  require(flsloc::loadApplicationConfig(path).tracking.attitude_alignment_required,
-          "strict alignment opt-in was not loaded");
-  config["tracking"]["attitude_alignment_required"] = false;
   const auto rejected_config = [&]() {
     write();
     try { static_cast<void>(flsloc::loadApplicationConfig(path)); }
     catch (const std::exception &) { return true; }
     return false;
   };
-  for (double wait : {-0.001, 0.013}) {
-    config["tracking"]["attitude_alignment_wait_s"] = wait;
-    require(rejected_config(), "unbounded or negative alignment wait was accepted");
-  }
-  config["tracking"]["attitude_alignment_wait_s"] = 0.006;
   config["camera"]["exposure_time_us"] = 0;
   require(rejected_config(), "zero manual exposure was accepted");
   config["camera"]["exposure_time_us"] = 9000;
@@ -1287,85 +1257,23 @@ void testClosestSharedAttitude() {
               std::abs(yawDegrees(excessive_gap) - 20.0) < 1e-5,
           "attitude interpolation crossed an excessive sample gap");
 
-  const auto gap = predicted.readControllerAligned(10.001, 0.006, true);
-  require(gap.alignment.required && !gap.alignment.available,
-          "a large bracket gap was accepted by the production alignment path");
   writeAttitude(0, 1, 10.0, 0.0, 42, false);
   writeAttitude(1, 2, 10.005, 5.0, 42, false);
-  const auto fast_pair = predicted.readControllerAligned(10.0025, 0.006);
+  const auto fast_pair = predicted.readController(10.0025);
   require(fast_pair.alignment.available && fast_pair.attitude_prediction_applied &&
               std::abs(yawDegrees(fast_pair) - 2.5) < 1e-5,
-          "200 Hz attitudes were not interpolated to an exposure between samples");
-  const auto exact = predicted.readControllerAligned(10.005, 0.006);
+          "immediate lookup did not interpolate an existing bracket");
+  const auto exact = predicted.readController(10.005);
   require(exact.alignment.available && !exact.attitude_prediction_applied,
-          "an exact capture-time sample unnecessarily required a pair");
-  const auto fallback = predicted.readControllerAligned(10.010, 0.0);
-  require(!fallback.alignment.required && !fallback.attitude_prediction_applied,
-          "zero wait no longer preserves optional nearest-sample behavior");
-
-  const pid_t writer = fork();
-  require(writer >= 0, "could not fork delayed attitude producer");
-  if (writer == 0) {
-    usleep(1000);
-    writeAttitude(2, 3, 10.010, 10.0, 42, false);
-    _exit(0);
-  }
-  const auto late = predicted.readControllerAligned(10.0075, 0.012);
-  int child_status = 0;
-  waitpid(writer, &child_status, 0);
-  require(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0 &&
-              late.alignment.available && late.attitude_prediction_applied &&
-              std::abs(yawDegrees(late) - 7.5) < 1e-5,
-          "production reader did not wait for a late bracketing attitude");
-  const auto timeout = predicted.readControllerAligned(10.015, 0.001, true);
-  require(timeout.alignment.required && !timeout.alignment.available &&
-              timeout.alignment.wait_timed_out && !timeout.attitude_prediction_applied,
-          "missing future attitude was extrapolated or mislabeled as aligned");
-  const auto relaxed_timeout = predicted.readControllerAligned(10.015, 0.001);
-  require(!relaxed_timeout.alignment.required && !relaxed_timeout.alignment.available &&
-              relaxed_timeout.alignment.wait_timed_out && relaxed_timeout.attitude_valid &&
-              !relaxed_timeout.attitude_prediction_applied &&
-              relaxed_timeout.timestamp == 10.010 &&
-              relaxed_timeout.alignment.effective_timestamp == 10.010 &&
-              std::abs(yawDegrees(relaxed_timeout) - 10.0) < 1e-5,
-          "relaxed timeout did not retain the nearest real source attitude");
-  writeAttitude(2, 3, 10.010, 10.0, 43, false);
-  const auto reset_wait = predicted.readControllerAligned(10.0075, 0.006);
-  require(!reset_wait.alignment.available && !reset_wait.attitude_prediction_applied,
-          "bounded-wait alignment crossed an EKF reset boundary");
-
-  // The camera's next acquisition delivers the delayed FC bracket. The
-  // production loop must then solve the older image at its original time.
-  writeAttitude(0, 1, 20.0, 0.0, 42, false);
-  writeAttitude(1, 2, 20.005, 5.0, 42, false);
-  writeAttitude(2, 3, 20.0, 0.0, 42, false);
-  struct FakeCamera {
-    std::function<bool(cv::Mat &, double &, flsloc::FrameTiming &)> read;
-  };
-  int acquisitions = 0;
-  bool keep_running = true;
-  FakeCamera camera{[&](cv::Mat &image, double &capture, flsloc::FrameTiming &) {
-    ++acquisitions;
-    image = cv::Mat(1, 1, CV_8UC1, cv::Scalar(acquisitions));
-    capture = 20.0075 + (acquisitions - 1) * 0.005;
-    if (acquisitions == 1) {
-      require(!predicted.readController(capture).attitude_prediction_applied,
-              "test did not reproduce a missing future bracket");
-    } else {
-      writeAttitude(2, 3, 20.010, 10.0, 42, false);
-    }
-    return true;
-  }};
-  flsloc::runCameraLoop(camera, true, [&] { return keep_running; },
-      [&](const cv::Mat &image, double capture, const flsloc::FrameTiming &, double) {
-    const auto aligned = predicted.readControllerAligned(capture, 0.006);
-    require(acquisitions == 2 && image.at<unsigned char>(0, 0) == 1 &&
-                aligned.alignment.available && aligned.attitude_prediction_applied &&
-                std::abs(yawDegrees(aligned) - 7.5) < 1e-5 &&
-                aligned.alignment.effective_timestamp == capture,
-            "lookahead did not interpolate the delayed bracket for the pending image");
-    keep_running = false;
-  });
+          "an exact capture-time attitude was not recognized");
+  const auto immediate = predicted.readController(10.010);
+  require(immediate.attitude_valid && !immediate.attitude_prediction_applied &&
+              !immediate.alignment.required && !immediate.alignment.available &&
+              immediate.timestamp == 10.005 &&
+              immediate.alignment.effective_timestamp == 10.005 &&
+              immediate.alignment.wait_s == 0.0 && immediate.alignment.defer_s == 0.0 &&
+              !immediate.alignment.wait_timed_out,
+          "immediate lookup did not preserve nearest-source fallback without waiting");
 
   flsloc::FrameResult frame;
   frame.frame_id = 12;
@@ -1412,49 +1320,7 @@ void testClosestSharedAttitude() {
 
 } // namespace
 
-void testCameraLookahead() {
-  struct Camera {
-    int reads = 0;
-    bool read(cv::Mat &gray, double &timestamp, flsloc::FrameTiming &timing) {
-      if (++reads > 3) return false;
-      gray.create(1, 1, CV_8UC1);
-      gray.at<unsigned char>(0, 0) = static_cast<unsigned char>(reads);
-      timestamp = reads / 120.0;
-      timing.capture_monotonic_ns = reads;
-      return true;
-    }
-  };
-  for (bool deferred : {false, true}) {
-    Camera camera;
-    int consumed = 0;
-    flsloc::runCameraLoop(camera, deferred, [] { return true; },
-        [&](const cv::Mat &gray, double timestamp, const flsloc::FrameTiming &timing,
-            double defer_s) {
-      ++consumed;
-      require(gray.at<unsigned char>(0, 0) == consumed &&
-                  timestamp == consumed / 120.0 && timing.capture_monotonic_ns == consumed,
-              "lookahead changed image ownership, ordering or capture timing");
-      require(camera.reads == consumed + (deferred ? 1 : 0),
-              "alignment was not deferred until the next acquisition");
-      require(deferred ? defer_s >= 0.0 : defer_s == 0.0,
-              "invalid lookahead latency diagnostic");
-    });
-    require(consumed == 3, "finite camera input lost its last pending frame");
-  }
-  Camera camera;
-  bool running = true;
-  int consumed = 0;
-  flsloc::runCameraLoop(camera, true, [&] { return running; },
-      [&](const cv::Mat &, double, const flsloc::FrameTiming &, double) {
-    ++consumed;
-    running = false;
-  });
-  require(consumed == 1 && camera.reads == 2,
-          "camera loop published a queued frame after shutdown");
-}
-
 int main() try {
-  testCameraLookahead();
   const flsloc::GridMap map = flsloc::GridMap::load(FLS_TEST_GRID_PATH);
   testGrid(map);
   testBlink(map);

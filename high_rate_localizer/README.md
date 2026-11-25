@@ -248,22 +248,20 @@ Shared-attitude samples can optionally be aligned to each camera capture under
 
 ```json
 "attitude_prediction_enabled": true,
-"maximum_attitude_prediction_s": 0.012,
-"attitude_alignment_wait_s": 0.008,
-"attitude_alignment_required": false
+"maximum_attitude_prediction_s": 0.012
 ```
 
 When enabled, bracketing samples are interpolated on the quaternion's shortest
-arc. Native capture buffers one frame, then waits at most 8 ms for a late
-bracketing sample. If no bracket is available, the default relaxed policy uses
-the nearest source attitude within the existing 12 ms age limit, matching
-`1b7087a` eligibility. It preserves the real source timestamp and does not
-extrapolate. Set `attitude_alignment_required=true` for strict rejection as
-`attitude_alignment_unavailable`. Samples across an EKF reset are never combined
-for interpolation. Zero wait disables buffering/polling and retains optional
-interpolation with nearest-sample fallback; disabling prediction also retains
-immediate nearest-sample behavior. Video fixtures do not wait for real-time
-samples. Camera exposure midpoint and clock-conversion fixes remain enabled.
+arc. Native capture immediately queries the available attitude history,
+matching `1b7087a`: no frame lookahead, polling delay or strict-bracket rejection.
+If no bracket exists, it uses the nearest valid source attitude within the
+12 ms age limit. It preserves the real source timestamp and does not
+extrapolate. Samples across an EKF reset are never combined for interpolation.
+Disabling prediction selects nearest-sample operation. Camera exposure midpoint,
+clock conversion, manual exposure/gain validation and timing diagnostics remain
+enabled. The experimental `attitude_alignment_wait_s` and
+`attitude_alignment_required` settings have been removed and are ignored in
+old JSON files.
 
 ## Ground-truth trajectory
 

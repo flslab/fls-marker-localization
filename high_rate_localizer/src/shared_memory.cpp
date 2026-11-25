@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <fcntl.h>
@@ -230,6 +229,9 @@ public:
     if (quaternion) {
       result.quaternion_xyzw = *quaternion;
     }
+    result.alignment.available = result.attitude_valid &&
+        std::isfinite(camera_timestamp) &&
+        std::abs(result.timestamp - camera_timestamp) <= 1e-9;
     if (!attitude_prediction_enabled_ || !result.attitude_valid ||
         !std::isfinite(camera_timestamp) ||
         maximum_attitude_prediction_s_ <= 0.0) {
@@ -296,6 +298,7 @@ public:
       }
       result.quaternion_xyzw = *aligned;
       result.attitude_prediction_applied = true;
+      result.alignment.available = true;
       result.alignment.effective_timestamp = camera_timestamp;
       result.alignment.bracket_timestamps = {first.timestamp, second.timestamp};
       result.alignment.bracket_sequences = {first.sequence, second.sequence};
@@ -309,35 +312,6 @@ public:
       }
       static_cast<void>(apply_pair(*before, *after));
     }
-    return result;
-  }
-
-  ControllerInput readControllerAligned(double camera_timestamp,
-                                       double maximum_wait_s,
-                                       bool require_alignment) const {
-    using Clock = std::chrono::steady_clock;
-    if (!std::isfinite(maximum_wait_s) || maximum_wait_s < 0 || maximum_wait_s > 0.012)
-      throw std::invalid_argument("attitude alignment wait must be in [0, 0.012] seconds");
-    const auto started = Clock::now();
-    const auto deadline = started + std::chrono::duration<double>(maximum_wait_s);
-    ControllerInput result = readController(camera_timestamp);
-    const bool wait_enabled = attitude_prediction_enabled_ && maximum_wait_s > 0;
-    const auto aligned = [&]() {
-      return result.attitude_valid &&
-          (result.attitude_prediction_applied ||
-           std::abs(result.timestamp - camera_timestamp) <= 1e-9);
-    };
-    // No wait can repair an invalid sample, a reset boundary, an excessive
-    // existing bracket gap, or a camera time older than the available history.
-    while (wait_enabled && result.attitude_valid && !aligned() &&
-           result.timestamp < camera_timestamp && Clock::now() < deadline) {
-      std::this_thread::sleep_for(std::chrono::microseconds(100));
-      result = readController(camera_timestamp);
-    }
-    result.alignment.required = wait_enabled && require_alignment;
-    result.alignment.available = aligned();
-    result.alignment.wait_s = std::chrono::duration<double>(Clock::now() - started).count();
-    result.alignment.wait_timed_out = wait_enabled && !aligned() && Clock::now() >= deadline;
     return result;
   }
 
@@ -432,11 +406,6 @@ SharedMemory::SharedMemory(const std::string &name,
 SharedMemory::~SharedMemory() = default;
 ControllerInput SharedMemory::readController(double camera_timestamp) const {
   return impl_->readController(camera_timestamp);
-}
-ControllerInput SharedMemory::readControllerAligned(double camera_timestamp,
-                                                   double maximum_wait_s,
-                                                   bool require_alignment) const {
-  return impl_->readControllerAligned(camera_timestamp, maximum_wait_s, require_alignment);
 }
 void SharedMemory::publish(const FrameResult &result) {
   impl_->publish(result);

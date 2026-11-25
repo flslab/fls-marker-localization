@@ -90,9 +90,7 @@
     "lost_after_frames": 30,
     "maximum_attitude_age_s": 0.012,
     "attitude_prediction_enabled": true,
-    "maximum_attitude_prediction_s": 0.012,
-    "attitude_alignment_wait_s": 0.008,
-    "attitude_alignment_required": false
+    "maximum_attitude_prediction_s": 0.012
   },
   "output": {
     "directory": "logs/high_rate_localizer",

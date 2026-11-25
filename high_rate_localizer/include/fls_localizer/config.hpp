@@ -61,8 +61,6 @@ struct TrackingConfig {
   double maximum_attitude_age_s = 0.012;
   bool attitude_prediction_enabled = false;
   double maximum_attitude_prediction_s = 0.012;
-  double attitude_alignment_wait_s = 0.008;
-  bool attitude_alignment_required = false;
 };
 
 struct OutputConfig {

@@ -275,10 +275,6 @@ ApplicationConfig loadApplicationConfig(const std::filesystem::path &path) {
     config.tracking.maximum_attitude_prediction_s = tracking.value(
         "maximum_attitude_prediction_s",
         config.tracking.maximum_attitude_prediction_s);
-    config.tracking.attitude_alignment_wait_s = tracking.value(
-        "attitude_alignment_wait_s", config.tracking.attitude_alignment_wait_s);
-    config.tracking.attitude_alignment_required = tracking.value(
-        "attitude_alignment_required", config.tracking.attitude_alignment_required);
   }
 
   if (root.contains("output")) {
@@ -317,9 +313,6 @@ ApplicationConfig loadApplicationConfig(const std::filesystem::path &path) {
       !std::isfinite(config.camera.analogue_gain) || config.camera.analogue_gain <= 0 ||
       !std::isfinite(config.camera.timestamp_offset_us) ||
       std::abs(config.camera.timestamp_offset_us) > 1e6 / config.camera.frame_rate ||
-      !std::isfinite(config.tracking.attitude_alignment_wait_s) ||
-      config.tracking.attitude_alignment_wait_s < 0.0 ||
-      config.tracking.attitude_alignment_wait_s > 0.012 ||
       config.detector.minimum_area <= 0 ||
       config.detector.maximum_area < config.detector.minimum_area ||
       config.detector.maximum_candidates < 4 ||
