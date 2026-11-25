@@ -277,6 +277,8 @@ ApplicationConfig loadApplicationConfig(const std::filesystem::path &path) {
         config.tracking.maximum_attitude_prediction_s);
     config.tracking.attitude_alignment_wait_s = tracking.value(
         "attitude_alignment_wait_s", config.tracking.attitude_alignment_wait_s);
+    config.tracking.attitude_alignment_required = tracking.value(
+        "attitude_alignment_required", config.tracking.attitude_alignment_required);
   }
 
   if (root.contains("output")) {

@@ -1,4 +1,5 @@
 #include "fls_localizer/config.hpp"
+#include "fls_localizer/camera_loop.hpp"
 #include "fls_localizer/debug_output.hpp"
 #include "fls_localizer/grid_map.hpp"
 #include "fls_localizer/libcamera_source.hpp"
@@ -69,14 +70,18 @@ int main(int argc, char **argv) try {
   std::signal(SIGINT, stop);
   std::signal(SIGTERM, stop);
 
-  cv::Mat gray;
-  double timestamp = 0.0;
-  flsloc::FrameTiming camera_timing;
   std::uint64_t frame_id = 0;
-  while (running.load() && camera.read(gray, timestamp, camera_timing)) {
-    const flsloc::ControllerInput controller =
+  const bool defer_alignment = config.tracking.attitude_prediction_enabled &&
+      config.tracking.attitude_alignment_wait_s > 0.0;
+  flsloc::runCameraLoop(camera, defer_alignment,
+      [] { return running.load(); },
+      [&](const cv::Mat &gray, double timestamp,
+          const flsloc::FrameTiming &camera_timing, double defer_s) {
+    flsloc::ControllerInput controller =
         shared_memory.readControllerAligned(
-            timestamp, config.tracking.attitude_alignment_wait_s);
+            timestamp, config.tracking.attitude_alignment_wait_s,
+            config.tracking.attitude_alignment_required);
+    controller.alignment.defer_s = defer_s;
     flsloc::FrameResult result =
         pipeline.process(frame_id, timestamp, gray, controller);
     result.camera_timing = camera_timing;
@@ -87,7 +92,7 @@ int main(int argc, char **argv) try {
     }
     output.submit(std::move(result), std::move(annotated));
     ++frame_id;
-  }
+  });
   output.finish();
   std::cout << "log=" << output.logPath() << '\n'
             << "annotated_video=" << output.videoPath() << std::endl;

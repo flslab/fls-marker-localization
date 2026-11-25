@@ -313,14 +313,15 @@ public:
   }
 
   ControllerInput readControllerAligned(double camera_timestamp,
-                                       double maximum_wait_s) const {
+                                       double maximum_wait_s,
+                                       bool require_alignment) const {
     using Clock = std::chrono::steady_clock;
     if (!std::isfinite(maximum_wait_s) || maximum_wait_s < 0 || maximum_wait_s > 0.012)
       throw std::invalid_argument("attitude alignment wait must be in [0, 0.012] seconds");
     const auto started = Clock::now();
     const auto deadline = started + std::chrono::duration<double>(maximum_wait_s);
     ControllerInput result = readController(camera_timestamp);
-    const bool required = attitude_prediction_enabled_ && maximum_wait_s > 0;
+    const bool wait_enabled = attitude_prediction_enabled_ && maximum_wait_s > 0;
     const auto aligned = [&]() {
       return result.attitude_valid &&
           (result.attitude_prediction_applied ||
@@ -328,15 +329,15 @@ public:
     };
     // No wait can repair an invalid sample, a reset boundary, an excessive
     // existing bracket gap, or a camera time older than the available history.
-    while (required && result.attitude_valid && !aligned() &&
+    while (wait_enabled && result.attitude_valid && !aligned() &&
            result.timestamp < camera_timestamp && Clock::now() < deadline) {
       std::this_thread::sleep_for(std::chrono::microseconds(100));
       result = readController(camera_timestamp);
     }
-    result.alignment.required = required;
+    result.alignment.required = wait_enabled && require_alignment;
     result.alignment.available = aligned();
     result.alignment.wait_s = std::chrono::duration<double>(Clock::now() - started).count();
-    result.alignment.wait_timed_out = required && !aligned() && Clock::now() >= deadline;
+    result.alignment.wait_timed_out = wait_enabled && !aligned() && Clock::now() >= deadline;
     return result;
   }
 
@@ -433,8 +434,9 @@ ControllerInput SharedMemory::readController(double camera_timestamp) const {
   return impl_->readController(camera_timestamp);
 }
 ControllerInput SharedMemory::readControllerAligned(double camera_timestamp,
-                                                  double maximum_wait_s) const {
-  return impl_->readControllerAligned(camera_timestamp, maximum_wait_s);
+                                                   double maximum_wait_s,
+                                                   bool require_alignment) const {
+  return impl_->readControllerAligned(camera_timestamp, maximum_wait_s, require_alignment);
 }
 void SharedMemory::publish(const FrameResult &result) {
   impl_->publish(result);

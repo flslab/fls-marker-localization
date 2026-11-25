@@ -6,7 +6,7 @@
     "buffer_count": 4,
     "pixel_format": "YUV420",
     "exposure_time_us": 3000,
-    "analogue_gain": 8.0,
+    "analogue_gain": 10.0,
     "brightness": 0.0,
     "contrast": 1.0,
     "timestamp_offset_us": 0.0
@@ -91,7 +91,8 @@
     "maximum_attitude_age_s": 0.012,
     "attitude_prediction_enabled": true,
     "maximum_attitude_prediction_s": 0.012,
-    "attitude_alignment_wait_s": 0.006
+    "attitude_alignment_wait_s": 0.008,
+    "attitude_alignment_required": false
   },
   "output": {
     "directory": "logs/high_rate_localizer",

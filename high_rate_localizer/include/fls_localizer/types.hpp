@@ -58,6 +58,7 @@ struct MatchedPoint {
 };
 
 struct AttitudeAlignment {
+  double defer_s = 0.0;
   bool required = false;
   bool available = false;
   double wait_s = 0.0;

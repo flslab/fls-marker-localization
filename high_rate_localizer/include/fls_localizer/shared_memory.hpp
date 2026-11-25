@@ -123,9 +123,11 @@ public:
   SharedMemory &operator=(const SharedMemory &) = delete;
 
   ControllerInput readController(double camera_timestamp) const;
-  // Production waits only for a late bracketing sample, never extrapolates.
+  // Prefer a late bracket; otherwise retain nearest-source attitude. Strict
+  // rejection is opt-in. The pipeline still enforces the source-age limit.
   ControllerInput readControllerAligned(double camera_timestamp,
-                                       double maximum_wait_s) const;
+                                       double maximum_wait_s,
+                                       bool require_alignment = false) const;
   void publish(const FrameResult &result);
 
 private:

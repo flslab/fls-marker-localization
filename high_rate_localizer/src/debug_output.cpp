@@ -377,6 +377,11 @@ json DebugOutput::metadata() const {
            config_.tracking.maximum_attitude_prediction_s},
           {"maximum_attitude_age_s", config_.tracking.maximum_attitude_age_s},
           {"attitude_alignment_wait_s", config_.tracking.attitude_alignment_wait_s},
+          {"attitude_alignment_required", config_.tracking.attitude_alignment_required},
+          {"attitude_alignment_lookahead_frames",
+           input_description_ == "libcamera" &&
+                   config_.tracking.attitude_prediction_enabled &&
+                   config_.tracking.attitude_alignment_wait_s > 0.0 ? 1 : 0},
           {"hypergrid_acquisition_height_m",
            2.0 * map_.hypergridSpacing() *
                std::max(config_.calibration.camera_matrix.at<double>(0, 0) /
@@ -460,6 +465,7 @@ json DebugOutput::frameJson(const FrameResult &result) const {
                     {"alignment_required", result.attitude_alignment.required},
                     {"alignment_available", result.attitude_alignment.available},
                     {"alignment_wait_s", result.attitude_alignment.wait_s},
+                    {"alignment_defer_s", result.attitude_alignment.defer_s},
                     {"alignment_wait_timed_out", result.attitude_alignment.wait_timed_out},
                     {"bracket_timestamps", result.attitude_alignment.bracket_timestamps},
                     {"bracket_sequences", result.attitude_alignment.bracket_sequences},
