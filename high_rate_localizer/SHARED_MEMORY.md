@@ -20,8 +20,8 @@ The controller writes a 16-entry ring of individually committed samples. Each
 sample contains:
 
 - Crazyflie sample timestamp mapped from its millisecond-since-power-on clock
-  into host `CLOCK_MONOTONIC` camera-compatible seconds using the minimum
-  callback delay observed during startup calibration;
+  into host `CLOCK_MONOTONIC` seconds using the controller's shared
+  lower-envelope affine clock mapper;
 - normalized drone-to-world quaternion in `x,y,z,w` order;
 - `attitude_valid`;
 - EKF reset generation being acknowledged;
@@ -30,9 +30,10 @@ sample contains:
 The controller metadata contains the newest attitude sequence, landing request,
 and known landing tile `(i,j)`. At a 10 ms Crazyflie log period the ring covers
 approximately 150 ms before the newest sample.
+At the reduced profile's 5 ms period, it covers approximately 75 ms.
 
 The one-way mapping is causal but cannot distinguish the host/FC clock offset
-from the minimum radio and callback transport delay. Consequently, its residual
+from the minimum link and callback transport delay. Consequently, its residual
 uncertainty is that minimum delay plus the FC clock's 1 ms quantization. Exact
 removal of that residual requires an independent two-way clock calibration.
 
@@ -46,6 +47,11 @@ the attitude history, or older than its oldest sample, uses the closest
 quaternion unchanged. It never combines samples from different EKF reset
 generations and falls back to the closest quaternion when the samples or
 configured time bound are unsuitable.
+
+That nearest-sample fallback describes the low-level reader and zero-wait
+operation. Native capture defaults to a bounded wait for a bracket and rejects
+the frame if alignment is still unavailable, instead of publishing that
+fallback as a synchronized pose. Exact-time samples do not require a pair.
 
 `tracking.maximum_attitude_prediction_s` bounds the interval between the two
 samples used for interpolation. The maximum-attitude-age check is still
@@ -77,6 +83,14 @@ The localizer writes:
   matches Crazyflie firmware's `yawErrorMeasurement_t` convention. It is valid
   only for accepted HyperGrid PnP solutions paired with a synchronized FC
   attitude; the controller applies the final quality and temporal gates.
+
+Native schema-2 capture timestamps are the reported exposure midpoint
+mapped from BOOTTIME to host MONOTONIC (plus any configured calibrated phase
+offset), rather than the unspecified framebuffer event used by schema 1.
+The ABI layout is unchanged. See `CAMERA_TIMING.md` for alignment, bounded wait
+and clock phase limitations; offline video keeps its synthetic frame times.
+The deployed camera has a global shutter: the midpoint applies to the whole
+image and no row-delay correction is required.
 
 `shared_memory_pose_technique` in the localizer JSON chooses whether normal
 tracking samples contain the accepted `shared_attitude` or `pnp` pose. The

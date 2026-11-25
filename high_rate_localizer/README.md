@@ -103,11 +103,17 @@ the intrinsics are physically accurate. Calibrate each camera/lens and sensor
 mode independently before interpreting a fitted camera mount as a physical
 measurement.
 
-Native recordings also preserve camera source counters, original buffer and
-sensor timestamps, actual exposure/gain metadata, host completion/read times,
-and deliberately skipped stale requests in `frames[].camera_timing`. Runtime
-pose timing is unchanged. See [Camera timing evidence](CAMERA_TIMING.md) for
-clock definitions, missing fields, and drop/reset diagnostics.
+Native capture disables automatic exposure/gain on every request, including
+recycled buffers. Frames must report the requested controls within sensor
+quantization tolerance before localization can use them. The native pose time
+is the reported exposure midpoint, converted from BOOTTIME to host
+MONOTONIC using a measured clock pair. With the deployed global-shutter camera,
+this midpoint applies to the whole image and needs no row-delay correction.
+Original buffer/sensor times, controls,
+clock uncertainty and skipped-frame counts remain in `frames[].camera_timing`.
+See [Camera timing](CAMERA_TIMING.md) for the version-2 schema, remaining clock
+phase limitations, and on-device verification steps. Existing experiment
+configs inherit this behavior without regenerating their hashed assets.
 
 The MP4 fixture runner accepts a grid override and output directory:
 
@@ -246,9 +252,16 @@ Shared-attitude samples can optionally be aligned to each camera capture under
 ```
 
 When enabled, bracketing samples are interpolated on the quaternion's shortest
-arc. If the capture is outside the attitude history, the closest sample is used
-unchanged. Samples across an EKF reset are never combined. Disabling the option
-retains closest-timestamp selection, including the later-sample tie break.
+arc. Native capture immediately queries the available attitude history,
+matching `1b7087a`: no frame lookahead, polling delay or strict-bracket rejection.
+If no bracket exists, it uses the nearest valid source attitude within the
+12 ms age limit. It preserves the real source timestamp and does not
+extrapolate. Samples across an EKF reset are never combined for interpolation.
+Disabling prediction selects nearest-sample operation. Camera exposure midpoint,
+clock conversion, manual exposure/gain validation and timing diagnostics remain
+enabled. The experimental `attitude_alignment_wait_s` and
+`attitude_alignment_required` settings have been removed and are ignored in
+old JSON files.
 
 ## Ground-truth trajectory
 
@@ -308,10 +321,10 @@ hold until `hypergrid_tracking`, and then continue takeoff.
 
 - Libcamera uses a four-buffer YUV420 stream and processes only its luma plane.
 - Completed requests are latest-only; stale frames are returned immediately.
-- The controller publishes a 16-sample attitude ring at 100 Hz. For each
-  libcamera capture timestamp, the localizer either uses the closest committed
-  sample or performs the configured bounded interpolation. The
-  configured age gate is applied to the closest real source sample afterward.
+- The controller publishes a 16-sample attitude ring (200 Hz with its reduced
+  logging profile). Native capture aligns that history to the exposure time
+  with a bounded wait. The configured age gate is applied to the closest real
+  source sample afterward. Wait time and timeout/availability are logged.
 - Connected-component storage is reused between frames.
 - Detection is hard-capped at 64 blobs.
 - PnP input is spatially selected and hard-capped at 16 points. Solvers with a

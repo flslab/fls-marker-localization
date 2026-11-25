@@ -10,6 +10,7 @@
 #include <optional>
 #include <stdexcept>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -108,8 +109,10 @@ public:
         attitude_prediction_enabled_(attitude_prediction_enabled),
         maximum_attitude_prediction_s_(maximum_attitude_prediction_s) {
     descriptor_ = shm_open(name.c_str(), O_CREAT | O_RDWR, 0660);
-    if (descriptor_ < 0 ||
-        ftruncate(descriptor_, sizeof(shared::Layout)) != 0) {
+    struct stat info{};
+    if (descriptor_ < 0 || fstat(descriptor_, &info) != 0 ||
+        (info.st_size < static_cast<off_t>(sizeof(shared::Layout)) &&
+         ftruncate(descriptor_, sizeof(shared::Layout)) != 0)) {
       throw std::runtime_error("unable to create shared memory " + name);
     }
     void *mapping = mmap(nullptr, sizeof(shared::Layout),
@@ -226,6 +229,9 @@ public:
     if (quaternion) {
       result.quaternion_xyzw = *quaternion;
     }
+    result.alignment.available = result.attitude_valid &&
+        std::isfinite(camera_timestamp) &&
+        std::abs(result.timestamp - camera_timestamp) <= 1e-9;
     if (!attitude_prediction_enabled_ || !result.attitude_valid ||
         !std::isfinite(camera_timestamp) ||
         maximum_attitude_prediction_s_ <= 0.0) {
@@ -292,6 +298,7 @@ public:
       }
       result.quaternion_xyzw = *aligned;
       result.attitude_prediction_applied = true;
+      result.alignment.available = true;
       result.alignment.effective_timestamp = camera_timestamp;
       result.alignment.bracket_timestamps = {first.timestamp, second.timestamp};
       result.alignment.bracket_sequences = {first.sequence, second.sequence};
