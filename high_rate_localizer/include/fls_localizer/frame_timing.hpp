@@ -43,12 +43,6 @@ struct FrameTiming {
   std::optional<std::int32_t> exposure_time_us;
   std::optional<std::int64_t> frame_duration_us;
   std::optional<double> analogue_gain;
-  std::optional<bool> manual_controls_match;
-  std::optional<std::int64_t> boottime_minus_monotonic_ns;
-  std::optional<std::uint64_t> clock_pair_uncertainty_ns;
-  std::optional<std::int64_t> capture_monotonic_ns;
-  double timestamp_offset_us = 0.0;
-  std::uint64_t unusable_frames_skipped_total = 0;
   std::uint32_t buffer_sequence = 0;
   std::uint32_t request_sequence = 0;
   int buffer_status = 0;
@@ -62,10 +56,5 @@ struct FrameTiming {
   bool buffer_timestamp_nonmonotonic = false;
   bool sensor_timestamp_nonmonotonic = false;
 };
-
-// Uses measured metadata only. No framebuffer/receipt-time substitution.
-std::optional<std::int64_t> exposureMidpointMonotonicNs(const FrameTiming &timing);
-bool manualCameraControlsMatch(const FrameTiming &timing, int exposure_us,
-                              double analogue_gain);
 
 } // namespace flsloc

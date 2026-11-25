@@ -1,10 +1,8 @@
 #include "fls_localizer/libcamera_source.hpp"
 
-#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
-#include <iostream>
 #include <libcamera/camera.h>
 #include <libcamera/camera_manager.h>
 #include <libcamera/control_ids.h>
@@ -16,8 +14,8 @@
 #include <map>
 #include <mutex>
 #include <stdexcept>
-#include <sys/mman.h>
 #include <time.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 namespace flsloc {
@@ -25,26 +23,9 @@ namespace {
 
 std::optional<std::uint64_t> hostMonotonicNs() noexcept {
   timespec stamp{};
-  if (clock_gettime(CLOCK_MONOTONIC, &stamp) != 0)
-    return std::nullopt;
+  if (clock_gettime(CLOCK_MONOTONIC, &stamp) != 0) return std::nullopt;
   return static_cast<std::uint64_t>(stamp.tv_sec) * 1'000'000'000ULL +
          static_cast<std::uint64_t>(stamp.tv_nsec);
-}
-
-void measureClockPair(FrameTiming &timing) noexcept {
-  // Bracket BOOTTIME by MONOTONIC reads instead of assuming identical epochs.
-  // Repeat per delivered frame so a suspend/resume cannot leave a stale offset.
-  const auto before = hostMonotonicNs();
-  timespec boot{};
-  const int status = clock_gettime(CLOCK_BOOTTIME, &boot);
-  const auto after = hostMonotonicNs();
-  if (!before || !after || *after < *before || status != 0)
-    return;
-  const std::int64_t boot_ns =
-      static_cast<std::int64_t>(boot.tv_sec) * 1'000'000'000LL + boot.tv_nsec;
-  timing.boottime_minus_monotonic_ns =
-      boot_ns - static_cast<std::int64_t>(*before + (*after - *before) / 2);
-  timing.clock_pair_uncertainty_ns = (*after - *before + 1) / 2;
 }
 
 } // namespace
@@ -106,7 +87,9 @@ public:
     controls.set(libcamera::controls::FrameDurationLimits,
                  libcamera::Span<const std::int64_t, 2>(
                      {frame_duration, frame_duration}));
-    setManualControls(controls);
+    controls.set(libcamera::controls::ExposureTime, settings.exposure_time_us);
+    controls.set(libcamera::controls::AnalogueGain,
+                 static_cast<float>(settings.analogue_gain));
     controls.set(libcamera::controls::Brightness,
                  static_cast<float>(settings.brightness));
     controls.set(libcamera::controls::Contrast,
@@ -116,7 +99,6 @@ public:
     }
     started_ = true;
     for (const auto &request : requests_) {
-      setManualControls(request->controls());
       if (camera_->queueRequest(request.get()) != 0) {
         throw std::runtime_error("unable to queue libcamera request");
       }
@@ -144,108 +126,54 @@ public:
   }
 
   bool read(cv::Mat &gray, double &timestamp, FrameTiming &timing) {
-    std::uint64_t stale_since_last_read = 0;
-    for (;;) {
-      const auto read_started = hostMonotonicNs();
-      Completed selected;
-      std::deque<Completed> stale;
-      {
-        std::unique_lock lock(mutex_);
-        if (!ready_.wait_for(lock, std::chrono::seconds(2),
-                             [&] { return !completed_.empty(); })) {
-          throw std::runtime_error(
-              "camera produced no completed request for 2 seconds");
-        }
-        selected = completed_.back();
-        completed_.pop_back();
-        stale.swap(completed_);
-      }
-      for (const Completed &request : stale) {
-        recycle(request.request);
-      }
-      stale_since_last_read += stale.size();
-      stale_requests_skipped_total_ += stale.size();
-      const auto iterator = selected.request->buffers().find(stream_);
-      if (iterator == selected.request->buffers().end()) {
-        recycle(selected.request);
-        return false;
-      }
-      libcamera::FrameBuffer *buffer = iterator->second;
-      const Mapping &mapping = mappings_.at(buffer);
-      timing = selected.timing;
-      measureClockPair(timing);
-      timing.timestamp_offset_us = settings_.timestamp_offset_us;
-      timing.capture_monotonic_ns = exposureMidpointMonotonicNs(timing);
-      timing.manual_controls_match = manualCameraControlsMatch(
-          timing, settings_.exposure_time_us, settings_.analogue_gain);
-      // Never localize startup frames with automatic/clipped controls, missing
-      // capture metadata, failed buffers, or an inconsistent clock relation.
-      const bool usable =
-          timing.buffer_status == 0 && *timing.manual_controls_match &&
-          timing.capture_monotonic_ns && timing.host_completed_monotonic_ns &&
-          *timing.capture_monotonic_ns <=
-              static_cast<std::int64_t>(*timing.host_completed_monotonic_ns) &&
-          static_cast<std::int64_t>(*timing.host_completed_monotonic_ns) -
-                  *timing.capture_monotonic_ns <
-              1'000'000'000LL;
-      if (!usable) {
-        recycle(selected.request);
-        ++unusable_frames_skipped_total_;
-        const auto now = std::chrono::steady_clock::now();
-        if (!unusable_since_) {
-          unusable_since_ = now;
-          std::cerr
-              << "waiting for camera manual controls and capture metadata: "
-              << "requested_exposure_us=" << settings_.exposure_time_us
-              << " requested_gain=" << settings_.analogue_gain
-              << " actual_exposure_us=" << timing.exposure_time_us.value_or(-1)
-              << " actual_gain=" << timing.analogue_gain.value_or(-1)
-              << std::endl;
-        }
-        if (now - *unusable_since_ > std::chrono::seconds(2))
-          throw std::runtime_error("camera controls/capture metadata failed "
-                                   "validation for 2 seconds");
-        continue;
-      }
-      unusable_since_.reset();
-      timestamp = static_cast<double>(*timing.capture_monotonic_ns) * 1e-9;
-      cv::Mat view(static_cast<int>(height_), static_cast<int>(width_), CV_8UC1,
-                   mapping.data, stride_);
-      view.copyTo(gray);
-      timing.unusable_frames_skipped_total = unusable_frames_skipped_total_;
-      timing.host_read_started_monotonic_ns = read_started;
-      timing.host_read_finished_monotonic_ns = hostMonotonicNs();
-      timing.stale_requests_skipped = stale_since_last_read;
-      timing.stale_requests_skipped_total = stale_requests_skipped_total_;
-      timing.buffer_progress =
-          buffer_sequences_.observe(timing.buffer_sequence);
-      timing.request_progress =
-          request_sequences_.observe(timing.request_sequence);
-      timing.buffer_timestamp_nonmonotonic =
-          previous_buffer_timestamp_ &&
-          timing.buffer_timestamp_ns <= *previous_buffer_timestamp_;
-      previous_buffer_timestamp_ = timing.buffer_timestamp_ns;
-      if (timing.sensor_timestamp_ns) {
-        timing.sensor_timestamp_nonmonotonic =
-            previous_sensor_timestamp_ &&
-            *timing.sensor_timestamp_ns <= *previous_sensor_timestamp_;
-        previous_sensor_timestamp_ = timing.sensor_timestamp_ns;
-      }
-      recycle(selected.request);
-      return true;
+    const auto read_started = hostMonotonicNs();
+    Completed selected;
+    std::deque<Completed> stale;
+    {
+      std::unique_lock lock(mutex_);
+      ready_.wait(lock, [&] { return !completed_.empty(); });
+      selected = completed_.back();
+      completed_.pop_back();
+      stale.swap(completed_);
     }
+    for (const Completed &request : stale) {
+      recycle(request.request);
+    }
+    const auto iterator = selected.request->buffers().find(stream_);
+    if (iterator == selected.request->buffers().end()) {
+      recycle(selected.request);
+      return false;
+    }
+    libcamera::FrameBuffer *buffer = iterator->second;
+    const Mapping &mapping = mappings_.at(buffer);
+    const auto &metadata = buffer->metadata();
+    // Keep the existing runtime time base and phase. SensorTimestamp is
+    // diagnostic evidence, not an implicit change to localization timing.
+    timestamp = static_cast<double>(metadata.timestamp) * 1e-9;
+    cv::Mat view(static_cast<int>(height_), static_cast<int>(width_), CV_8UC1,
+                 mapping.data, stride_);
+    view.copyTo(gray);
+    timing = selected.timing;
+    timing.host_read_started_monotonic_ns = read_started;
+    timing.host_read_finished_monotonic_ns = hostMonotonicNs();
+    timing.stale_requests_skipped = stale.size();
+    stale_requests_skipped_total_ += stale.size();
+    timing.stale_requests_skipped_total = stale_requests_skipped_total_;
+    timing.buffer_progress = buffer_sequences_.observe(timing.buffer_sequence);
+    timing.request_progress = request_sequences_.observe(timing.request_sequence);
+    timing.buffer_timestamp_nonmonotonic =
+        previous_buffer_timestamp_ && timing.buffer_timestamp_ns <= *previous_buffer_timestamp_;
+    previous_buffer_timestamp_ = timing.buffer_timestamp_ns;
+    if (timing.sensor_timestamp_ns) {
+      timing.sensor_timestamp_nonmonotonic =
+          previous_sensor_timestamp_ && *timing.sensor_timestamp_ns <= *previous_sensor_timestamp_;
+      previous_sensor_timestamp_ = timing.sensor_timestamp_ns;
+    }
+    recycle(selected.request);
+    return true;
   }
 
 private:
-  void setManualControls(libcamera::ControlList &controls) const {
-    // Supply mode and values together, including after Request::reuse() clears
-    // the controls. Exposure/gain alone can be ignored while AEGC is enabled.
-    controls.set(libcamera::controls::AeEnable, false);
-    controls.set(libcamera::controls::ExposureTime, settings_.exposure_time_us);
-    controls.set(libcamera::controls::AnalogueGain,
-                 static_cast<float>(settings_.analogue_gain));
-  }
-
   struct Completed {
     libcamera::Request *request = nullptr;
     FrameTiming timing;
@@ -309,9 +237,7 @@ private:
 
   void recycle(libcamera::Request *request) {
     request->reuse(libcamera::Request::ReuseBuffers);
-    setManualControls(request->controls());
-    if (camera_->queueRequest(request) != 0)
-      throw std::runtime_error("unable to requeue libcamera request");
+    camera_->queueRequest(request);
   }
 
   CameraConfig settings_;
@@ -330,8 +256,6 @@ private:
   std::optional<std::uint64_t> previous_buffer_timestamp_;
   std::optional<std::int64_t> previous_sensor_timestamp_;
   std::uint64_t stale_requests_skipped_total_ = 0;
-  std::uint64_t unusable_frames_skipped_total_ = 0;
-  std::optional<std::chrono::steady_clock::time_point> unusable_since_;
   unsigned int width_ = 0;
   unsigned int height_ = 0;
   unsigned int stride_ = 0;
@@ -346,8 +270,7 @@ bool LibcameraSource::read(cv::Mat &gray, double &timestamp) {
   FrameTiming ignored;
   return impl_->read(gray, timestamp, ignored);
 }
-bool LibcameraSource::read(cv::Mat &gray, double &timestamp,
-                           FrameTiming &timing) {
+bool LibcameraSource::read(cv::Mat &gray, double &timestamp, FrameTiming &timing) {
   return impl_->read(gray, timestamp, timing);
 }
 

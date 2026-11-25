@@ -215,8 +215,6 @@ ApplicationConfig loadApplicationConfig(const std::filesystem::path &path) {
   config.camera.brightness =
       camera.value("brightness", config.camera.brightness);
   config.camera.contrast = camera.value("contrast", config.camera.contrast);
-  config.camera.timestamp_offset_us =
-      camera.value("timestamp_offset_us", config.camera.timestamp_offset_us);
 
   readCalibration(root.at("calibration"), config);
 
@@ -307,13 +305,7 @@ ApplicationConfig loadApplicationConfig(const std::filesystem::path &path) {
       root.value("video_test_landing_time_s", config.video_test_landing_time_s);
 
   if (config.camera.width <= 0 || config.camera.height <= 0 ||
-      !std::isfinite(config.camera.frame_rate) || config.camera.frame_rate <= 0.0 ||
-      config.camera.exposure_time_us <= 0 ||
-      config.camera.exposure_time_us > 1e6 / config.camera.frame_rate ||
-      !std::isfinite(config.camera.analogue_gain) || config.camera.analogue_gain <= 0 ||
-      !std::isfinite(config.camera.timestamp_offset_us) ||
-      std::abs(config.camera.timestamp_offset_us) > 1e6 / config.camera.frame_rate ||
-      config.detector.minimum_area <= 0 ||
+      config.camera.frame_rate <= 0.0 || config.detector.minimum_area <= 0 ||
       config.detector.maximum_area < config.detector.minimum_area ||
       config.detector.maximum_candidates < 4 ||
       config.detector.maximum_candidates > 64 ||

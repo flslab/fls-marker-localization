@@ -254,23 +254,10 @@ PoseSolver::selectPnpCandidate(const std::vector<cv::Point3f> &object_points,
   }
   std::vector<cv::Mat> rvecs;
   std::vector<cv::Mat> tvecs;
-  // Small landing tiles can be far from the map origin. Running IPPE/LM in
-  // those absolute coordinates can leave a poor local minimum even for a
-  // valid decoded ring. Center the same correspondences for conditioning,
-  // then transform translation back before every world-space check/output.
-  cv::Vec3d origin{};
-  for (const auto &point : object_points)
-    origin += cv::Vec3d(point.x, point.y, point.z);
-  origin *= 1.0 / static_cast<double>(object_points.size());
-  std::vector<cv::Point3f> centered_points;
-  centered_points.reserve(object_points.size());
-  for (const auto &point : object_points)
-    centered_points.emplace_back(point.x - origin[0], point.y - origin[1],
-                                 point.z - origin[2]);
   int count = 0;
   try {
     count = cv::solvePnPGeneric(
-        centered_points, image_points, camera_matrix_, distortion_, rvecs, tvecs,
+        object_points, image_points, camera_matrix_, distortion_, rvecs, tvecs,
         false, static_cast<cv::SolvePnPMethod>(definition.opencv_method));
   } catch (const cv::Exception &) {
     return std::nullopt;
@@ -287,7 +274,7 @@ PoseSolver::selectPnpCandidate(const std::vector<cv::Point3f> &object_points,
     rvecs[index].convertTo(refined_rvec, CV_64F);
     tvecs[index].convertTo(refined_tvec, CV_64F);
     try {
-      cv::solvePnPRefineLM(centered_points, image_points, camera_matrix_,
+      cv::solvePnPRefineLM(object_points, image_points, camera_matrix_,
                            distortion_, refined_rvec, refined_tvec);
     } catch (const cv::Exception &) {
       continue;
@@ -296,9 +283,9 @@ PoseSolver::selectPnpCandidate(const std::vector<cv::Point3f> &object_points,
     cv::Mat rotation_mat;
     cv::Rodrigues(refined_rvec, rotation_mat);
     const cv::Matx33d rotation = matx(rotation_mat);
-    const cv::Vec3d translation =
-        cv::Vec3d(refined_tvec.at<double>(0), refined_tvec.at<double>(1),
-                   refined_tvec.at<double>(2)) - rotation * origin;
+    const cv::Vec3d translation{refined_tvec.at<double>(0),
+                                refined_tvec.at<double>(1),
+                                refined_tvec.at<double>(2)};
     const cv::Vec3d camera_position = -(rotation.t() * translation);
     if (!std::isfinite(camera_position[2]) ||
         camera_position[2] <= object_points.front().z) {

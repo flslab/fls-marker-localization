@@ -58,11 +58,6 @@ struct MatchedPoint {
 };
 
 struct AttitudeAlignment {
-  double defer_s = 0.0;
-  bool required = false;
-  bool available = false;
-  double wait_s = 0.0;
-  bool wait_timed_out = false;
   double effective_timestamp = 0.0;
   std::array<double, 2> bracket_timestamps{};
   std::array<std::uint32_t, 2> bracket_sequences{};

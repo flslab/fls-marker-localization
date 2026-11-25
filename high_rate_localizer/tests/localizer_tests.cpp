@@ -175,50 +175,6 @@ void testPnpRefinement() {
           "refined PnP pose still exceeds the expected reprojection error");
 }
 
-void testBootstrapPnpWithMapOffset() {
-  flsloc::ApplicationConfig config = testConfig();
-  config.tracking.pnp_solver = flsloc::PnpSolver::Ippe;
-  config.tracking.maximum_pose_points = 4;
-  config.calibration.camera_matrix = (cv::Mat_<double>(3, 3) <<
-      479.86756806084406, 0, 327.1241219749431,
-      0, 479.65961561474376, 200.96492607463068, 0, 0, 1);
-  config.calibration.distortion = (cv::Mat_<double>(5, 1) <<
-      0.2153449847084352, -0.546028649434045, 0.0019451425270748423,
-      -0.0008423325303544982, 0.4550648302784932);
-  // Replayed decoded ring from lb8's 2026-11-25 11:30:04 initialization.
-  // Absolute-coordinate IPPE/LM stalls at 11.56 px on OpenCV 4.11, while
-  // the same geometry at the tile center converges below the 5 px gate.
-  const std::array<cv::Point3f, 4> world{{
-      {-0.453F, -0.453F, 0}, {-0.453F, -0.477F, 0},
-      {-0.477F, -0.477F, 0}, {-0.477F, -0.453F, 0}}};
-  const std::array<cv::Point2f, 4> image{{
-      {175.622F, 43.375F}, {459.689F, 43.349F},
-      {472.525F, 336.466F}, {183.134F, 337.829F}}};
-  std::vector<flsloc::MatchedPoint> matches;
-  for (std::size_t index = 0; index < world.size(); ++index) {
-    flsloc::MatchedPoint point;
-    point.world = world[index];
-    point.image = image[index];
-    matches.push_back(point);
-  }
-  flsloc::PoseSolver solver(config);
-  const auto global = solver.solveInitial(matches, 0.045);
-  require(global.valid && global.reprojection_rms < 5.0,
-          "valid off-origin bootstrap still fails the original reprojection gate");
-  require(global.camera_to_plane_distance > 0.035 &&
-              global.camera_to_plane_distance < 0.05,
-          "bootstrap conditioning changed the physical camera height");
-  for (auto &point : matches) {
-    point.world.x += 0.465F;
-    point.world.y += 0.465F;
-  }
-  const auto shifted = solver.solveInitial(matches, 0.045);
-  require(shifted.valid && shifted.reprojection_rms < 5.0 &&
-              cv::norm(shifted.camera_position_world -
-                       global.camera_position_world - cv::Vec3d(0.465, 0.465, 0)) < 1e-4,
-          "PnP output is not invariant to map origin translation");
-}
-
 void testPnpSolverChoices() {
   flsloc::ApplicationConfig config = testConfig();
   const std::array<cv::Point3f, 4> world{
@@ -440,24 +396,7 @@ void testTakeoffAttitudeAcquisition(const flsloc::GridMap &map) {
   require(tracked.trackingPose().accepted && tracked.matched.size() == 4,
           "normal projection gate did not retain the acquired takeoff pose");
 
-  controller.alignment.required = false;
-  controller.alignment.available = false;
-  controller.timestamp += 1.0 / 120.0;
-  require(pipeline.process(++frame, controller.timestamp + 0.008,
-                           static_markers, controller).trackingPose().accepted,
-          "relaxed alignment rejected a valid nearest attitude within 12 ms");
-  controller.attitude_valid = false;
-  require(!pipeline.process(++frame, controller.timestamp + 0.009,
-                            static_markers, controller).trackingPose().accepted,
-          "relaxed alignment accepted an invalid attitude");
-  controller.attitude_valid = true;
-
   const double stale_attitude_timestamp = controller.timestamp;
-  const auto stale_fallback = pipeline.process(
-      ++frame, stale_attitude_timestamp + 0.013, static_markers, controller);
-  require(stale_fallback.status == "attitude_unavailable" &&
-              !stale_fallback.trackingPose().accepted,
-          "relaxed alignment accepted a nearest source older than 12 ms");
   double camera_timestamp = stale_attitude_timestamp;
   flsloc::FrameResult lost;
   for (int invalid = 0; invalid <= config.tracking.lost_after_frames;
@@ -733,27 +672,6 @@ void testAttitudePredictionConfig() {
     }
     require(rejected, "invalid attitude prediction bound was accepted");
   }
-  config["tracking"]["maximum_attitude_prediction_s"] = 0.012;
-  const auto rejected_config = [&]() {
-    write();
-    try { static_cast<void>(flsloc::loadApplicationConfig(path)); }
-    catch (const std::exception &) { return true; }
-    return false;
-  };
-  config["camera"]["exposure_time_us"] = 0;
-  require(rejected_config(), "zero manual exposure was accepted");
-  config["camera"]["exposure_time_us"] = 9000;
-  require(rejected_config(), "exposure longer than frame interval was accepted");
-  config["camera"]["exposure_time_us"] = 3000;
-  config["camera"]["analogue_gain"] = 0;
-  require(rejected_config(), "zero manual analogue gain was accepted");
-  config["camera"]["analogue_gain"] = 1;
-  config["camera"]["timestamp_offset_us"] = 9000;
-  require(rejected_config(), "capture phase offset outside a frame was accepted");
-  config["camera"]["timestamp_offset_us"] = 250;
-  write();
-  require(flsloc::loadApplicationConfig(path).camera.timestamp_offset_us == 250,
-          "calibrated capture phase offset was not loaded");
   std::filesystem::remove(path);
 }
 
@@ -897,10 +815,6 @@ void testLogIncludesGitVersion(const flsloc::GridMap &map) {
     frame.attitude_alignment.bracket_timestamps = {10.0,10.02};
     frame.attitude_alignment.bracket_sequences = {11,12};
     frame.attitude_alignment.interpolation_alpha = 0.5;
-    frame.attitude_alignment.required = true;
-    frame.attitude_alignment.available = true;
-    frame.attitude_alignment.wait_s = 0.002;
-    frame.attitude_alignment.defer_s = 0.0083;
     output.submit(frame);
     flsloc::FrameTiming timing;
     timing.buffer_timestamp_ns = 9'007'199'254'740'993ULL;
@@ -908,10 +822,6 @@ void testLogIncludesGitVersion(const flsloc::GridMap &map) {
     timing.exposure_time_us = 2500;
     timing.frame_duration_us = 8333;
     timing.analogue_gain = 1.25;
-    timing.capture_monotonic_ns = 10'010'000'000LL;
-    timing.boottime_minus_monotonic_ns = 1000;
-    timing.clock_pair_uncertainty_ns = 200;
-    timing.manual_controls_match = true;
     timing.buffer_sequence = 102;
     timing.request_sequence = 57;
     timing.host_completed_monotonic_ns = 10'010'000'000ULL;
@@ -943,11 +853,6 @@ void testLogIncludesGitVersion(const flsloc::GridMap &map) {
   require(log.at("frames").at(0).at("camera_timing").is_null(),
           "a frame without native timing must not acquire fabricated metadata");
   const auto &camera_timing = log.at("frames").at(1).at("camera_timing");
-  require(camera_timing.at("capture_monotonic_ns") == 10'010'000'000LL &&
-              camera_timing.at("runtime_timestamp_source") == "sensor_exposure_midpoint_monotonic" &&
-              camera_timing.at("manual_controls_match") == true &&
-              camera_timing.at("boottime_minus_monotonic_ns") == 1000,
-          "capture timestamp and manual-control verification were not logged");
   require(camera_timing.at("buffer_timestamp_ns").get<std::uint64_t>() == 9'007'199'254'740'993ULL &&
               camera_timing.at("sensor_timestamp_ns").get<std::int64_t>() == 9'007'199'253'240'993LL &&
               camera_timing.at("exposure_time_us") == 2500 &&
@@ -994,12 +899,6 @@ void testLogIncludesGitVersion(const flsloc::GridMap &map) {
               profile.at("snapshot").at("provenance").at("id") == "joint-log-test",
           "final log lost combined drone calibration provenance");
   const auto &alignment = log.at("frames").at(0).at("blob_grid_localization").at("shared_attitude");
-  require(alignment.at("alignment_required") == true &&
-              alignment.at("alignment_available") == true &&
-              alignment.at("alignment_wait_s") == 0.002 &&
-              alignment.at("alignment_defer_s") == 0.0083 &&
-              alignment.at("alignment_wait_timed_out") == false,
-          "bounded-wait alignment diagnostics were not logged");
   require(alignment.at("quaternion_xyzw").at(2).get<double>() == 0.123456789 &&
               alignment.at("ekf_reset_generation").get<int>() == 42 &&
               alignment.at("bracket_sequences").at(1).get<int>() == 12 &&
@@ -1034,46 +933,6 @@ void testCameraSequenceProgress() {
   const auto rollover = wrapped.observe(1);
   require(rollover.delta == 3 && rollover.wrapped && !rollover.reset_or_out_of_order,
           "valid uint32 counter rollover must retain its small forward delta");
-}
-
-void testExposureTimingAndManualControls() {
-  flsloc::FrameTiming timing;
-  timing.sensor_timestamp_ns = 12'000'000'000LL;
-  timing.exposure_time_us = 3000;
-  timing.analogue_gain = 1.0;
-  timing.boottime_minus_monotonic_ns = 2'000'000'000LL;
-  timing.clock_pair_uncertainty_ns = 500;
-  require(flsloc::exposureMidpointMonotonicNs(timing) == 10'001'500'000LL,
-          "sensor exposure midpoint was not mapped from BOOTTIME to MONOTONIC");
-  timing.timestamp_offset_us = 250.5;
-  require(flsloc::exposureMidpointMonotonicNs(timing) == 10'001'750'500LL,
-          "calibrated row timing offset was not applied");
-  require(flsloc::manualCameraControlsMatch(timing, 3000, 1.0),
-          "matching manual metadata was rejected");
-  timing.exposure_time_us = 2992;
-  timing.analogue_gain = 1.01;
-  require(flsloc::manualCameraControlsMatch(timing, 3000, 1.0),
-          "normal sensor quantization was rejected");
-  timing.exposure_time_us = 8089;
-  timing.analogue_gain = 8.0;
-  require(!flsloc::manualCameraControlsMatch(timing, 3000, 1.0),
-          "the observed automatic exposure/gain regression was accepted");
-  timing.exposure_time_us.reset();
-  require(!flsloc::exposureMidpointMonotonicNs(timing) &&
-              !flsloc::manualCameraControlsMatch(timing, 3000, 1.0),
-          "missing actual exposure was replaced with the requested exposure");
-  timing.exposure_time_us = 3000;
-  timing.sensor_timestamp_ns.reset();
-  require(!flsloc::exposureMidpointMonotonicNs(timing),
-          "missing SensorTimestamp acquired a fabricated capture time");
-  timing.sensor_timestamp_ns = 12'000'000'000LL;
-  timing.clock_pair_uncertainty_ns = 100'001;
-  require(!flsloc::exposureMidpointMonotonicNs(timing),
-          "an uncertain clock pair was accepted");
-  timing.clock_pair_uncertainty_ns = 0;
-  timing.boottime_minus_monotonic_ns.reset();
-  require(!flsloc::exposureMidpointMonotonicNs(timing),
-          "BOOTTIME and MONOTONIC epochs were assumed equal");
 }
 
 void testSharedMemoryPoseSelection() {
@@ -1257,24 +1116,6 @@ void testClosestSharedAttitude() {
               std::abs(yawDegrees(excessive_gap) - 20.0) < 1e-5,
           "attitude interpolation crossed an excessive sample gap");
 
-  writeAttitude(0, 1, 10.0, 0.0, 42, false);
-  writeAttitude(1, 2, 10.005, 5.0, 42, false);
-  const auto fast_pair = predicted.readController(10.0025);
-  require(fast_pair.alignment.available && fast_pair.attitude_prediction_applied &&
-              std::abs(yawDegrees(fast_pair) - 2.5) < 1e-5,
-          "immediate lookup did not interpolate an existing bracket");
-  const auto exact = predicted.readController(10.005);
-  require(exact.alignment.available && !exact.attitude_prediction_applied,
-          "an exact capture-time attitude was not recognized");
-  const auto immediate = predicted.readController(10.010);
-  require(immediate.attitude_valid && !immediate.attitude_prediction_applied &&
-              !immediate.alignment.required && !immediate.alignment.available &&
-              immediate.timestamp == 10.005 &&
-              immediate.alignment.effective_timestamp == 10.005 &&
-              immediate.alignment.wait_s == 0.0 && immediate.alignment.defer_s == 0.0 &&
-              !immediate.alignment.wait_timed_out,
-          "immediate lookup did not preserve nearest-source fallback without waiting");
-
   flsloc::FrameResult frame;
   frame.frame_id = 12;
   frame.timestamp = 100.0;
@@ -1326,7 +1167,6 @@ int main() try {
   testBlink(map);
   testPose(map);
   testPnpRefinement();
-  testBootstrapPnpWithMapOffset();
   testPnpSolverChoices();
   testPnpCorrespondenceLimit();
   testPosePointSelectionHysteresis();
@@ -1341,7 +1181,6 @@ int main() try {
   testDroneCalibration();
   testLogIncludesGitVersion(map);
   testCameraSequenceProgress();
-  testExposureTimingAndManualControls();
   testSharedMemoryPoseSelection();
   testSharedMemoryAbiForYawCorrection();
   testClosestSharedAttitude();

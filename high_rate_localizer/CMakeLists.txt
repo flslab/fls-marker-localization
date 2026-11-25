@@ -28,7 +28,6 @@ if(Git_FOUND)
 endif()
 
 add_library(fls_localizer_core
-  src/frame_timing.cpp
   src/config.cpp
   src/grid_map.cpp
   src/blob_detector.cpp
