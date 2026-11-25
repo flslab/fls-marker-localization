@@ -6,7 +6,7 @@
     "buffer_count": 4,
     "pixel_format": "YUV420",
     "exposure_time_us": 3000,
-    "analogue_gain": 1.0,
+    "analogue_gain": 8.0,
     "brightness": 0.0,
     "contrast": 1.0,
     "timestamp_offset_us": 0.0

@@ -176,6 +176,50 @@ void testPnpRefinement() {
           "refined PnP pose still exceeds the expected reprojection error");
 }
 
+void testBootstrapPnpWithMapOffset() {
+  flsloc::ApplicationConfig config = testConfig();
+  config.tracking.pnp_solver = flsloc::PnpSolver::Ippe;
+  config.tracking.maximum_pose_points = 4;
+  config.calibration.camera_matrix = (cv::Mat_<double>(3, 3) <<
+      479.86756806084406, 0, 327.1241219749431,
+      0, 479.65961561474376, 200.96492607463068, 0, 0, 1);
+  config.calibration.distortion = (cv::Mat_<double>(5, 1) <<
+      0.2153449847084352, -0.546028649434045, 0.0019451425270748423,
+      -0.0008423325303544982, 0.4550648302784932);
+  // Replayed decoded ring from lb8's 2026-11-25 11:30:04 initialization.
+  // Absolute-coordinate IPPE/LM stalls at 11.56 px on OpenCV 4.11, while
+  // the same geometry at the tile center converges below the 5 px gate.
+  const std::array<cv::Point3f, 4> world{{
+      {-0.453F, -0.453F, 0}, {-0.453F, -0.477F, 0},
+      {-0.477F, -0.477F, 0}, {-0.477F, -0.453F, 0}}};
+  const std::array<cv::Point2f, 4> image{{
+      {175.622F, 43.375F}, {459.689F, 43.349F},
+      {472.525F, 336.466F}, {183.134F, 337.829F}}};
+  std::vector<flsloc::MatchedPoint> matches;
+  for (std::size_t index = 0; index < world.size(); ++index) {
+    flsloc::MatchedPoint point;
+    point.world = world[index];
+    point.image = image[index];
+    matches.push_back(point);
+  }
+  flsloc::PoseSolver solver(config);
+  const auto global = solver.solveInitial(matches, 0.045);
+  require(global.valid && global.reprojection_rms < 5.0,
+          "valid off-origin bootstrap still fails the original reprojection gate");
+  require(global.camera_to_plane_distance > 0.035 &&
+              global.camera_to_plane_distance < 0.05,
+          "bootstrap conditioning changed the physical camera height");
+  for (auto &point : matches) {
+    point.world.x += 0.465F;
+    point.world.y += 0.465F;
+  }
+  const auto shifted = solver.solveInitial(matches, 0.045);
+  require(shifted.valid && shifted.reprojection_rms < 5.0 &&
+              cv::norm(shifted.camera_position_world -
+                       global.camera_position_world - cv::Vec3d(0.465, 0.465, 0)) < 1e-4,
+          "PnP output is not invariant to map origin translation");
+}
+
 void testPnpSolverChoices() {
   flsloc::ApplicationConfig config = testConfig();
   const std::array<cv::Point3f, 4> world{
@@ -1306,6 +1350,7 @@ int main() try {
   testBlink(map);
   testPose(map);
   testPnpRefinement();
+  testBootstrapPnpWithMapOffset();
   testPnpSolverChoices();
   testPnpCorrespondenceLimit();
   testPosePointSelectionHysteresis();
